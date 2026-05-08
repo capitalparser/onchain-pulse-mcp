@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a stateless TypeScript MCP server that exposes 6 onchain market-mood tools backed by 6 data adapters, with BYOK enrichment, weighted-z-score composite mood, and graceful partial-failure handling.
+**Goal:** Build a stateless TypeScript MCP server that exposes 6 onchain market-pulse tools backed by 6 data adapters, with BYOK enrichment, weighted-z-score composite pulse, and graceful partial-failure handling.
 
-**Architecture:** stdio MCP server (`@modelcontextprotocol/sdk`) → tool handlers → parallel adapter fan-out (free defaults + optional BYOK paid endpoints) → in-memory LRU TTL cache. Composite mood score loaded from `config/mood.yaml`. Partial source failures yield `confidence < 1.0` with `stale_data` annotations rather than throwing.
+**Architecture:** stdio MCP server (`@modelcontextprotocol/sdk`) → tool handlers → parallel adapter fan-out (free defaults + optional BYOK paid endpoints) → in-memory LRU TTL cache. Composite pulse score loaded from `config/pulse.yaml`. Partial source failures yield `confidence < 1.0` with `stale_data` annotations rather than throwing.
 
 **Tech Stack:** TypeScript 5.x, Node 20+, `@modelcontextprotocol/sdk`, `zod`, `lru-cache`, `yaml`, `vitest`, `tsup`, native `fetch`.
 
@@ -18,7 +18,7 @@
 src/
   index.ts                      # bin entry — stdio MCP server
   server.ts                     # createServer() — registers tools
-  types.ts                      # AdapterResult, ToolResponse, Verdict, Lang
+  types.ts                      # AdapterResult, ToolResponse, Reading, Lang
   env.ts                        # EnvConfig: BYOK keys + locale
   cache.ts                      # TTLCache wrapper (lru-cache)
   stats.ts                      # zScore, sigmoid, mean, std
@@ -28,21 +28,21 @@ src/
     macro_rwa.ts                # Defillama, Farside ETF, RWA.xyz
     onchain_wallet.ts           # Etherscan + Defillama stables + Nansen BYOK
     cex_flow.ts                 # CoinGecko + Defillama + Glassnode BYOK
-    kr_layer.ts                 # Upbit + Bithumb (no BYOK)
+    kr_premium.ts                 # Upbit + Bithumb (no BYOK)
     wallet_id.ts                # Arkham/Nansen BYOK only (free no-op)
-  mood/
-    config.ts                   # loadMoodConfig() — YAML + zod
-    verdict.ts                  # toVerdict, formatSummary (en/ko)
-    score.ts                    # computeMoodScore (weighted z + sigmoid)
+  pulse/
+    config.ts                   # loadPulseConfig() — YAML + zod
+    reading.ts                  # toReading, formatSummary (en/ko)
+    score.ts                    # computePulseScore (weighted z + sigmoid)
   tools/
-    get_market_mood.ts
+    get_market_pulse.ts
     get_etf_flow.ts
     get_stablecoin_pulse.ts
     get_funding_oi.ts
     get_kr_premium.ts
     get_rwa_pulse.ts
 config/
-  mood.yaml                     # default weights + verdict buckets
+  pulse.yaml                     # default weights + reading buckets
 examples/
   rules/                        # 5 reference YAML alert rules
 tests/
@@ -75,7 +75,7 @@ Open `package.json` and replace `scripts` and add `dependencies` / `devDependenc
 {
   "name": "onchain-pulse-mcp",
   "version": "0.0.1",
-  "description": "Read-only MCP server exposing onchain market mood signals (CEX flow, on-chain wallets, derivatives, ETF/RWA macro, Korea premium) for AI agents and humans.",
+  "description": "Read-only MCP server exposing onchain market pulse signals (CEX flow, on-chain wallets, derivatives, ETF/RWA macro, Korea premium) for AI agents and humans.",
   "license": "MIT",
   "author": "Kim Kyung-jun <iwbasm92@gmail.com>",
   "type": "module",
@@ -90,7 +90,7 @@ Open `package.json` and replace `scripts` and add `dependencies` / `devDependenc
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run typecheck && npm run test && npm run build"
   },
-  "keywords": ["mcp", "model-context-protocol", "onchain", "crypto", "rwa", "market-mood", "trading", "ai-agent", "byok"],
+  "keywords": ["mcp", "model-context-protocol", "onchain", "crypto", "rwa", "market-pulse", "trading", "ai-agent", "byok"],
   "repository": { "type": "git", "url": "git+https://github.com/capitalparser/onchain-pulse-mcp.git" },
   "bugs": { "url": "https://github.com/capitalparser/onchain-pulse-mcp/issues" },
   "homepage": "https://github.com/capitalparser/onchain-pulse-mcp#readme",
@@ -220,35 +220,35 @@ git commit -m "chore: TypeScript + vitest + tsup scaffolding"
 
 ```ts
 import { describe, it, expect } from "vitest";
-import { ToolResponseSchema, type Verdict } from "../src/types.js";
+import { ToolResponseSchema, type Reading } from "../src/types.js";
 
 describe("ToolResponseSchema", () => {
   it("accepts a fully-populated response", () => {
     const ok = ToolResponseSchema.parse({
-      summary: "ETF +$340M 7d, mood: risk-on (78/100)",
+      summary: "ETF +$340M 7d, reading: risk-on (78/100)",
       score: 78,
-      verdict: "risk-on",
+      reading: "risk-on",
       as_of: "2026-05-08T07:00:00Z",
       inputs: { etf_7d_net_usd: 340_000_000 },
       sources: ["farside.co.uk", "defillama"],
       stale_data: [],
       confidence: 1.0,
-      capabilities: { enriched: false },
+      capabilities: { byok_active: [] },
     });
-    expect(ok.verdict satisfies Verdict).toBe("risk-on");
+    expect(ok.reading satisfies Reading).toBe("risk-on");
   });
 
-  it("accepts unknown verdict and null score for full-failure case", () => {
+  it("accepts unknown reading and null score for full-failure case", () => {
     const r = ToolResponseSchema.parse({
       summary: "data unavailable",
       score: null,
-      verdict: "unknown",
+      reading: "unknown",
       as_of: "2026-05-08T07:00:00Z",
       inputs: {},
       sources: [],
       stale_data: ["all sources down"],
       confidence: 0,
-      capabilities: { enriched: false },
+      capabilities: { byok_active: [] },
     });
     expect(r.score).toBeNull();
   });
@@ -258,13 +258,13 @@ describe("ToolResponseSchema", () => {
       ToolResponseSchema.parse({
         summary: "x",
         score: 150,
-        verdict: "risk-on",
+        reading: "risk-on",
         as_of: "2026-05-08T07:00:00Z",
         inputs: {},
         sources: [],
         stale_data: [],
         confidence: 1,
-        capabilities: { enriched: false },
+        capabilities: { byok_active: [] },
       }),
     ).toThrow();
   });
@@ -284,14 +284,14 @@ Expected: FAIL — `Cannot find module '../src/types.js'`.
 ```ts
 import { z } from "zod";
 
-export const VerdictSchema = z.enum(["risk-off", "neutral", "risk-on", "unknown"]);
-export type Verdict = z.infer<typeof VerdictSchema>;
+export const ReadingSchema = z.enum(["risk-off", "neutral", "risk-on", "unknown"]);
+export type Reading = z.infer<typeof ReadingSchema>;
 
 export const LangSchema = z.enum(["en", "ko"]);
 export type Lang = z.infer<typeof LangSchema>;
 
 export const CapabilitiesSchema = z.object({
-  enriched: z.boolean(),
+  byok_active: z.array(z.string()),
   sources: z.array(z.string()).optional(),
 });
 export type Capabilities = z.infer<typeof CapabilitiesSchema>;
@@ -307,7 +307,7 @@ export type AdapterResult = z.infer<typeof AdapterResultSchema>;
 export const ToolResponseSchema = z.object({
   summary: z.string(),
   score: z.number().min(0).max(100).nullable(),
-  verdict: VerdictSchema,
+  reading: ReadingSchema,
   as_of: z.string(),
   inputs: z.record(z.string(), z.unknown()),
   sources: z.array(z.string()),
@@ -330,7 +330,7 @@ Expected: 3 passed.
 
 ```bash
 git add src/types.ts tests/types.test.ts
-git commit -m "feat(types): shared schemas — ToolResponse, AdapterResult, Verdict, Lang"
+git commit -m "feat(types): shared schemas — ToolResponse, AdapterResult, Reading, Lang"
 ```
 
 ---
@@ -739,7 +739,7 @@ describe("Adapter interface", () => {
     const stub: Adapter = {
       name: "stub",
       ttlMs: 1000,
-      capabilities: () => ({ enriched: false, sources: ["x"] }),
+      capabilities: () => ({ byok_active: [], sources: ["x"] }),
       fetch: async () => ({ data: {}, sources: [], asOf: "", stale: false }),
     };
     expect(stub.name).toBe("stub");
@@ -771,7 +771,7 @@ export interface AdapterContext {
 export interface Adapter<I = void> {
   name: string;
   ttlMs: number;
-  capabilities(env: EnvConfig): { enriched: boolean; sources: string[] };
+  capabilities(env: EnvConfig): { byok_active: string[]; sources: string[] };
   fetch(input: I, ctx: AdapterContext): Promise<AdapterResult>;
 }
 
@@ -815,14 +815,14 @@ git commit -m "feat(adapters): Adapter interface, context, withCache stale-fallb
 
 ---
 
-## Task 7: Mood config loader (`src/mood/config.ts` + `config/mood.yaml`)
+## Task 7: Pulse config loader (`src/pulse/config.ts` + `config/pulse.yaml`)
 
 **Files:**
-- Create: `config/mood.yaml`
-- Create: `src/mood/config.ts`
-- Create: `tests/mood/config.test.ts`
+- Create: `config/pulse.yaml`
+- Create: `src/pulse/config.ts`
+- Create: `tests/pulse/config.test.ts`
 
-- [ ] **Step 1: Create `config/mood.yaml`**
+- [ ] **Step 1: Create `config/pulse.yaml`**
 
 ```yaml
 weights:
@@ -845,7 +845,7 @@ directions:
 
 funding_reverse_z_threshold: 2.0
 
-verdict_buckets:
+reading_buckets:
   risk_off: [0, 30]
   neutral: [30, 70]
   risk_on: [70, 100]
@@ -853,22 +853,22 @@ verdict_buckets:
 
 - [ ] **Step 2: Write the failing test**
 
-`tests/mood/config.test.ts`:
+`tests/pulse/config.test.ts`:
 
 ```ts
 import { describe, it, expect } from "vitest";
-import { loadMoodConfig, parseMoodConfig } from "../../src/mood/config.js";
+import { loadPulseConfig, parsePulseConfig } from "../../src/pulse/config.js";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-describe("MoodConfig", () => {
+describe("PulseConfig", () => {
   it("parses a valid YAML config", () => {
-    const raw = readFileSync(resolve("config/mood.yaml"), "utf-8");
-    const cfg = parseMoodConfig(raw);
+    const raw = readFileSync(resolve("config/pulse.yaml"), "utf-8");
+    const cfg = parsePulseConfig(raw);
     expect(cfg.weights.etf_7d_net_flow_btc_eth).toBe(0.25);
     expect(cfg.directions.btc_dominance_7d_delta).toBe("negative");
     expect(cfg.funding_reverse_z_threshold).toBe(2.0);
-    expect(cfg.verdict_buckets.risk_on).toEqual([70, 100]);
+    expect(cfg.reading_buckets.risk_on).toEqual([70, 100]);
   });
 
   it("rejects when weights do not sum to 1.0 within tolerance", () => {
@@ -880,16 +880,16 @@ directions:
   a: positive
   b: positive
 funding_reverse_z_threshold: 2.0
-verdict_buckets:
+reading_buckets:
   risk_off: [0, 30]
   neutral: [30, 70]
   risk_on: [70, 100]
 `;
-    expect(() => parseMoodConfig(bad)).toThrow(/weights must sum/);
+    expect(() => parsePulseConfig(bad)).toThrow(/weights must sum/);
   });
 
-  it("loadMoodConfig reads default path", () => {
-    const cfg = loadMoodConfig();
+  it("loadPulseConfig reads default path", () => {
+    const cfg = loadPulseConfig();
     expect(Object.keys(cfg.weights)).toContain("etf_7d_net_flow_btc_eth");
   });
 });
@@ -898,12 +898,12 @@ verdict_buckets:
 - [ ] **Step 3: Run — verify failure**
 
 ```bash
-npm run test -- mood/config
+npm run test -- pulse/config
 ```
 
 Expected: FAIL.
 
-- [ ] **Step 4: Create `src/mood/config.ts`**
+- [ ] **Step 4: Create `src/pulse/config.ts`**
 
 ```ts
 import { z } from "zod";
@@ -913,21 +913,21 @@ import { resolve } from "node:path";
 
 const DirectionSchema = z.enum(["positive", "negative", "positive_with_reverse"]);
 
-export const MoodConfigSchema = z.object({
+export const PulseConfigSchema = z.object({
   weights: z.record(z.string(), z.number().min(0).max(1)),
   directions: z.record(z.string(), DirectionSchema),
   funding_reverse_z_threshold: z.number().positive(),
-  verdict_buckets: z.object({
+  reading_buckets: z.object({
     risk_off: z.tuple([z.number(), z.number()]),
     neutral: z.tuple([z.number(), z.number()]),
     risk_on: z.tuple([z.number(), z.number()]),
   }),
 });
-export type MoodConfig = z.infer<typeof MoodConfigSchema>;
+export type PulseConfig = z.infer<typeof PulseConfigSchema>;
 
-export function parseMoodConfig(raw: string): MoodConfig {
+export function parsePulseConfig(raw: string): PulseConfig {
   const obj = parseYaml(raw);
-  const cfg = MoodConfigSchema.parse(obj);
+  const cfg = PulseConfigSchema.parse(obj);
   const sum = Object.values(cfg.weights).reduce((a, b) => a + b, 0);
   if (Math.abs(sum - 1) > 0.001) {
     throw new Error(`weights must sum to 1.0 (got ${sum.toFixed(4)})`);
@@ -940,15 +940,15 @@ export function parseMoodConfig(raw: string): MoodConfig {
   return cfg;
 }
 
-export function loadMoodConfig(path = resolve("config/mood.yaml")): MoodConfig {
-  return parseMoodConfig(readFileSync(path, "utf-8"));
+export function loadPulseConfig(path = resolve("config/pulse.yaml")): PulseConfig {
+  return parsePulseConfig(readFileSync(path, "utf-8"));
 }
 ```
 
 - [ ] **Step 5: Run — verify passing**
 
 ```bash
-npm run test -- mood/config
+npm run test -- pulse/config
 ```
 
 Expected: 3 passed.
@@ -956,52 +956,52 @@ Expected: 3 passed.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add config/mood.yaml src/mood/config.ts tests/mood/config.test.ts
-git commit -m "feat(mood): YAML config loader with sum/direction validation"
+git add config/pulse.yaml src/pulse/config.ts tests/pulse/config.test.ts
+git commit -m "feat(pulse): YAML config loader with sum/direction validation"
 ```
 
 ---
 
-## Task 8: Verdict + summary formatter (`src/mood/verdict.ts`)
+## Task 8: Reading + summary formatter (`src/pulse/reading.ts`)
 
 **Files:**
-- Create: `src/mood/verdict.ts`
-- Create: `tests/mood/verdict.test.ts`
+- Create: `src/pulse/reading.ts`
+- Create: `tests/pulse/reading.test.ts`
 
 - [ ] **Step 1: Write the failing test**
 
-`tests/mood/verdict.test.ts`:
+`tests/pulse/reading.test.ts`:
 
 ```ts
 import { describe, it, expect } from "vitest";
-import { toVerdict, formatSummary } from "../../src/mood/verdict.js";
-import { loadMoodConfig } from "../../src/mood/config.js";
+import { toReading, formatSummary } from "../../src/pulse/reading.js";
+import { loadPulseConfig } from "../../src/pulse/config.js";
 
-const cfg = loadMoodConfig();
+const cfg = loadPulseConfig();
 
-describe("toVerdict", () => {
+describe("toReading", () => {
   it("returns risk-off for low scores", () => {
-    expect(toVerdict(15, cfg)).toBe("risk-off");
+    expect(toReading(15, cfg)).toBe("risk-off");
   });
   it("returns neutral mid-range", () => {
-    expect(toVerdict(50, cfg)).toBe("neutral");
+    expect(toReading(50, cfg)).toBe("neutral");
   });
   it("returns risk-on for high scores", () => {
-    expect(toVerdict(85, cfg)).toBe("risk-on");
+    expect(toReading(85, cfg)).toBe("risk-on");
   });
   it("returns unknown when score is null", () => {
-    expect(toVerdict(null, cfg)).toBe("unknown");
+    expect(toReading(null, cfg)).toBe("unknown");
   });
   it("places boundaries: 30 → neutral, 70 → risk-on", () => {
-    expect(toVerdict(30, cfg)).toBe("neutral");
-    expect(toVerdict(70, cfg)).toBe("risk-on");
+    expect(toReading(30, cfg)).toBe("neutral");
+    expect(toReading(70, cfg)).toBe("risk-on");
   });
 });
 
 describe("formatSummary", () => {
   it("formats English summary", () => {
     const s = formatSummary(
-      { score: 78, verdict: "risk-on", inputs: { etf_7d_net_usd: 340_000_000 } },
+      { score: 78, reading: "risk-on", inputs: { etf_7d_net_usd: 340_000_000 } },
       "en",
     );
     expect(s).toMatch(/risk-on/);
@@ -1009,15 +1009,15 @@ describe("formatSummary", () => {
   });
   it("formats Korean summary", () => {
     const s = formatSummary(
-      { score: 78, verdict: "risk-on", inputs: { etf_7d_net_usd: 340_000_000 } },
+      { score: 78, reading: "risk-on", inputs: { etf_7d_net_usd: 340_000_000 } },
       "ko",
     );
     expect(s).toMatch(/리스크-온|risk-on/);
     expect(s).toMatch(/78/);
   });
-  it("handles unknown verdict gracefully", () => {
-    expect(formatSummary({ score: null, verdict: "unknown", inputs: {} }, "en")).toMatch(/unavailable/i);
-    expect(formatSummary({ score: null, verdict: "unknown", inputs: {} }, "ko")).toMatch(/사용 불가|unavailable/);
+  it("handles unknown reading gracefully", () => {
+    expect(formatSummary({ score: null, reading: "unknown", inputs: {} }, "en")).toMatch(/unavailable/i);
+    expect(formatSummary({ score: null, reading: "unknown", inputs: {} }, "ko")).toMatch(/사용 불가|unavailable/);
   });
 });
 ```
@@ -1025,20 +1025,20 @@ describe("formatSummary", () => {
 - [ ] **Step 2: Run — verify failure**
 
 ```bash
-npm run test -- mood/verdict
+npm run test -- pulse/reading
 ```
 
 Expected: FAIL.
 
-- [ ] **Step 3: Create `src/mood/verdict.ts`**
+- [ ] **Step 3: Create `src/pulse/reading.ts`**
 
 ```ts
-import type { Verdict, Lang } from "../types.js";
-import type { MoodConfig } from "./config.js";
+import type { Reading, Lang } from "../types.js";
+import type { PulseConfig } from "./config.js";
 
-export function toVerdict(score: number | null, cfg: MoodConfig): Verdict {
+export function toReading(score: number | null, cfg: PulseConfig): Reading {
   if (score === null) return "unknown";
-  const { risk_off, neutral, risk_on } = cfg.verdict_buckets;
+  const { risk_off, neutral, risk_on } = cfg.reading_buckets;
   if (score < risk_off[1]) return "risk-off";
   if (score < neutral[1]) return "neutral";
   if (score <= risk_on[1]) return "risk-on";
@@ -1047,30 +1047,30 @@ export function toVerdict(score: number | null, cfg: MoodConfig): Verdict {
 
 export interface SummaryInput {
   score: number | null;
-  verdict: Verdict;
+  reading: Reading;
   inputs: Record<string, unknown>;
 }
 
 export function formatSummary(s: SummaryInput, lang: Lang): string {
-  if (s.verdict === "unknown" || s.score === null) {
+  if (s.reading === "unknown" || s.score === null) {
     return lang === "ko" ? "데이터 사용 불가 (data unavailable)" : "data unavailable";
   }
   const etf = num(s.inputs.etf_7d_net_usd);
   const stable = num(s.inputs.stablecoin_7d_delta_pct);
-  const verdictKo = ({ "risk-off": "리스크-오프", neutral: "중립", "risk-on": "리스크-온" } as const)[
-    s.verdict
+  const readingKo = ({ "risk-off": "리스크-오프", neutral: "중립", "risk-on": "리스크-온" } as const)[
+    s.reading
   ];
   if (lang === "ko") {
     const parts: string[] = [];
     if (etf !== undefined) parts.push(`ETF ${signed$(etf)} 7d`);
     if (stable !== undefined) parts.push(`stablecoin ${signedPct(stable)}`);
-    parts.push(`mood: ${verdictKo} (${s.score}/100)`);
+    parts.push(`reading: ${readingKo} (${s.score}/100)`);
     return parts.join(", ");
   }
   const parts: string[] = [];
   if (etf !== undefined) parts.push(`ETF ${signed$(etf)} 7d`);
   if (stable !== undefined) parts.push(`stablecoin ${signedPct(stable)}`);
-  parts.push(`mood: ${s.verdict} (${s.score}/100)`);
+  parts.push(`reading: ${s.reading} (${s.score}/100)`);
   return parts.join(", ");
 }
 
@@ -1091,7 +1091,7 @@ function signedPct(v: number): string {
 - [ ] **Step 4: Run — verify passing**
 
 ```bash
-npm run test -- mood/verdict
+npm run test -- pulse/reading
 ```
 
 Expected: 8 passed.
@@ -1099,22 +1099,22 @@ Expected: 8 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/mood/verdict.ts tests/mood/verdict.test.ts
-git commit -m "feat(mood): toVerdict bucket mapping + en/ko formatSummary"
+git add src/pulse/reading.ts tests/pulse/reading.test.ts
+git commit -m "feat(pulse): toReading bucket mapping + en/ko formatSummary"
 ```
 
 ---
 
-## Task 9: Composite mood score (`src/mood/score.ts`)
+## Task 9: Composite pulse score (`src/pulse/score.ts`)
 
 **Files:**
-- Create: `src/mood/score.ts`
-- Create: `tests/mood/score.test.ts`
-- Create: `tests/mood/fixtures/golden_input.json`
+- Create: `src/pulse/score.ts`
+- Create: `tests/pulse/score.test.ts`
+- Create: `tests/pulse/fixtures/golden_input.json`
 
 - [ ] **Step 1: Create the golden fixture**
 
-`tests/mood/fixtures/golden_input.json`:
+`tests/pulse/fixtures/golden_input.json`:
 
 ```json
 {
@@ -1141,23 +1141,23 @@ git commit -m "feat(mood): toVerdict bucket mapping + en/ko formatSummary"
 
 - [ ] **Step 2: Write the failing test**
 
-`tests/mood/score.test.ts`:
+`tests/pulse/score.test.ts`:
 
 ```ts
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { computeMoodScore } from "../../src/mood/score.js";
-import { loadMoodConfig } from "../../src/mood/config.js";
+import { computePulseScore } from "../../src/pulse/score.js";
+import { loadPulseConfig } from "../../src/pulse/config.js";
 
-const cfg = loadMoodConfig();
+const cfg = loadPulseConfig();
 const fixture = JSON.parse(
-  readFileSync(resolve("tests/mood/fixtures/golden_input.json"), "utf-8"),
+  readFileSync(resolve("tests/pulse/fixtures/golden_input.json"), "utf-8"),
 ) as { values: Record<string, number>; history: Record<string, number[]> };
 
-describe("computeMoodScore", () => {
+describe("computePulseScore", () => {
   it("produces a deterministic score for golden input", () => {
-    const r = computeMoodScore({ values: fixture.values, history: fixture.history, cfg });
+    const r = computePulseScore({ values: fixture.values, history: fixture.history, cfg });
     expect(r.score).toBeGreaterThanOrEqual(0);
     expect(r.score).toBeLessThanOrEqual(100);
     expect(r.confidence).toBe(1.0);
@@ -1168,13 +1168,13 @@ describe("computeMoodScore", () => {
   it("renormalises weights when one input is missing (stablecoin omitted)", () => {
     const v = { ...fixture.values };
     delete (v as Record<string, number>).stablecoin_7d_supply_delta;
-    const r = computeMoodScore({ values: v, history: fixture.history, cfg });
+    const r = computePulseScore({ values: v, history: fixture.history, cfg });
     expect(r.confidence).toBeCloseTo(0.8, 5); // 1.0 - 0.20
     expect(r.score).not.toBeNull();
   });
 
   it("returns null score and confidence 0 when all inputs missing", () => {
-    const r = computeMoodScore({ values: {}, history: fixture.history, cfg });
+    const r = computePulseScore({ values: {}, history: fixture.history, cfg });
     expect(r.score).toBeNull();
     expect(r.confidence).toBe(0);
   });
@@ -1182,16 +1182,16 @@ describe("computeMoodScore", () => {
   it("reverses funding contribution when |z| exceeds threshold", () => {
     // History has tight funding range; an extreme value should flip sign.
     const extreme = { ...fixture.values, funding_avg_btc_eth: 0.005 };
-    const r = computeMoodScore({ values: extreme, history: fixture.history, cfg });
-    const r0 = computeMoodScore({ values: fixture.values, history: fixture.history, cfg });
+    const r = computePulseScore({ values: extreme, history: fixture.history, cfg });
+    const r0 = computePulseScore({ values: fixture.values, history: fixture.history, cfg });
     expect(r.score!).toBeLessThan(r0.score!);
   });
 
   it("reports negative-direction inputs (P/C ratio) inversely", () => {
     const lowPC = { ...fixture.values, options_put_call_ratio: 0.3 };
     const highPC = { ...fixture.values, options_put_call_ratio: 1.0 };
-    const a = computeMoodScore({ values: lowPC, history: fixture.history, cfg });
-    const b = computeMoodScore({ values: highPC, history: fixture.history, cfg });
+    const a = computePulseScore({ values: lowPC, history: fixture.history, cfg });
+    const b = computePulseScore({ values: highPC, history: fixture.history, cfg });
     expect(a.score!).toBeGreaterThan(b.score!);
   });
 });
@@ -1200,21 +1200,21 @@ describe("computeMoodScore", () => {
 - [ ] **Step 3: Run — verify failure**
 
 ```bash
-npm run test -- mood/score
+npm run test -- pulse/score
 ```
 
 Expected: FAIL.
 
-- [ ] **Step 4: Create `src/mood/score.ts`**
+- [ ] **Step 4: Create `src/pulse/score.ts`**
 
 ```ts
 import { mean, sigmoid01, zScore } from "../stats.js";
-import type { MoodConfig } from "./config.js";
+import type { PulseConfig } from "./config.js";
 
 export interface ScoreInput {
   values: Record<string, number>;
   history: Record<string, number[]>;
-  cfg: MoodConfig;
+  cfg: PulseConfig;
 }
 
 export interface ScoreResult {
@@ -1223,7 +1223,7 @@ export interface ScoreResult {
   contributions: Record<string, number>; // sign-adjusted z per key
 }
 
-export function computeMoodScore({ values, history, cfg }: ScoreInput): ScoreResult {
+export function computePulseScore({ values, history, cfg }: ScoreInput): ScoreResult {
   const contributions: Record<string, number> = {};
   let weightedSum = 0;
   let activeWeightSum = 0;
@@ -1272,7 +1272,7 @@ export { mean };
 - [ ] **Step 5: Run — adjust the golden number if needed**
 
 ```bash
-npm run test -- mood/score
+npm run test -- pulse/score
 ```
 
 If the golden assertion (`Math.round(r.score!)`) doesn't match `63`, run once and snapshot the actual output, then update the assertion to that integer. (This is a regression-detection golden; the exact value depends on the score function — it must be deterministic, but the expected number may shift if you tune weights or sigmoid scaling.)
@@ -1282,8 +1282,8 @@ Expected after adjustment: 5 passed.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/mood/score.ts tests/mood/score.test.ts tests/mood/fixtures/golden_input.json
-git commit -m "feat(mood): composite weighted-z mood score with confidence + funding reverse"
+git add src/pulse/score.ts tests/pulse/score.test.ts tests/pulse/fixtures/golden_input.json
+git commit -m "feat(pulse): composite weighted-z pulse score with confidence + funding reverse"
 ```
 
 ---
@@ -1360,8 +1360,8 @@ describe("derivatives adapter", () => {
   });
 
   it("capabilities reports enrichment when key present", () => {
-    expect(derivatives.capabilities({ byok: {}, lang: "en" }).enriched).toBe(false);
-    expect(derivatives.capabilities({ byok: { coinglass: "k" }, lang: "en" }).enriched).toBe(true);
+    expect(derivatives.capabilities({ byok: {}, lang: "en" }).byok_active).toEqual([]);
+    expect(derivatives.capabilities({ byok: { coinglass: "k" }, lang: "en" }).byok_active).toContain("coinglass");
   });
 });
 ```
@@ -1418,7 +1418,7 @@ export const derivatives: Adapter = {
   capabilities(env: EnvConfig) {
     const sources = ["deribit"];
     if (env.byok.coinglass) sources.push("coinglass");
-    return { enriched: !!env.byok.coinglass, sources };
+    return { byok_active: env.byok.coinglass ? ["coinglass"] : [], sources };
   },
   async fetch(_input, ctx): Promise<AdapterResult> {
     return withCache(ctx.cache, "derivatives", async () => {
@@ -1629,7 +1629,7 @@ export const macroRwa: Adapter = {
   name: "macro_rwa",
   ttlMs: 30 * 60_000,
   capabilities(env: EnvConfig) {
-    return { enriched: false, sources: ["farside.co.uk", "coingecko", "defillama"] };
+    return { byok_active: [], sources: ["farside.co.uk", "coingecko", "defillama"] };
   },
   async fetch(_input, ctx): Promise<AdapterResult> {
     return withCache(ctx.cache, "macro_rwa", async () => {
@@ -1783,8 +1783,8 @@ describe("onchain_wallet adapter", () => {
   });
 
   it("capabilities reports BYOK presence", () => {
-    expect(onchainWallet.capabilities({ byok: {}, lang: "en" }).enriched).toBe(false);
-    expect(onchainWallet.capabilities({ byok: { nansen: "k" }, lang: "en" }).enriched).toBe(true);
+    expect(onchainWallet.capabilities({ byok: {}, lang: "en" }).byok_active).toEqual([]);
+    expect(onchainWallet.capabilities({ byok: { nansen: "k" }, lang: "en" }).byok_active).toContain("nansen");
   });
 });
 ```
@@ -1826,7 +1826,7 @@ export const onchainWallet: Adapter = {
   capabilities(env: EnvConfig) {
     const sources = ["defillama-stablecoins"];
     if (env.byok.nansen) sources.push("nansen");
-    return { enriched: !!env.byok.nansen, sources };
+    return { byok_active: env.byok.nansen ? ["nansen"] : [], sources };
   },
   async fetch(_input, ctx): Promise<AdapterResult> {
     return withCache(ctx.cache, "onchain_wallet", async () => {
@@ -1984,7 +1984,7 @@ export const cexFlow: Adapter = {
   capabilities(env: EnvConfig) {
     const sources = ["coingecko"];
     if (env.byok.glassnode) sources.push("glassnode");
-    return { enriched: !!env.byok.glassnode, sources };
+    return { byok_active: env.byok.glassnode ? ["glassnode"] : [], sources };
   },
   async fetch(_input, ctx): Promise<AdapterResult> {
     return withCache(ctx.cache, "cex_flow", async () => {
@@ -2038,11 +2038,11 @@ git commit -m "feat(adapter): cex_flow — CoinGecko volume + Glassnode BYOK inf
 
 ---
 
-## Task 14: Korea layer adapter (`src/adapters/kr_layer.ts`)
+## Task 14: Korea layer adapter (`src/adapters/kr_premium.ts`)
 
 **Files:**
-- Create: `src/adapters/kr_layer.ts`
-- Create: `tests/adapters/kr_layer.test.ts`
+- Create: `src/adapters/kr_premium.ts`
+- Create: `tests/adapters/kr_premium.test.ts`
 
 Pulls Upbit BTC/ETH KRW prices, USD reference (via CoinGecko), computes kimchi premium and a netflow proxy (24h volume diff vs global).
 
@@ -2054,11 +2054,11 @@ Pulls Upbit BTC/ETH KRW prices, USD reference (via CoinGecko), computes kimchi p
 
 - [ ] **Step 1: Write the failing test**
 
-`tests/adapters/kr_layer.test.ts`:
+`tests/adapters/kr_premium.test.ts`:
 
 ```ts
 import { describe, it, expect } from "vitest";
-import { krLayer } from "../../src/adapters/kr_layer.js";
+import { krPremium } from "../../src/adapters/kr_premium.js";
 import { makeContext } from "../../src/adapters/base.js";
 
 function fakeFetch(map: Record<string, unknown>): typeof fetch {
@@ -2071,7 +2071,7 @@ function fakeFetch(map: Record<string, unknown>): typeof fetch {
   }) as typeof fetch;
 }
 
-describe("kr_layer adapter", () => {
+describe("kr_premium adapter", () => {
   it("computes kimchi premium for BTC and ETH", async () => {
     const ctx = makeContext({
       env: { byok: {}, lang: "en" },
@@ -2087,11 +2087,11 @@ describe("kr_layer adapter", () => {
         "ids=tether&vs_currencies=krw": { tether: { krw: 1_350 } },
       }),
     });
-    const r = await krLayer.fetch(undefined, ctx);
+    const r = await krPremium.fetch(undefined, ctx);
     // BTC global = 100_000 * 1350 = 135_000_000 KRW.
     // Kimchi BTC = (138_000_000 / 135_000_000 - 1) ≈ 0.02222
-    expect(r.data.kimchi_btc).toBeCloseTo(0.02222, 4);
-    expect(r.data.kimchi_eth).toBeCloseTo((5_400_000 / (4_000 * 1_350)) - 1, 4);
+    expect(r.data.kr_premium_btc).toBeCloseTo(0.02222, 4);
+    expect(r.data.kr_premium_eth).toBeCloseTo((5_400_000 / (4_000 * 1_350)) - 1, 4);
     expect(r.data.upbit_volume_btc_24h).toBe(3_000);
     expect(r.sources).toEqual(expect.arrayContaining(["upbit", "coingecko"]));
   });
@@ -2111,8 +2111,8 @@ describe("kr_layer adapter", () => {
         return new Response("nf", { status: 404 });
       }) as typeof fetch,
     });
-    const r = await krLayer.fetch(undefined, ctx);
-    expect(r.data.kimchi_btc).toBeUndefined();
+    const r = await krPremium.fetch(undefined, ctx);
+    expect(r.data.kr_premium_btc).toBeUndefined();
     expect(r.stale).toBe(true);
   });
 });
@@ -2121,12 +2121,12 @@ describe("kr_layer adapter", () => {
 - [ ] **Step 2: Run — verify failure**
 
 ```bash
-npm run test -- adapters/kr_layer
+npm run test -- adapters/kr_premium
 ```
 
 Expected: FAIL.
 
-- [ ] **Step 3: Create `src/adapters/kr_layer.ts`**
+- [ ] **Step 3: Create `src/adapters/kr_premium.ts`**
 
 ```ts
 import type { Adapter, AdapterContext } from "./base.js";
@@ -2150,14 +2150,14 @@ interface UpbitTicker {
   acc_trade_volume_24h: number;
 }
 
-export const krLayer: Adapter = {
-  name: "kr_layer",
+export const krPremium: Adapter = {
+  name: "kr_premium",
   ttlMs: 5 * 60_000,
   capabilities(_env: EnvConfig) {
-    return { enriched: false, sources: ["upbit", "coingecko"] };
+    return { byok_active: [], sources: ["upbit", "coingecko"] };
   },
   async fetch(_input, ctx): Promise<AdapterResult> {
-    return withCache(ctx.cache, "kr_layer", async () => {
+    return withCache(ctx.cache, "kr_premium", async () => {
       const data: Record<string, unknown> = {};
       const sources: string[] = [];
       let stale = false;
@@ -2183,11 +2183,11 @@ export const krLayer: Adapter = {
         const btc = upbit.find((t) => t.market === "KRW-BTC");
         const eth = upbit.find((t) => t.market === "KRW-ETH");
         if (btc) {
-          data.kimchi_btc = btc.trade_price / (usd.bitcoin.usd * usdKrw) - 1;
+          data.kr_premium_btc = btc.trade_price / (usd.bitcoin.usd * usdKrw) - 1;
           data.upbit_volume_btc_24h = btc.acc_trade_volume_24h;
         }
         if (eth) {
-          data.kimchi_eth = eth.trade_price / (usd.ethereum.usd * usdKrw) - 1;
+          data.kr_premium_eth = eth.trade_price / (usd.ethereum.usd * usdKrw) - 1;
           data.upbit_volume_eth_24h = eth.acc_trade_volume_24h;
         }
         sources.push("upbit", "coingecko");
@@ -2209,7 +2209,7 @@ export const krLayer: Adapter = {
 - [ ] **Step 4: Run — verify passing**
 
 ```bash
-npm run test -- adapters/kr_layer
+npm run test -- adapters/kr_premium
 ```
 
 Expected: 2 passed.
@@ -2217,8 +2217,8 @@ Expected: 2 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/adapters/kr_layer.ts tests/adapters/kr_layer.test.ts
-git commit -m "feat(adapter): kr_layer — Upbit + CoinGecko kimchi premium and KR volume"
+git add src/adapters/kr_premium.ts tests/adapters/kr_premium.test.ts
+git commit -m "feat(adapter): kr_premium — Upbit + CoinGecko kimchi premium and KR volume"
 ```
 
 ---
@@ -2229,7 +2229,7 @@ git commit -m "feat(adapter): kr_layer — Upbit + CoinGecko kimchi premium and 
 - Create: `src/adapters/wallet_id.ts`
 - Create: `tests/adapters/wallet_id.test.ts`
 
-BYOK-only adapter — free path returns empty labels (graceful no-op). Used by tools that need wallet labels (e.g., enrichment of `get_market_mood` summary). For v0.1, surface only via tests; tools don't require labels.
+BYOK-only adapter — free path returns empty labels (graceful no-op). Used by tools that need wallet labels (e.g., enrichment of `get_market_pulse` summary). For v0.1, surface only via tests; tools don't require labels.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2266,9 +2266,9 @@ describe("wallet_id adapter", () => {
   });
 
   it("capabilities reports enrichment when arkham or nansen key set", () => {
-    expect(walletId.capabilities({ byok: {}, lang: "en" }).enriched).toBe(false);
-    expect(walletId.capabilities({ byok: { arkham: "k" }, lang: "en" }).enriched).toBe(true);
-    expect(walletId.capabilities({ byok: { nansen: "k" }, lang: "en" }).enriched).toBe(true);
+    expect(walletId.capabilities({ byok: {}, lang: "en" }).byok_active).toEqual([]);
+    expect(walletId.capabilities({ byok: { arkham: "k" }, lang: "en" }).byok_active).toContain("arkham");
+    expect(walletId.capabilities({ byok: { nansen: "k" }, lang: "en" }).byok_active).toContain("nansen");
   });
 });
 ```
@@ -2306,11 +2306,10 @@ export const walletId: Adapter<Input> = {
   name: "wallet_id",
   ttlMs: 24 * 60 * 60_000,
   capabilities(env: EnvConfig) {
-    const enriched = !!(env.byok.arkham || env.byok.nansen);
-    const sources: string[] = [];
-    if (env.byok.arkham) sources.push("arkham");
-    if (env.byok.nansen) sources.push("nansen");
-    return { enriched, sources };
+    const byok_active: string[] = [];
+    if (env.byok.arkham) byok_active.push("arkham");
+    if (env.byok.nansen) byok_active.push("nansen");
+    return { byok_active, sources: byok_active };
   },
   async fetch(input, ctx): Promise<AdapterResult> {
     if (!ctx.env.byok.arkham && !ctx.env.byok.nansen) {
@@ -2355,40 +2354,40 @@ git commit -m "feat(adapter): wallet_id — Arkham/Nansen BYOK with no-op free f
 
 ---
 
-## Task 16: `get_market_mood` tool
+## Task 16: `get_market_pulse` tool
 
 **Files:**
-- Create: `src/tools/get_market_mood.ts`
-- Create: `tests/tools/get_market_mood.test.ts`
+- Create: `src/tools/get_market_pulse.ts`
+- Create: `tests/tools/get_market_pulse.test.ts`
 
-Glue: fan out across 5 adapters (cex_flow, onchain_wallet, derivatives, macro_rwa, kr_layer), assemble the 7 mood-score inputs, call `computeMoodScore`, format summary.
+Glue: fan out across 5 adapters (cex_flow, onchain_wallet, derivatives, macro_rwa, kr_premium), assemble the 7 pulse-score inputs, call `computePulseScore`, format summary.
 
-The tool is exported as a function that takes an `AdapterContext` plus a `MoodConfig` plus a *historical-series provider* (so production can wire to Defillama / Coinglass historical endpoints, while tests inject canned series).
+The tool is exported as a function that takes an `AdapterContext` plus a `PulseConfig` plus a *historical-series provider* (so production can wire to Defillama / Coinglass historical endpoints, while tests inject canned series).
 
 - [ ] **Step 1: Write the failing test**
 
-`tests/tools/get_market_mood.test.ts`:
+`tests/tools/get_market_pulse.test.ts`:
 
 ```ts
 import { describe, it, expect } from "vitest";
-import { getMarketMood } from "../../src/tools/get_market_mood.js";
-import { loadMoodConfig } from "../../src/mood/config.js";
+import { getMarketPulse } from "../../src/tools/get_market_pulse.js";
+import { loadPulseConfig } from "../../src/pulse/config.js";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const cfg = loadMoodConfig();
+const cfg = loadPulseConfig();
 const golden = JSON.parse(
-  readFileSync(resolve("tests/mood/fixtures/golden_input.json"), "utf-8"),
+  readFileSync(resolve("tests/pulse/fixtures/golden_input.json"), "utf-8"),
 ) as { values: Record<string, number>; history: Record<string, number[]> };
 
-describe("get_market_mood", () => {
+describe("get_market_pulse", () => {
   it("returns a fully-shaped ToolResponse", async () => {
-    const r = await getMarketMood({
+    const r = await getMarketPulse({
       cfg,
       values: golden.values,
       history: golden.history,
       sources: ["deribit", "defillama"],
-      enriched: false,
+      byokActive: [],
       lang: "en",
       asOf: "2026-05-08T00:00:00Z",
       staleData: [],
@@ -2397,32 +2396,32 @@ describe("get_market_mood", () => {
     expect(r.score).toBeGreaterThanOrEqual(0);
     expect(r.score!).toBeLessThanOrEqual(100);
     expect(r.confidence).toBe(1);
-    expect(r.capabilities.enriched).toBe(false);
+    expect(r.capabilities.byok_active).toEqual([]);
   });
 
-  it("returns verdict=unknown and confidence=0 when no inputs", async () => {
-    const r = await getMarketMood({
+  it("returns reading=unknown and confidence=0 when no inputs", async () => {
+    const r = await getMarketPulse({
       cfg,
       values: {},
       history: golden.history,
       sources: [],
-      enriched: false,
+      byokActive: [],
       lang: "en",
       asOf: "2026-05-08T00:00:00Z",
       staleData: ["all sources down"],
     });
-    expect(r.verdict).toBe("unknown");
+    expect(r.reading).toBe("unknown");
     expect(r.score).toBeNull();
     expect(r.summary).toMatch(/unavailable/i);
   });
 
   it("preserves stale_data and as_of from caller", async () => {
-    const r = await getMarketMood({
+    const r = await getMarketPulse({
       cfg,
       values: golden.values,
       history: golden.history,
       sources: ["deribit"],
-      enriched: false,
+      byokActive: [],
       lang: "en",
       asOf: "2026-05-08T07:00:00Z",
       staleData: ["coinglass: rate-limited"],
@@ -2436,49 +2435,49 @@ describe("get_market_mood", () => {
 - [ ] **Step 2: Run — verify failure**
 
 ```bash
-npm run test -- tools/get_market_mood
+npm run test -- tools/get_market_pulse
 ```
 
 Expected: FAIL.
 
-- [ ] **Step 3: Create `src/tools/get_market_mood.ts`**
+- [ ] **Step 3: Create `src/tools/get_market_pulse.ts`**
 
 ```ts
 import type { ToolResponse, Lang } from "../types.js";
-import type { MoodConfig } from "../mood/config.js";
-import { computeMoodScore } from "../mood/score.js";
-import { toVerdict, formatSummary } from "../mood/verdict.js";
+import type { PulseConfig } from "../pulse/config.js";
+import { computePulseScore } from "../pulse/score.js";
+import { toReading, formatSummary } from "../pulse/reading.js";
 
-export interface GetMarketMoodArgs {
-  cfg: MoodConfig;
+export interface GetMarketPulseArgs {
+  cfg: PulseConfig;
   values: Record<string, number>;
   history: Record<string, number[]>;
   sources: string[];
-  enriched: boolean;
+  byok_active: string[];
   lang: Lang;
   asOf: string;
   staleData: string[];
 }
 
-export async function getMarketMood(args: GetMarketMoodArgs): Promise<ToolResponse> {
-  const { score, confidence } = computeMoodScore({
+export async function getMarketPulse(args: GetMarketPulseArgs): Promise<ToolResponse> {
+  const { score, confidence } = computePulseScore({
     values: args.values,
     history: args.history,
     cfg: args.cfg,
   });
-  const verdict = toVerdict(score, args.cfg);
-  const summary = formatSummary({ score, verdict, inputs: args.values }, args.lang);
+  const reading = toReading(score, args.cfg);
+  const summary = formatSummary({ score, reading, inputs: args.values }, args.lang);
 
   return {
     summary,
     score,
-    verdict,
+    reading,
     as_of: args.asOf,
     inputs: args.values,
     sources: args.sources,
     stale_data: args.staleData,
     confidence,
-    capabilities: { enriched: args.enriched },
+    capabilities: { byok_active: args.byokActive },
   };
 }
 ```
@@ -2486,7 +2485,7 @@ export async function getMarketMood(args: GetMarketMoodArgs): Promise<ToolRespon
 - [ ] **Step 4: Run — verify passing**
 
 ```bash
-npm run test -- tools/get_market_mood
+npm run test -- tools/get_market_pulse
 ```
 
 Expected: 3 passed.
@@ -2494,8 +2493,8 @@ Expected: 3 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/tools/get_market_mood.ts tests/tools/get_market_mood.test.ts
-git commit -m "feat(tool): get_market_mood — assemble inputs + score + summary"
+git add src/tools/get_market_pulse.ts tests/tools/get_market_pulse.test.ts
+git commit -m "feat(tool): get_market_pulse — assemble inputs + score + summary"
 ```
 
 ---
@@ -2528,22 +2527,22 @@ describe("get_etf_flow", () => {
       window: "7d",
       adapterResult,
       lang: "en",
-      enriched: false,
+      byokActive: [],
       staleData: [],
     });
     expect(r.summary).toMatch(/ETF/);
     expect(r.summary).toMatch(/\$340/);
     expect(r.score).toBeNull();
-    expect(r.verdict).toBe("unknown");
+    expect(r.reading).toBe("unknown");
     expect(r.inputs.etf_7d_net_usd).toBe(340_500_000);
   });
 
-  it("returns verdict=unknown and 'data unavailable' when value missing", async () => {
+  it("returns reading=unknown and 'data unavailable' when value missing", async () => {
     const r = await getEtfFlow({
       window: "7d",
       adapterResult: { data: {}, sources: [], asOf: "x", stale: true },
       lang: "en",
-      enriched: false,
+      byokActive: [],
       staleData: ["farside.co.uk: down"],
     });
     expect(r.summary).toMatch(/unavailable/i);
@@ -2569,7 +2568,7 @@ export interface GetEtfFlowArgs {
   window: "1d" | "7d" | "30d";
   adapterResult: AdapterResult;
   lang: Lang;
-  enriched: boolean;
+  byok_active: string[];
   staleData: string[];
 }
 
@@ -2579,13 +2578,13 @@ export async function getEtfFlow(args: GetEtfFlowArgs): Promise<ToolResponse> {
     return {
       summary: args.lang === "ko" ? "ETF 데이터 사용 불가" : "ETF data unavailable",
       score: null,
-      verdict: "unknown",
+      reading: "unknown",
       as_of: args.adapterResult.asOf,
       inputs: {},
       sources: args.adapterResult.sources,
       stale_data: args.staleData,
       confidence: 0,
-      capabilities: { enriched: args.enriched },
+      capabilities: { byok_active: args.byokActive },
     };
   }
   const sign = v >= 0 ? "+" : "-";
@@ -2596,13 +2595,13 @@ export async function getEtfFlow(args: GetEtfFlowArgs): Promise<ToolResponse> {
   return {
     summary,
     score: null,
-    verdict: "unknown",
+    reading: "unknown",
     as_of: args.adapterResult.asOf,
     inputs: { etf_7d_net_usd: v },
     sources: args.adapterResult.sources,
     stale_data: args.staleData,
     confidence: 1,
-    capabilities: { enriched: args.enriched },
+    capabilities: { byok_active: args.byokActive },
   };
 }
 ```
@@ -2649,7 +2648,7 @@ describe("get_stablecoin_pulse", () => {
         stale: false,
       },
       lang: "en",
-      enriched: false,
+      byokActive: [],
       staleData: [],
     });
     expect(r.summary).toMatch(/stablecoin/i);
@@ -2662,7 +2661,7 @@ describe("get_stablecoin_pulse", () => {
       window: "7d",
       adapterResult: { data: {}, sources: [], asOf: "x", stale: true },
       lang: "en",
-      enriched: false,
+      byokActive: [],
       staleData: ["defillama: down"],
     });
     expect(r.summary).toMatch(/unavailable/i);
@@ -2687,7 +2686,7 @@ export interface Args {
   window: "1d" | "7d" | "30d";
   adapterResult: AdapterResult;
   lang: Lang;
-  enriched: boolean;
+  byok_active: string[];
   staleData: string[];
 }
 
@@ -2705,13 +2704,13 @@ export async function getStablecoinPulse(args: Args): Promise<ToolResponse> {
   return {
     summary,
     score: null,
-    verdict: "unknown",
+    reading: "unknown",
     as_of: args.adapterResult.asOf,
     inputs: { stablecoin_7d_delta_pct: delta, ...(typeof now === "number" ? { stablecoin_supply_now_usd: now } : {}) },
     sources: args.adapterResult.sources,
     stale_data: args.staleData,
     confidence: 1,
-    capabilities: { enriched: args.enriched },
+    capabilities: { byok_active: args.byokActive },
   };
 }
 
@@ -2719,13 +2718,13 @@ function unavailable(args: Args, label: string): ToolResponse {
   return {
     summary: args.lang === "ko" ? `${label} 데이터 사용 불가` : `${label} data unavailable`,
     score: null,
-    verdict: "unknown",
+    reading: "unknown",
     as_of: args.adapterResult.asOf,
     inputs: {},
     sources: args.adapterResult.sources,
     stale_data: args.staleData,
     confidence: 0,
-    capabilities: { enriched: args.enriched },
+    capabilities: { byok_active: args.byokActive },
   };
 }
 ```
@@ -2778,7 +2777,7 @@ describe("get_funding_oi", () => {
         stale: false,
       },
       lang: "en",
-      enriched: true,
+      byokActive: ["coinglass"],
       staleData: [],
     });
     expect(r.inputs.funding_btc).toBeCloseTo(0.00018, 6);
@@ -2794,7 +2793,7 @@ describe("get_funding_oi", () => {
         asset: "DOGE" as unknown as "BTC",
         adapterResult: { data: {}, sources: [], asOf: "x", stale: false },
         lang: "en",
-        enriched: false,
+        byokActive: [],
         staleData: [],
       }),
     ).rejects.toThrow(/asset/);
@@ -2819,7 +2818,7 @@ export interface Args {
   asset: "BTC" | "ETH";
   adapterResult: AdapterResult;
   lang: Lang;
-  enriched: boolean;
+  byok_active: string[];
   staleData: string[];
 }
 
@@ -2847,13 +2846,13 @@ export async function getFundingOi(args: Args): Promise<ToolResponse> {
   return {
     summary,
     score: null,
-    verdict: "unknown",
+    reading: "unknown",
     as_of: args.adapterResult.asOf,
     inputs,
     sources: args.adapterResult.sources,
     stale_data: args.staleData,
     confidence: Object.keys(inputs).length > 0 ? 1 : 0,
-    capabilities: { enriched: args.enriched },
+    capabilities: { byok_active: args.byokActive },
   };
 }
 ```
@@ -2895,8 +2894,8 @@ describe("get_kr_premium", () => {
       asset: "all",
       adapterResult: {
         data: {
-          kimchi_btc: 0.022,
-          kimchi_eth: 0.018,
+          kr_premium_btc: 0.022,
+          kr_premium_eth: 0.018,
           upbit_volume_btc_24h: 3_000,
           upbit_volume_eth_24h: 50_000,
         },
@@ -2905,29 +2904,29 @@ describe("get_kr_premium", () => {
         stale: false,
       },
       lang: "en",
-      enriched: false,
+      byokActive: [],
       staleData: [],
     });
     expect(r.summary).toMatch(/BTC kimchi \+2\.2%/);
     expect(r.summary).toMatch(/ETH kimchi \+1\.8%/);
-    expect(r.inputs.kimchi_btc).toBeCloseTo(0.022, 4);
+    expect(r.inputs.kr_premium_btc).toBeCloseTo(0.022, 4);
   });
 
   it("filters to BTC when asset=BTC", async () => {
     const r = await getKrPremium({
       asset: "BTC",
       adapterResult: {
-        data: { kimchi_btc: 0.022, kimchi_eth: 0.018 },
+        data: { kr_premium_btc: 0.022, kr_premium_eth: 0.018 },
         sources: [],
         asOf: "x",
         stale: false,
       },
       lang: "en",
-      enriched: false,
+      byokActive: [],
       staleData: [],
     });
-    expect(r.inputs.kimchi_btc).toBeCloseTo(0.022, 4);
-    expect(r.inputs.kimchi_eth).toBeUndefined();
+    expect(r.inputs.kr_premium_btc).toBeCloseTo(0.022, 4);
+    expect(r.inputs.kr_premium_eth).toBeUndefined();
   });
 });
 ```
@@ -2949,7 +2948,7 @@ export interface Args {
   asset: "BTC" | "ETH" | "all";
   adapterResult: AdapterResult;
   lang: Lang;
-  enriched: boolean;
+  byok_active: string[];
   staleData: string[];
 }
 
@@ -2974,13 +2973,13 @@ export async function getKrPremium(args: Args): Promise<ToolResponse> {
   return {
     summary,
     score: null,
-    verdict: "unknown",
+    reading: "unknown",
     as_of: args.adapterResult.asOf,
     inputs,
     sources: args.adapterResult.sources,
     stale_data: args.staleData,
     confidence: parts.length > 0 ? 1 : 0,
-    capabilities: { enriched: args.enriched },
+    capabilities: { byok_active: args.byokActive },
   };
 }
 ```
@@ -3027,7 +3026,7 @@ describe("get_rwa_pulse", () => {
         stale: false,
       },
       lang: "en",
-      enriched: false,
+      byokActive: [],
       staleData: [],
     });
     expect(r.summary).toMatch(/RWA TVL/);
@@ -3054,7 +3053,7 @@ export interface Args {
   window: "1d" | "7d" | "30d";
   adapterResult: AdapterResult;
   lang: Lang;
-  enriched: boolean;
+  byok_active: string[];
   staleData: string[];
 }
 
@@ -3064,13 +3063,13 @@ export async function getRwaPulse(args: Args): Promise<ToolResponse> {
     return {
       summary: args.lang === "ko" ? "RWA 데이터 사용 불가" : "RWA data unavailable",
       score: null,
-      verdict: "unknown",
+      reading: "unknown",
       as_of: args.adapterResult.asOf,
       inputs: {},
       sources: args.adapterResult.sources,
       stale_data: args.staleData,
       confidence: 0,
-      capabilities: { enriched: args.enriched },
+      capabilities: { byok_active: args.byokActive },
     };
   }
   const usdB = (tvl / 1e9).toFixed(1);
@@ -3080,13 +3079,13 @@ export async function getRwaPulse(args: Args): Promise<ToolResponse> {
   return {
     summary,
     score: null,
-    verdict: "unknown",
+    reading: "unknown",
     as_of: args.adapterResult.asOf,
     inputs: { rwa_tvl_usd: tvl },
     sources: args.adapterResult.sources,
     stale_data: args.staleData,
     confidence: 1,
-    capabilities: { enriched: args.enriched },
+    capabilities: { byok_active: args.byokActive },
   };
 }
 ```
@@ -3117,7 +3116,7 @@ git commit -m "feat(tool): get_rwa_pulse — RWA TVL summary"
 
 The server registers the 6 tools, exposes their JSON schemas via zod-to-JSONSchema (using zod's `.parse`/`.shape` directly), and dispatches incoming tool calls to the tool handler functions, sourcing adapter data from a single shared `AdapterContext`.
 
-For `get_market_mood`, historical series are fetched from a small in-process series provider that calls Defillama's daily history APIs. To keep tests deterministic, the series provider is dependency-injected.
+For `get_market_pulse`, historical series are fetched from a small in-process series provider that calls Defillama's daily history APIs. To keep tests deterministic, the series provider is dependency-injected.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3135,7 +3134,7 @@ describe("server", () => {
       "get_etf_flow",
       "get_funding_oi",
       "get_kr_premium",
-      "get_market_mood",
+      "get_market_pulse",
       "get_rwa_pulse",
       "get_stablecoin_pulse",
     ]);
@@ -3175,9 +3174,9 @@ import { derivatives } from "./adapters/derivatives.js";
 import { macroRwa } from "./adapters/macro_rwa.js";
 import { onchainWallet } from "./adapters/onchain_wallet.js";
 import { cexFlow } from "./adapters/cex_flow.js";
-import { krLayer } from "./adapters/kr_layer.js";
-import { loadMoodConfig } from "./mood/config.js";
-import { getMarketMood } from "./tools/get_market_mood.js";
+import { krPremium } from "./adapters/kr_premium.js";
+import { loadPulseConfig } from "./pulse/config.js";
+import { getMarketPulse } from "./tools/get_market_pulse.js";
 import { getEtfFlow } from "./tools/get_etf_flow.js";
 import { getStablecoinPulse } from "./tools/get_stablecoin_pulse.js";
 import { getFundingOi } from "./tools/get_funding_oi.js";
@@ -3199,10 +3198,10 @@ interface ToolDef {
 
 const TOOLS: ToolDef[] = [
   {
-    name: "get_market_mood",
-    description: "Composite onchain market mood score (0–100) with verdict and raw inputs.",
+    name: "get_market_pulse",
+    description: "Composite onchain market pulse score (0–100) with reading and raw inputs.",
     inputSchema: { type: "object", properties: {} },
-    handler: handleMarketMood,
+    handler: handleMarketPulse,
   },
   {
     name: "get_etf_flow",
@@ -3240,24 +3239,27 @@ export function listTools(): ToolDef[] {
   return TOOLS;
 }
 
-async function handleMarketMood(raw: unknown, env: EnvConfig): Promise<ToolResponse> {
+async function handleMarketPulse(raw: unknown, env: EnvConfig): Promise<ToolResponse> {
   NoArgs.parse(raw ?? {});
-  const cfg = loadMoodConfig();
+  const cfg = loadPulseConfig();
   const ctx = makeContext({ env });
   const [d, m, w, c, k] = await Promise.allSettled([
     derivatives.fetch(undefined, ctx),
     macroRwa.fetch(undefined, ctx),
     onchainWallet.fetch(undefined, ctx),
     cexFlow.fetch(undefined, ctx),
-    krLayer.fetch(undefined, ctx),
+    krPremium.fetch(undefined, ctx),
   ]);
   const values: Record<string, number> = {};
   const sources: string[] = [];
   const staleData: string[] = [];
-  const enriched =
-    derivatives.capabilities(env).enriched ||
-    onchainWallet.capabilities(env).enriched ||
-    cexFlow.capabilities(env).enriched;
+  const byokActive = Array.from(new Set([
+      ...derivatives.capabilities(env).byok_active,
+      ...onchainWallet.capabilities(env).byok_active,
+      ...cexFlow.capabilities(env).byok_active,
+      ...macroRwa.capabilities(env).byok_active,
+      ...krPremium.capabilities(env).byok_active,
+    ]));
 
   if (d.status === "fulfilled") {
     if (typeof d.value.data.funding_btc === "number" && typeof d.value.data.funding_eth === "number") {
@@ -3288,7 +3290,7 @@ async function handleMarketMood(raw: unknown, env: EnvConfig): Promise<ToolRespo
     if (typeof k.value.data.upbit_volume_btc_24h === "number") values.upbit_netflow_7d_kr = k.value.data.upbit_volume_btc_24h; // proxy
     sources.push(...k.value.sources);
   } else {
-    staleData.push("kr_layer: " + (k.reason as Error).message);
+    staleData.push("kr_premium: " + (k.reason as Error).message);
   }
   if (c.status === "fulfilled") {
     sources.push(...c.value.sources);
@@ -3300,12 +3302,12 @@ async function handleMarketMood(raw: unknown, env: EnvConfig): Promise<ToolRespo
     Object.keys(values).map((k) => [k, []]),
   );
 
-  return getMarketMood({
+  return getMarketPulse({
     cfg,
     values,
     history,
     sources,
-    enriched,
+    byokActive,
     lang: env.lang,
     asOf: new Date().toISOString(),
     staleData,
@@ -3320,7 +3322,7 @@ async function handleEtfFlow(raw: unknown, env: EnvConfig): Promise<ToolResponse
     window: args.window,
     adapterResult: r,
     lang: env.lang,
-    enriched: false,
+    byokActive: [],
     staleData: r.stale ? ["macro_rwa: stale"] : [],
   });
 }
@@ -3333,7 +3335,7 @@ async function handleStablecoinPulse(raw: unknown, env: EnvConfig): Promise<Tool
     window: args.window,
     adapterResult: r,
     lang: env.lang,
-    enriched: onchainWallet.capabilities(env).enriched,
+    byokActive: onchainWallet.capabilities(env).byok_active,
     staleData: r.stale ? ["onchain_wallet: stale"] : [],
   });
 }
@@ -3346,7 +3348,7 @@ async function handleFundingOi(raw: unknown, env: EnvConfig): Promise<ToolRespon
     asset: args.asset,
     adapterResult: r,
     lang: env.lang,
-    enriched: derivatives.capabilities(env).enriched,
+    byokActive: derivatives.capabilities(env).byok_active,
     staleData: r.stale ? ["derivatives: stale"] : [],
   });
 }
@@ -3354,13 +3356,13 @@ async function handleFundingOi(raw: unknown, env: EnvConfig): Promise<ToolRespon
 async function handleKrPremium(raw: unknown, env: EnvConfig): Promise<ToolResponse> {
   const args = KrPremiumArgs.parse(raw ?? {});
   const ctx = makeContext({ env });
-  const r = await krLayer.fetch(undefined, ctx);
+  const r = await krPremium.fetch(undefined, ctx);
   return getKrPremium({
     asset: args.asset,
     adapterResult: r,
     lang: env.lang,
-    enriched: false,
-    staleData: r.stale ? ["kr_layer: stale"] : [],
+    byokActive: [],
+    staleData: r.stale ? ["kr_premium: stale"] : [],
   });
 }
 
@@ -3372,7 +3374,7 @@ async function handleRwaPulse(raw: unknown, env: EnvConfig): Promise<ToolRespons
     window: args.window,
     adapterResult: r,
     lang: env.lang,
-    enriched: false,
+    byokActive: [],
     staleData: r.stale ? ["macro_rwa: stale"] : [],
   });
 }
@@ -3505,7 +3507,7 @@ description: "BTC/ETH average funding |z| > 2 (extreme positioning)."
 
 ```yaml
 name: kimchi-spread-spike
-metric: kimchi_btc
+metric: kr_premium_btc
 condition: greater_than
 threshold: 0.05
 window: 1d
@@ -3613,7 +3615,7 @@ Set `OPM_LANG=ko` for Korean `summary` strings (default `en`).
 
 | Tool | Args | Description |
 |---|---|---|
-| `get_market_mood` | none | Composite mood score 0–100 + verdict |
+| `get_market_pulse` | none | Composite pulse score 0–100 + reading |
 | `get_etf_flow` | `window?` | ETF net flow over 1d/7d/30d |
 | `get_stablecoin_pulse` | `window?` | Stablecoin supply Δ |
 | `get_funding_oi` | `asset` | Funding/PCR/OI for BTC or ETH |
@@ -3649,7 +3651,7 @@ Then check `https://github.com/capitalparser/onchain-pulse-mcp/actions` — firs
 - [ ] `npm run typecheck` exits 0.
 - [ ] `npm run build` produces `dist/index.js` (with shebang) and `dist/index.d.ts`.
 - [ ] `node dist/index.js` starts an MCP server on stdio without errors.
-- [ ] Adding `onchain-pulse` to Claude Desktop config and asking *"call get_market_mood"* returns a JSON `ToolResponse`.
+- [ ] Adding `onchain-pulse` to Claude Desktop config and asking *"call get_market_pulse"* returns a JSON `ToolResponse`.
 - [ ] Setting `NANSEN_API_KEY=fake` (or any unused-but-set value) does not crash the server; the adapter handles 4xx gracefully via `safeJson`.
 - [ ] All 6 reference YAML rules exist under `examples/rules/`.
 - [ ] CI run on `main` passes.
@@ -3660,7 +3662,7 @@ Then check `https://github.com/capitalparser/onchain-pulse-mcp/actions` — firs
 
 Per the spec's Open Questions and Future Work sections:
 
-- Real history series for `get_market_mood` (currently `history` is empty in `handleMarketMood`, so z-scores degenerate to 0). v0.2 will add per-key 30d rolling caches.
-- Backtesting harness for mood score weights.
+- Real history series for `get_market_pulse` (currently `history` is empty in `handleMarketPulse`, so z-scores degenerate to 0). v0.2 will add per-key 30d rolling caches.
+- Backtesting harness for pulse score weights.
 - B view (screening tools) and A view (timing tools).
 - HTTP transport + Fly.io hosting.

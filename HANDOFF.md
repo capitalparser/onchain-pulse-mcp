@@ -23,7 +23,7 @@ Per `plans/2026-05-08-onchain-pulse-mcp.md`. Each task includes red→green→co
 
 1. **TDD discipline**: write the failing test first, run to confirm it fails, implement minimum, run to confirm pass, commit. Plan steps are explicit about this.
 2. **No new dependencies** beyond those declared in `package.json` without an ADR justifying.
-3. **`config/mood.yaml`** is the source of truth for composite weights — do not hardcode in TypeScript.
+3. **`config/pulse.yaml`** is the source of truth for composite weights — do not hardcode in TypeScript.
 4. **stdio transport only** in v0.1; HTTP is v0.4.
 5. **No persistence**; in-memory cache only (`lru-cache`).
 6. **Locale**: `summary` field defaults to English; `OPM_LANG=ko` switches to Korean. Both branches required.
