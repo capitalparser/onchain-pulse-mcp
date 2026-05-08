@@ -38,12 +38,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/PLACEHOLDER/onchain-pulse-mcp.git"
+    "url": "git+https://github.com/capitalparser/onchain-pulse-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/PLACEHOLDER/onchain-pulse-mcp/issues"
+    "url": "https://github.com/capitalparser/onchain-pulse-mcp/issues"
   },
-  "homepage": "https://github.com/PLACEHOLDER/onchain-pulse-mcp#readme",
+  "homepage": "https://github.com/capitalparser/onchain-pulse-mcp#readme",
   "dependencies": {},
   "devDependencies": {}
 }
