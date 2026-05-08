@@ -1,34 +1,100 @@
-# CONTEXT.md — onchain-pulse-mcp
+# onchain-pulse-mcp
 
-> Mattpocock-style domain dictionary. **Status: SEED** — awaiting `/grill-with-docs` to populate.
+A read-only MCP server that exposes onchain market-state signals — CEX flow, on-chain wallets, derivatives, ETF/RWA macro, Korea premium — as a **query interface** for AI agents and humans.
 
-## Why this file exists
+## Frame
 
-Codex and future contributors should be able to read this single page and use the *right names* for the *right things* in this codebase. Until `/grill-with-docs` runs, the terms below are provisional and may shift.
+This is a **query interface**, not a recommender. The server reports the state of the market — never prescribes a trade. The composite Pulse score and bucketed Reading are convenience derivations; the raw inputs are always exposed alongside so consumers can re-interpret. The summary line is a description of the snapshot, not an instruction.
 
-## Provisional ubiquitous language (subject to revision)
+## Language
 
-| Term | Provisional meaning | Source |
-|---|---|---|
-| **Mood (mood score)** | Composite 0–100 reading of onchain market risk appetite | spec §5.4 |
-| **Verdict** | Bucketed mood: `risk-off` / `neutral` / `risk-on` / `unknown` | spec §5.3 |
-| **Adapter** | Per-source data fetcher with free + optional BYOK paths | spec §5.1 |
-| **BYOK** | Bring-Your-Own-Key — env-var-supplied paid API keys for enrichment | spec §5.6 |
-| **Enriched** | Capability flag indicating BYOK key was used for this response | spec §5.3 |
-| **Stale data** | List of sources that returned cached or fallback values, surfaced per response | spec §7 |
-| **Confidence** | 0–1 ratio of input weight present vs total weight (renormalisation factor) | spec §5.4 |
-| **Kimchi premium** | Korea-specific BTC/ETH price spread vs global USD price (proxied via USDT/KRW) | spec §5.1 (kr_layer) |
-| **Funding reverse** | Sign-flip of funding rate contribution when |z| ≥ threshold (overheated positioning) | spec §5.4 |
-| **Composite** | The act of combining 7 weighted-z inputs through sigmoid into a single mood score | spec §5.4 |
+### Domain measurement
 
-## Open domain questions for `/grill-with-docs`
+**Pulse**:
+The composite onchain market-state measurement. A 0–100 score derived from seven weighted-z inputs. The top-level concept this server reports.
+_Avoid_: mood, regime, state.
 
-1. Is "mood" the right top-level frame, or do users distinguish "regime" (longer-horizon) from "mood" (intraday)?
-2. Is "verdict" overloaded? It implies normative; a neutral-only frame may serve agents better than risk-on/off.
-3. Does the BYOK terminology need clearer per-key roles (enricher vs replacer)?
-4. Is "adapter" the right boundary unit? (vs "source", "fetcher", "channel")
-5. Korea layer terms — is "kimchi premium" idiomatic enough for an English-default OSS, or should the field be `kr_premium` exclusively in code?
+**Score**:
+The numeric 0–100 form of the Pulse.
 
-## Glossary maintenance
+**Reading**:
+The bucketed label of the current Score — one of `risk-off | neutral | risk-on | unknown`. A snapshot value, not a recommendation; consumers interpret it.
+_Avoid_: verdict, judgment, call (all imply prescription).
 
-When `/grill-with-docs` runs, replace this seed entirely with the agreed ubiquitous-language glossary. Any subsequent term additions during implementation must update both this file and the relevant ADR.
+**Confidence**:
+The 0–1 ratio of input weight present vs total weight in this Pulse computation. 1.0 means all seven inputs contributed; lower values reflect missing or stale inputs (re-normalised weights).
+
+**Funding reverse**:
+A sign-flip of the funding-rate contribution to the Pulse when its z-score exceeds the configured threshold. Models the "extreme positioning is contrarian" effect.
+
+### Data plumbing
+
+**Adapter**:
+A code unit that wraps one or more **Sources** behind a uniform `AdapterResult` interface. Six adapters in v0.1: derivatives, macro_rwa, onchain_wallet, cex_flow, kr_premium, wallet_id. An Adapter is the deployment unit; a Source is a single external endpoint.
+
+**Source**:
+An external API or data origin (e.g., `deribit`, `coinglass`, `defillama`, `farside.co.uk`, `upbit`). One Adapter wraps 1–3 Sources. Sources appear in tool responses under `sources: [...]`.
+
+**BYOK** (Bring-Your-Own-Key):
+Env-var-supplied paid API keys (`NANSEN_API_KEY`, `GLASSNODE_API_KEY`, etc.) that a consumer provides to enrich responses with paid-tier data. The server never persists keys.
+
+**byok_active**:
+The list of BYOK keys actually used during a tool call (e.g., `["coinglass", "nansen"]`). Empty list ↔ free-only path. Reported in `capabilities.byok_active` so consumers see which paid sources contributed.
+_Avoid_: `enriched` (single boolean — too coarse).
+
+**Stale data**:
+The list of Sources whose response was a cached or fallback value rather than a fresh fetch. Surfaced per response as `stale_data: [...]` so consumers can downgrade trust on those fields.
+
+**Snapshot**:
+A complete tool response — Score, Reading, raw inputs, sources, stale_data, confidence, capabilities, all with a single `as_of` timestamp. Snapshots are stateless.
+
+### Korea layer
+
+**KR Premium**:
+The price spread between the Korean (Upbit/Bithumb) BTC or ETH price and the global USD price (proxied through USDT/KRW). Always expressed as a fractional delta. The corresponding code surface is `kr_premium_btc` / `kr_premium_eth` and the adapter is `kr_premium`.
+_Avoid_: `kimchi_premium` in code keys (informal alias). Use "(commonly known as kimchi premium)" only in human-facing prose.
+
+**Upbit netflow**:
+A 7d proxy for Korean retail buying pressure, currently approximated by Upbit BTC/ETH 24h trading volume relative to global volume. v0.1 limitation: not a true wallet-level netflow.
+
+### Metric key convention
+
+Composite-input keys follow `{concept}_{window}_{aggregation}_{assets?}`:
+
+- `etf_7d_net_flow_btc_eth` — concept: ETF flow, window: 7d, aggregation: net, assets: BTC+ETH
+- `stablecoin_7d_supply_delta` — concept: stablecoin supply, window: 7d, aggregation: delta
+- `funding_avg_btc_eth` — concept: funding rate, window: instant, aggregation: avg, assets: BTC+ETH
+- `btc_dominance_7d_delta`, `options_put_call_ratio`, `rwa_tvl_7d_delta`, `upbit_netflow_7d_kr`
+
+Flat key form is intentional: yaml legibility, zod validation, golden test fixtures all benefit from a single-string identifier.
+
+## Relationships
+
+- A **Tool call** produces one **Snapshot**.
+- A **Snapshot** contains exactly one **Score** and one **Reading**.
+- A **Score** is computed from up to seven weighted inputs (see Metric key convention).
+- An **Adapter** wraps one or more **Sources**; the Snapshot's `sources: [...]` lists every Source that contributed.
+- A **BYOK key** activates one or more **Adapter** enrichments; the Snapshot's `capabilities.byok_active: [...]` lists which keys were actually used (not just present).
+- Each **Source** has its own freshness expectation (TTL); cached fallbacks appear in **Stale data**.
+
+## Example dialogue
+
+> **Agent:** "Query the current market Pulse."
+> **Server:** *Returns Snapshot: Score 78, Reading risk-on, sources: [farside.co.uk, defillama, deribit, upbit]. capabilities.byok_active: []. confidence: 1.0.*
+>
+> **Agent:** "Why so high?"
+> **Server:** *(no opinion — but the consumer can read the inputs: ETF +$340M, stablecoin +1.4%, funding mild, kr_premium +1.8% — and form their own narrative.)*
+>
+> **Agent:** "Re-query with my Coinglass key set."
+> **Server:** *Returns updated Snapshot. capabilities.byok_active: ["coinglass"]. Same Score (the inputs that drive Pulse didn't change), but `inputs.options_put_call_ratio` is now from Coinglass Pro rather than the Deribit free path.*
+>
+> **Agent:** "Has anything changed in the last hour?"
+> **Server:** *(server has no memory — the consumer must compare two Snapshots.)*
+
+## Flagged ambiguities
+
+- **`verdict` vs `reading`** — resolved as `reading` (query-interface frame; non-prescriptive).
+- **`mood` vs `pulse`** — resolved as `pulse` (matches project name and `*_pulse` tool naming).
+- **`kr_layer` vs `kr_premium` vs `kimchi_premium`** — resolved as `kr_premium` for code; "kimchi premium" allowed in human-facing prose only.
+- **`capabilities.enriched: boolean`** — resolved by replacing with `capabilities.byok_active: string[]` for transparency and future multi-key compatibility.
+- **`adapter` vs `source`** — resolved by keeping both as distinct concepts (Adapter = code unit; Source = external endpoint).
