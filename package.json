@@ -1,0 +1,49 @@
+{
+  "name": "onchain-pulse-mcp",
+  "version": "0.0.1",
+  "description": "Read-only MCP server exposing onchain market mood signals (CEX flow, on-chain wallets, derivatives, ETF/RWA macro, Korea premium) for AI agents and humans.",
+  "license": "MIT",
+  "author": "Kim Kyung-jun <iwbasm92@gmail.com>",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "onchain-pulse-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "config",
+    "examples",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "dev": "tsx src/index.ts",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src tests"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "onchain",
+    "crypto",
+    "rwa",
+    "market-mood",
+    "trading",
+    "ai-agent",
+    "byok"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PLACEHOLDER/onchain-pulse-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/PLACEHOLDER/onchain-pulse-mcp/issues"
+  },
+  "homepage": "https://github.com/PLACEHOLDER/onchain-pulse-mcp#readme",
+  "dependencies": {},
+  "devDependencies": {}
+}
