@@ -1105,6 +1105,244 @@ git commit -m "feat(pulse): toReading bucket mapping + en/ko formatSummary"
 
 ---
 
+## Task 8.5: History persistence (`src/pulse/history.ts`)
+
+**Files:**
+- Create: `src/pulse/history.ts`
+- Create: `tests/pulse/history.test.ts`
+- Modify: `config/pulse.yaml` (extend with `history:` section)
+- Modify: `src/pulse/config.ts` (extend `PulseConfigSchema` with `history` block)
+
+> **Why this task exists:** The composite pulse score in Task 9 reads `history[key]` to compute z-scores; without persisted history, every production call collapses to `score=50, reading=neutral`. See ADR-0003 for the full design rationale, including the reconciliation with spec §2 N5 ("no persistence"). This task introduces a per-installation filesystem ring buffer that survives process restart and accumulates one datapoint per (key, 24h) bucket.
+
+- [ ] **Step 1: Extend `config/pulse.yaml`**
+
+Append to the existing config (created in Task 7):
+
+```yaml
+history:
+  path: ~/.cache/onchain-pulse-mcp/history.json   # overridable by OPM_HISTORY_PATH
+  window_days: 30
+  dedup_hours: 24
+  min_samples_for_zscore: 5
+```
+
+- [ ] **Step 2: Extend `PulseConfigSchema` in `src/pulse/config.ts`**
+
+Add a `history` block to the zod schema (back-compat: optional):
+
+```ts
+const HistoryConfigSchema = z.object({
+  path: z.string(),
+  window_days: z.number().int().positive(),
+  dedup_hours: z.number().positive(),
+  min_samples_for_zscore: z.number().int().positive(),
+});
+
+// Inside PulseConfigSchema:
+history: HistoryConfigSchema.optional(),
+```
+
+In `loadPulseConfig`, expand `~` in `cfg.history?.path` using `os.homedir()` before returning.
+
+- [ ] **Step 3: Write the failing test**
+
+`tests/pulse/history.test.ts`:
+
+```ts
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { makeFileHistoryStore, computeWindowDelta } from "../../src/pulse/history.js";
+
+let dir: string;
+let path: string;
+
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), "opm-history-"));
+  path = join(dir, "history.json");
+});
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
+
+describe("FileHistoryStore", () => {
+  it("returns empty record on first load", () => {
+    const s = makeFileHistoryStore({ path, windowDays: 30, dedupHours: 24 });
+    expect(s.load()).toEqual({});
+  });
+
+  it("appends and persists a datapoint across instances", async () => {
+    const s = makeFileHistoryStore({ path, windowDays: 30, dedupHours: 24 });
+    s.appendDatapoint("etf_7d_net_flow_btc_eth", 120_000_000, new Date("2026-05-08T00:00:00Z"));
+    await s.save();
+    const s2 = makeFileHistoryStore({ path, windowDays: 30, dedupHours: 24 });
+    expect(s2.load().etf_7d_net_flow_btc_eth).toEqual([120_000_000]);
+  });
+
+  it("deduplicates within dedup window", async () => {
+    const s = makeFileHistoryStore({ path, windowDays: 30, dedupHours: 24 });
+    s.appendDatapoint("k", 1, new Date("2026-05-08T00:00:00Z"));
+    s.appendDatapoint("k", 2, new Date("2026-05-08T12:00:00Z")); // same 24h bucket → ignored
+    s.appendDatapoint("k", 3, new Date("2026-05-09T01:00:00Z")); // next bucket
+    await s.save();
+    expect(s.load().k).toEqual([1, 3]);
+  });
+
+  it("trims entries older than window", async () => {
+    const s = makeFileHistoryStore({ path, windowDays: 30, dedupHours: 24 });
+    const old = new Date(Date.now() - 40 * 24 * 3600 * 1000);
+    const recent = new Date();
+    s.appendDatapoint("k", 99, old);
+    s.appendDatapoint("k", 100, recent);
+    await s.save();
+    expect(s.load().k).toEqual([100]);
+  });
+
+  it("atomic write — no .tmp file remains after successful save", async () => {
+    const s = makeFileHistoryStore({ path, windowDays: 30, dedupHours: 24 });
+    s.appendDatapoint("k", 1, new Date());
+    await s.save();
+    expect(existsSync(`${path}.tmp`)).toBe(false);
+  });
+});
+
+describe("computeWindowDelta", () => {
+  it("returns 0 when series shorter than window", () => {
+    expect(computeWindowDelta([1, 2, 3], 4, 7)).toBe(0);
+  });
+
+  it("returns relative delta when series has enough points", () => {
+    const series = [100, 100, 100, 100, 100, 100, 100, 100]; // 8 points
+    expect(computeWindowDelta(series, 110, 7)).toBeCloseTo(0.1, 5); // (110-100)/100
+  });
+
+  it("returns 0 when historical reference is 0", () => {
+    expect(computeWindowDelta([0, 0, 0, 0, 0, 0, 0, 0], 10, 7)).toBe(0);
+  });
+});
+```
+
+- [ ] **Step 4: Run — verify failure**
+
+```bash
+npm run test -- pulse/history
+```
+
+Expected: FAIL.
+
+- [ ] **Step 5: Create `src/pulse/history.ts`**
+
+```ts
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+
+interface Datapoint {
+  asOf: string;
+  value: number;
+}
+
+interface StoreEnvelope {
+  version: 1;
+  window_days: number;
+  series: Record<string, Datapoint[]>;
+}
+
+export interface HistoryStore {
+  load(): Record<string, number[]>;
+  appendDatapoint(key: string, value: number, asOf: Date): void;
+  save(): Promise<void>;
+}
+
+export interface HistoryStoreOpts {
+  path: string;
+  windowDays: number;
+  dedupHours: number;
+}
+
+export function makeFileHistoryStore(opts: HistoryStoreOpts): HistoryStore {
+  const envelope: StoreEnvelope = readEnvelope(opts.path, opts.windowDays);
+
+  return {
+    load() {
+      trimWindow(envelope, opts.windowDays);
+      const out: Record<string, number[]> = {};
+      for (const [k, dps] of Object.entries(envelope.series)) {
+        out[k] = dps.map((d) => d.value);
+      }
+      return out;
+    },
+    appendDatapoint(key, value, asOf) {
+      const list = envelope.series[key] ?? (envelope.series[key] = []);
+      const last = list[list.length - 1];
+      if (last) {
+        const lastT = new Date(last.asOf).getTime();
+        if (asOf.getTime() - lastT < opts.dedupHours * 3600 * 1000) return;
+      }
+      list.push({ asOf: asOf.toISOString(), value });
+    },
+    async save() {
+      trimWindow(envelope, opts.windowDays);
+      mkdirSync(dirname(opts.path), { recursive: true });
+      const tmp = `${opts.path}.tmp`;
+      writeFileSync(tmp, JSON.stringify(envelope, null, 2));
+      renameSync(tmp, opts.path);
+    },
+  };
+}
+
+function readEnvelope(path: string, windowDays: number): StoreEnvelope {
+  if (!existsSync(path)) return { version: 1, window_days: windowDays, series: {} };
+  try {
+    const raw = readFileSync(path, "utf-8");
+    const obj = JSON.parse(raw) as StoreEnvelope;
+    if (obj.version !== 1) throw new Error(`unsupported history version: ${obj.version}`);
+    return obj;
+  } catch {
+    return { version: 1, window_days: windowDays, series: {} };
+  }
+}
+
+function trimWindow(env: StoreEnvelope, windowDays: number): void {
+  const cutoff = Date.now() - windowDays * 24 * 3600 * 1000;
+  for (const [k, dps] of Object.entries(env.series)) {
+    env.series[k] = dps.filter((d) => new Date(d.asOf).getTime() >= cutoff);
+  }
+}
+
+/**
+ * Relative window delta — used by handleMarketPulse to derive
+ * `*_7d_delta` inputs from raw history series.
+ */
+export function computeWindowDelta(series: number[], current: number, days: number): number {
+  if (series.length < days) return 0;
+  const past = series[series.length - days] ?? 0;
+  if (past === 0) return 0;
+  return (current - past) / Math.abs(past);
+}
+```
+
+- [ ] **Step 6: Run — verify passing**
+
+```bash
+npm run test -- pulse/history
+npm run test -- pulse/config
+```
+
+Expected: 8 passed (5 history + 3 updated config).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/pulse/history.ts tests/pulse/history.test.ts config/pulse.yaml src/pulse/config.ts tests/pulse/config.test.ts
+git commit -m "feat(pulse): filesystem ring buffer for 30d composite-input history"
+```
+
+> **Note for Task 22 wiring:** `handleMarketPulse` will (a) load this store at call time, (b) compute `*_7d_delta` inputs via `computeWindowDelta(rawSeries, currentValue, 7)`, (c) `appendDatapoint` for each raw input observed, (d) `save()`. Replaces the synthetic `Object.fromEntries(... [k, []])` pattern from the original Task 22 draft.
+
+---
+
 ## Task 9: Composite pulse score (`src/pulse/score.ts`)
 
 **Files:**
@@ -2453,7 +2691,7 @@ export interface GetMarketPulseArgs {
   values: Record<string, number>;
   history: Record<string, number[]>;
   sources: string[];
-  byok_active: string[];
+  byokActive: string[];   // camelCase — matches usage at line `args.byokActive`
   lang: Lang;
   asOf: string;
   staleData: string[];
@@ -2568,7 +2806,7 @@ export interface GetEtfFlowArgs {
   window: "1d" | "7d" | "30d";
   adapterResult: AdapterResult;
   lang: Lang;
-  byok_active: string[];
+  byokActive: string[];   // camelCase — matches usage at `args.byokActive`
   staleData: string[];
 }
 
@@ -2686,7 +2924,7 @@ export interface Args {
   window: "1d" | "7d" | "30d";
   adapterResult: AdapterResult;
   lang: Lang;
-  byok_active: string[];
+  byokActive: string[];   // camelCase — matches usage at `args.byokActive`
   staleData: string[];
 }
 
@@ -2818,7 +3056,7 @@ export interface Args {
   asset: "BTC" | "ETH";
   adapterResult: AdapterResult;
   lang: Lang;
-  byok_active: string[];
+  byokActive: string[];   // camelCase — matches usage at `args.byokActive`
   staleData: string[];
 }
 
@@ -2948,7 +3186,7 @@ export interface Args {
   asset: "BTC" | "ETH" | "all";
   adapterResult: AdapterResult;
   lang: Lang;
-  byok_active: string[];
+  byokActive: string[];   // camelCase — matches usage at `args.byokActive`
   staleData: string[];
 }
 
@@ -2957,13 +3195,13 @@ export async function getKrPremium(args: Args): Promise<ToolResponse> {
   const parts: string[] = [];
   for (const a of ["BTC", "ETH"] as const) {
     if (args.asset !== "all" && args.asset !== a) continue;
-    const k = `kimchi_${a.toLowerCase()}`;
+    const k = `kr_premium_${a.toLowerCase()}`;   // ADR-0001: code key uses kr_premium, not kimchi
     const v = args.adapterResult.data[k];
     if (typeof v === "number") {
       inputs[k] = v;
       const pct = (v * 100).toFixed(1);
       const sign = v >= 0 ? "+" : "";
-      parts.push(`${a} kimchi ${sign}${pct}%`);
+      parts.push(`${a} kimchi ${sign}${pct}%`);   // prose-only "kimchi" allowed per ADR-0001
     }
   }
   const summary = parts.length > 0
@@ -3053,7 +3291,7 @@ export interface Args {
   window: "1d" | "7d" | "30d";
   adapterResult: AdapterResult;
   lang: Lang;
-  byok_active: string[];
+  byokActive: string[];   // camelCase — matches usage at `args.byokActive`
   staleData: string[];
 }
 
@@ -3168,6 +3406,8 @@ Expected: FAIL.
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 import type { EnvConfig } from "./env.js";
 import { makeContext } from "./adapters/base.js";
 import { derivatives } from "./adapters/derivatives.js";
@@ -3175,7 +3415,8 @@ import { macroRwa } from "./adapters/macro_rwa.js";
 import { onchainWallet } from "./adapters/onchain_wallet.js";
 import { cexFlow } from "./adapters/cex_flow.js";
 import { krPremium } from "./adapters/kr_premium.js";
-import { loadPulseConfig } from "./pulse/config.js";
+import { loadPulseConfig, type PulseConfig } from "./pulse/config.js";
+import { makeFileHistoryStore, computeWindowDelta } from "./pulse/history.js";
 import { getMarketPulse } from "./tools/get_market_pulse.js";
 import { getEtfFlow } from "./tools/get_etf_flow.js";
 import { getStablecoinPulse } from "./tools/get_stablecoin_pulse.js";
@@ -3243,6 +3484,13 @@ async function handleMarketPulse(raw: unknown, env: EnvConfig): Promise<ToolResp
   NoArgs.parse(raw ?? {});
   const cfg = loadPulseConfig();
   const ctx = makeContext({ env });
+  // Per ADR-0003: history store loaded once per call; raw series provide inputs to computeWindowDelta.
+  const store = makeFileHistoryStore({
+    path: resolveHistoryPath(cfg, env),
+    windowDays: cfg.history?.window_days ?? 30,
+    dedupHours: cfg.history?.dedup_hours ?? 24,
+  });
+  const rawHistory = store.load();
   const [d, m, w, c, k] = await Promise.allSettled([
     derivatives.fetch(undefined, ctx),
     macroRwa.fetch(undefined, ctx),
@@ -3274,8 +3522,14 @@ async function handleMarketPulse(raw: unknown, env: EnvConfig): Promise<ToolResp
   }
   if (m.status === "fulfilled") {
     if (typeof m.value.data.etf_7d_net_usd === "number") values.etf_7d_net_flow_btc_eth = m.value.data.etf_7d_net_usd;
-    if (typeof m.value.data.btc_dominance === "number") values.btc_dominance_7d_delta = 0; // requires history; skip in v0.1
-    if (typeof m.value.data.rwa_tvl_usd === "number") values.rwa_tvl_7d_delta = 0; // ditto
+    // Per ADR-0003: derive `*_7d_delta` from history ring buffer instead of placeholder zeros.
+    // Raw values are appended further down so that next call's delta computation can see them.
+    if (typeof m.value.data.btc_dominance === "number") {
+      values.btc_dominance_7d_delta = computeWindowDelta(rawHistory.btc_dominance_raw ?? [], m.value.data.btc_dominance, 7);
+    }
+    if (typeof m.value.data.rwa_tvl_usd === "number") {
+      values.rwa_tvl_7d_delta = computeWindowDelta(rawHistory.rwa_tvl_raw ?? [], m.value.data.rwa_tvl_usd, 7);
+    }
     sources.push(...m.value.sources);
   } else {
     staleData.push("macro_rwa: " + (m.reason as Error).message);
@@ -3296,11 +3550,22 @@ async function handleMarketPulse(raw: unknown, env: EnvConfig): Promise<ToolResp
     sources.push(...c.value.sources);
   }
 
-  // Synthetic flat history: in v0.1 we use rolling windows from each source as available,
-  // but for the composite we degrade gracefully — empty history yields zScore=0 (no signal).
-  const history: Record<string, number[]> = Object.fromEntries(
-    Object.keys(values).map((k) => [k, []]),
-  );
+  // Per ADR-0003: load persisted history, append fresh raw observations, save atomically.
+  // `history` passed to getMarketPulse is the per-composite-key series used for z-score.
+  // `rawHistory` (declared above the adapter switch) holds raw inputs needed for *_delta derivation.
+  const history = store.load();             // {composite_key → number[]}
+  const asOf = new Date();
+
+  // Append today's observations (24h dedup inside the store).
+  for (const [k, v] of Object.entries(values)) {
+    store.appendDatapoint(k, v, asOf);
+  }
+  // Also append raw values so next call can compute *_7d_delta.
+  if (m.status === "fulfilled") {
+    if (typeof m.value.data.btc_dominance === "number") store.appendDatapoint("btc_dominance_raw", m.value.data.btc_dominance, asOf);
+    if (typeof m.value.data.rwa_tvl_usd === "number") store.appendDatapoint("rwa_tvl_raw", m.value.data.rwa_tvl_usd, asOf);
+  }
+  await store.save();
 
   return getMarketPulse({
     cfg,
@@ -3309,7 +3574,7 @@ async function handleMarketPulse(raw: unknown, env: EnvConfig): Promise<ToolResp
     sources,
     byokActive,
     lang: env.lang,
-    asOf: new Date().toISOString(),
+    asOf: asOf.toISOString(),
     staleData,
   });
 }
@@ -3377,6 +3642,13 @@ async function handleRwaPulse(raw: unknown, env: EnvConfig): Promise<ToolRespons
     byokActive: [],
     staleData: r.stale ? ["macro_rwa: stale"] : [],
   });
+}
+
+function resolveHistoryPath(cfg: PulseConfig, env: EnvConfig): string {
+  const fromEnv = process.env.OPM_HISTORY_PATH;
+  const fromCfg = cfg.history?.path;
+  const raw = fromEnv ?? fromCfg ?? "~/.cache/onchain-pulse-mcp/history.json";
+  return resolve(raw.replace(/^~(?=$|\/|\\)/, homedir()));
 }
 
 export function createServer(opts: { env: EnvConfig }): Server {
@@ -3466,12 +3738,181 @@ git commit -m "feat(server): MCP wiring with 6 tools, stdio transport, dispatche
 
 ---
 
+## Task 22.5: Warmup CLI subcommand (`npx onchain-pulse-mcp warmup`)
+
+**Files:**
+- Create: `src/cli/warmup.ts`
+- Create: `tests/cli/warmup.test.ts`
+- Modify: `src/index.ts` (subcommand dispatch — `warmup` vs default stdio server)
+
+> **Why this task exists:** Per ADR-0003, the history ring buffer needs initial seeding for adapters that expose historical endpoints (Defillama, Farside, Deribit funding-range). Without warmup, the buffer fills only at real elapsed cadence (one datapoint per 24h), so the composite score remains noisy for 1–4 weeks. `warmup` short-circuits this by fetching whatever historical density each adapter offers.
+
+- [ ] **Step 1: Write the failing test**
+
+`tests/cli/warmup.test.ts`:
+
+```ts
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runWarmup } from "../../src/cli/warmup.js";
+import { makeFileHistoryStore } from "../../src/pulse/history.js";
+
+let dir: string;
+let path: string;
+
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), "opm-warmup-"));
+  path = join(dir, "history.json");
+});
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
+
+describe("runWarmup", () => {
+  it("seeds at least one datapoint per supported key with mocked adapter responses", async () => {
+    const fakeFetcher = {
+      etfHistory: vi.fn().mockResolvedValue([
+        { asOf: new Date("2026-04-10T00:00:00Z"), value: 100_000_000 },
+        { asOf: new Date("2026-04-11T00:00:00Z"), value: 120_000_000 },
+      ]),
+      stablecoinHistory: vi.fn().mockResolvedValue([
+        { asOf: new Date("2026-04-10T00:00:00Z"), value: 0.001 },
+      ]),
+      // ... other historical fetchers (mocked similarly)
+    };
+    await runWarmup({ historyPath: path, days: 30, fetcher: fakeFetcher as never });
+    const s = makeFileHistoryStore({ path, windowDays: 30, dedupHours: 24 });
+    const series = s.load();
+    expect(series.etf_7d_net_flow_btc_eth?.length).toBeGreaterThanOrEqual(1);
+    expect(series.stablecoin_7d_supply_delta?.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("respects --key filter", async () => {
+    const fakeFetcher = {
+      etfHistory: vi.fn().mockResolvedValue([{ asOf: new Date(), value: 1 }]),
+      stablecoinHistory: vi.fn().mockResolvedValue([{ asOf: new Date(), value: 1 }]),
+    };
+    await runWarmup({ historyPath: path, days: 30, keys: ["etf_7d_net_flow_btc_eth"], fetcher: fakeFetcher as never });
+    expect(fakeFetcher.etfHistory).toHaveBeenCalled();
+    expect(fakeFetcher.stablecoinHistory).not.toHaveBeenCalled();
+  });
+});
+```
+
+- [ ] **Step 2: Implement `src/cli/warmup.ts`**
+
+The implementation calls each adapter's historical endpoint where available (Farside daily CSV, Defillama daily history, Deribit funding-range query). Adapters without a historical endpoint contribute one datapoint (current value) and accrue over real elapsed days. Specific historical-fetcher per-adapter implementation is left to Codex; the warmup orchestrator's contract is captured in the test above.
+
+Sketch:
+
+```ts
+import { makeFileHistoryStore } from "../pulse/history.js";
+
+export interface HistoricalFetcher {
+  etfHistory(days: number): Promise<{ asOf: Date; value: number }[]>;
+  stablecoinHistory(days: number): Promise<{ asOf: Date; value: number }[]>;
+  rwaTvlHistory(days: number): Promise<{ asOf: Date; value: number }[]>;
+  fundingHistory(days: number): Promise<{ asOf: Date; value: number }[]>;
+  // BTC dominance, P/C ratio, Upbit netflow → no historical endpoint; current-only.
+}
+
+export interface WarmupOpts {
+  historyPath: string;
+  days: number;
+  keys?: string[];
+  fetcher: HistoricalFetcher;
+}
+
+export async function runWarmup(opts: WarmupOpts): Promise<void> {
+  const store = makeFileHistoryStore({ path: opts.historyPath, windowDays: opts.days, dedupHours: 24 });
+  const want = (k: string) => !opts.keys || opts.keys.includes(k);
+
+  if (want("etf_7d_net_flow_btc_eth")) {
+    for (const dp of await opts.fetcher.etfHistory(opts.days)) {
+      store.appendDatapoint("etf_7d_net_flow_btc_eth", dp.value, dp.asOf);
+    }
+  }
+  if (want("stablecoin_7d_supply_delta")) {
+    for (const dp of await opts.fetcher.stablecoinHistory(opts.days)) {
+      store.appendDatapoint("stablecoin_7d_supply_delta", dp.value, dp.asOf);
+    }
+  }
+  // ... other keys per ADR-0003 §"Warmup CLI" table
+  await store.save();
+}
+```
+
+- [ ] **Step 3: Wire CLI dispatch in `src/index.ts`**
+
+Replace the `main()` from Task 22 with:
+
+```ts
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { createServer } from "./server.js";
+import { loadEnv } from "./env.js";
+import { runWarmup } from "./cli/warmup.js";
+import { realFetcher } from "./cli/fetcher.js";  // production HistoricalFetcher
+
+async function main(): Promise<void> {
+  const sub = process.argv[2];
+  const env = loadEnv(process.env);
+  if (sub === "warmup") {
+    const days = Number(process.env.OPM_WARMUP_DAYS ?? 30);
+    const keys = process.env.OPM_WARMUP_KEYS?.split(",");
+    await runWarmup({ historyPath: env.historyPath, days, keys, fetcher: realFetcher });
+    return;
+  }
+  const server = createServer({ env });
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+main().catch((err) => {
+  // eslint-disable-next-line no-console
+  console.error(err);
+  process.exit(1);
+});
+```
+
+(`loadEnv` is extended to expose `historyPath` derived via the same `~` expansion as `resolveHistoryPath` in `server.ts`. Codex may unify the two helpers.)
+
+- [ ] **Step 4: Run — verify passing**
+
+```bash
+npm run test -- cli/warmup
+npm run typecheck
+npm run build
+```
+
+Expected: 2 tests pass; typecheck clean; build produces a single `dist/index.js` entry that handles both `warmup` and the default stdio server based on `process.argv[2]`.
+
+- [ ] **Step 5: Manual smoke test**
+
+```bash
+node dist/index.js warmup
+ls -la ~/.cache/onchain-pulse-mcp/history.json
+node dist/index.js < /dev/null   # default mode still works
+```
+
+Expected: `history.json` exists with at least 3 of 7 keys populated; default-mode server still starts.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/cli/ tests/cli/ src/index.ts
+git commit -m "feat(cli): warmup subcommand to seed 30d history ring buffer"
+```
+
+---
+
 ## Task 23: Reference rules + CI + README polish
 
 **Files:**
 - Create: `examples/rules/etf-outflow-streak.yaml`
 - Create: `examples/rules/funding-extreme.yaml`
-- Create: `examples/rules/kimchi-spread-spike.yaml`
+- Create: `examples/rules/kr-premium-spike.yaml`   # renamed per ADR-0001 (kr_premium for code; kimchi prose-only)
 - Create: `examples/rules/stablecoin-burn-streak.yaml`
 - Create: `examples/rules/rwa-tvl-drop.yaml`
 - Create: `.github/workflows/ci.yml`
@@ -3503,16 +3944,16 @@ consecutive: 1
 description: "BTC/ETH average funding |z| > 2 (extreme positioning)."
 ```
 
-`examples/rules/kimchi-spread-spike.yaml`:
+`examples/rules/kr-premium-spike.yaml`:
 
 ```yaml
-name: kimchi-spread-spike
+name: kr-premium-spike
 metric: kr_premium_btc
 condition: greater_than
 threshold: 0.05
 window: 1d
 consecutive: 1
-description: "BTC kimchi premium > 5% (KR retail euphoria signal)."
+description: "BTC kr_premium > 5% (commonly known as kimchi premium — KR retail euphoria signal)."
 ```
 
 `examples/rules/stablecoin-burn-streak.yaml`:
@@ -3638,23 +4079,25 @@ Expected: all green.
 ```bash
 git add examples/rules/ .github/workflows/ci.yml README.md
 git commit -m "feat: reference alert rules, GitHub Actions CI, README quickstart"
-git push origin main
+git push origin feat/v0.1-implementation
 ```
 
-Then check `https://github.com/capitalparser/onchain-pulse-mcp/actions` — first CI run should pass.
+Then check `https://github.com/capitalparser/onchain-pulse-mcp/actions` — first CI run on the feature branch should pass. Merge to `main` is post-handoff (cross-model code review gate per HANDOFF.md), not part of this task.
 
 ---
 
 ## Acceptance Criteria (v0.1)
 
-- [ ] `npm run test` reports 0 failures.
+- [ ] `npm run test` reports 0 failures (now includes Task 8.5 history tests + Task 22.5 warmup tests).
 - [ ] `npm run typecheck` exits 0.
 - [ ] `npm run build` produces `dist/index.js` (with shebang) and `dist/index.d.ts`.
 - [ ] `node dist/index.js` starts an MCP server on stdio without errors.
+- [ ] `node dist/index.js warmup` populates `~/.cache/onchain-pulse-mcp/history.json` with at least 3 of 7 keys (per ADR-0003 §"Warmup CLI" table).
+- [ ] After warmup, calling `get_market_pulse` produces a non-trivial score (i.e., not deterministically 50) for keys whose history has ≥5 samples; remaining keys contribute z=0 with `confidence < 1.0` reflecting the gap honestly.
 - [ ] Adding `onchain-pulse` to Claude Desktop config and asking *"call get_market_pulse"* returns a JSON `ToolResponse`.
 - [ ] Setting `NANSEN_API_KEY=fake` (or any unused-but-set value) does not crash the server; the adapter handles 4xx gracefully via `safeJson`.
-- [ ] All 6 reference YAML rules exist under `examples/rules/`.
-- [ ] CI run on `main` passes.
+- [ ] All 6 reference YAML rules exist under `examples/rules/` (`kr-premium-spike.yaml`, not `kimchi-spread-spike.yaml`).
+- [ ] CI run on `feat/v0.1-implementation` passes.
 
 ---
 
@@ -3662,7 +4105,8 @@ Then check `https://github.com/capitalparser/onchain-pulse-mcp/actions` — firs
 
 Per the spec's Open Questions and Future Work sections:
 
-- Real history series for `get_market_pulse` (currently `history` is empty in `handleMarketPulse`, so z-scores degenerate to 0). v0.2 will add per-key 30d rolling caches.
 - Backtesting harness for pulse score weights.
 - B view (screening tools) and A view (timing tools).
 - HTTP transport + Fly.io hosting.
+
+> Note: The original "Real history series for `get_market_pulse`" deferral was promoted into v0.1 scope per ADR-0002 / ADR-0003 (Task 8.5 + Task 22.5).
