@@ -2,7 +2,7 @@
 
 > Read-only MCP server exposing onchain market pulse signals — CEX flow, on-chain wallets, derivatives, ETF/RWA macro, and Korea-market premium — designed for AI agents, retail, and institutions.
 
-**Status**: `v0.0.1` — design phase. Implementation pending.
+**Status**: `v0.0.1` — v0.1 implementation branch active. Task 1 scaffold is complete; implementation continues from Task 2.
 
 See the design spec at [`docs/superpowers/specs/2026-05-08-onchain-pulse-mcp-design.md`](docs/superpowers/specs/2026-05-08-onchain-pulse-mcp-design.md).
 
@@ -12,13 +12,13 @@ Existing onchain intelligence tools (Nansen, Arkham, Coinglass) are dashboards b
 
 ## Design Highlights
 
-- **Read-only · stateless**: idempotent responses, no persistence, no write actions.
+- **Read-only · snapshot-oriented**: idempotent MCP responses, no write actions, local-only history materialisation for composite z-scores.
 - **6 data adapters**: CEX flow, on-chain wallet, derivatives, macro/RWA, wallet identity, Korea layer.
 - **6 MCP tools (v0.1)**: `get_market_pulse`, `get_etf_flow`, `get_stablecoin_pulse`, `get_funding_oi`, `get_kr_premium`, `get_rwa_pulse`.
 - **BYOK enrichment**: free defaults work out of the box; paid keys (Nansen/Glassnode/Arkham/Coinglass/CryptoQuant/Laevitas) are auto-detected via env vars.
 - **Composite pulse score**: 7-input weighted z-score with weights externalized to `config/pulse.yaml` — tweak to your thesis.
 - **Graceful degradation**: partial source failures yield reduced-confidence answers, never silent failure.
-- **Korea-aware**: Upbit netflow and kimchi-premium are first-class inputs.
+- **Korea-aware**: Upbit netflow proxy and KR premium (commonly known as kimchi premium) are first-class inputs.
 
 ## Quickstart (planned, post-v0.1)
 

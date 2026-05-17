@@ -96,6 +96,7 @@ Open `package.json` and replace `scripts` and add `dependencies` / `devDependenc
   "homepage": "https://github.com/capitalparser/onchain-pulse-mcp#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
+    "cheerio": "^1.0.0",
     "lru-cache": "^11.0.2",
     "yaml": "^2.6.1",
     "zod": "^3.23.8"
@@ -381,6 +382,21 @@ describe("loadEnv", () => {
   it("falls back to en when OPM_LANG is invalid", () => {
     expect(loadEnv({ OPM_LANG: "fr" }).lang).toBe("en");
   });
+
+  it("defaults historyPath to ~/.cache/onchain-pulse-mcp/history.json (tilde expanded)", () => {
+    const cfg = loadEnv({ HOME: "/home/test" });
+    expect(cfg.historyPath).toBe("/home/test/.cache/onchain-pulse-mcp/history.json");
+  });
+
+  it("respects OPM_HISTORY_PATH override and expands leading ~", () => {
+    const cfg = loadEnv({ HOME: "/home/test", OPM_HISTORY_PATH: "~/custom/h.json" });
+    expect(cfg.historyPath).toBe("/home/test/custom/h.json");
+  });
+
+  it("preserves an absolute OPM_HISTORY_PATH unchanged", () => {
+    const cfg = loadEnv({ HOME: "/home/test", OPM_HISTORY_PATH: "/var/lib/opm/history.json" });
+    expect(cfg.historyPath).toBe("/var/lib/opm/history.json");
+  });
 });
 ```
 
@@ -395,6 +411,7 @@ Expected: FAIL — module missing.
 - [ ] **Step 3: Create `src/env.ts`**
 
 ```ts
+import { join } from "node:path";
 import { LangSchema, type Lang } from "./types.js";
 
 export interface BYOKKeys {
@@ -409,10 +426,24 @@ export interface BYOKKeys {
 export interface EnvConfig {
   byok: BYOKKeys;
   lang: Lang;
+  /**
+   * Absolute, tilde-expanded path to the history ring buffer JSON file
+   * (Task 8.5). Defaults to `${HOME}/.cache/onchain-pulse-mcp/history.json`;
+   * overridable via `OPM_HISTORY_PATH`. Leading `~` is expanded against `HOME`.
+   * Non-leading `~` is preserved as a literal character.
+   */
+  historyPath: string;
 }
 
 export function loadEnv(env: NodeJS.ProcessEnv | Record<string, string | undefined>): EnvConfig {
   const langParse = LangSchema.safeParse(env.OPM_LANG);
+  const home = env.HOME ?? "";
+  const rawHistory = env.OPM_HISTORY_PATH ?? "~/.cache/onchain-pulse-mcp/history.json";
+  const historyPath = rawHistory.startsWith("~/")
+    ? join(home, rawHistory.slice(2))
+    : rawHistory === "~"
+      ? home
+      : rawHistory;
   return {
     byok: {
       nansen: env.NANSEN_API_KEY,
@@ -423,6 +454,7 @@ export function loadEnv(env: NodeJS.ProcessEnv | Record<string, string | undefin
       laevitas: env.LAEVITAS_API_KEY,
     },
     lang: langParse.success ? langParse.data : "en",
+    historyPath,
   };
 }
 ```
@@ -433,7 +465,7 @@ export function loadEnv(env: NodeJS.ProcessEnv | Record<string, string | undefin
 npm run test -- env
 ```
 
-Expected: 4 passed.
+Expected: 7 passed (4 BYOK/lang + 3 historyPath).
 
 - [ ] **Step 5: Commit**
 
@@ -606,6 +638,60 @@ describe("TTLCache", () => {
     await c.getOrLoad("c", async () => "c");
     expect(c.getStale("a")).toBeUndefined();
   });
+
+  it("coalesces concurrent getOrLoad calls for the same key (single upstream call)", async () => {
+    const c = new TTLCache<string>({ ttlMs: 60_000, max: 10 });
+    let calls = 0;
+    const loader = async () => {
+      calls++;
+      await new Promise((r) => setTimeout(r, 50));
+      return `v${calls}`;
+    };
+    // Fire three concurrent loads for the same key before any resolves.
+    const p = Promise.all([
+      c.getOrLoad("k", loader),
+      c.getOrLoad("k", loader),
+      c.getOrLoad("k", loader),
+    ]);
+    await vi.advanceTimersByTimeAsync(60);
+    const [a, b, d] = await p;
+    expect([a, b, d]).toEqual(["v1", "v1", "v1"]); // all callers receive the same value
+    expect(calls).toBe(1);                          // loader invoked exactly once
+  });
+
+  it("does NOT coalesce calls across different keys", async () => {
+    const c = new TTLCache<string>({ ttlMs: 60_000, max: 10 });
+    let calls = 0;
+    const loader = async () => `v${++calls}`;
+    const [a, b] = await Promise.all([
+      c.getOrLoad("a", loader),
+      c.getOrLoad("b", loader),
+    ]);
+    expect(a).not.toBe(b);
+    expect(calls).toBe(2);
+  });
+
+  it("clears the in-flight map when the loader rejects, allowing retry", async () => {
+    const c = new TTLCache<string>({ ttlMs: 60_000, max: 10 });
+    let calls = 0;
+    const loader = vi.fn(async () => {
+      calls++;
+      if (calls === 1) throw new Error("first attempt fails");
+      return "ok";
+    });
+    await expect(c.getOrLoad("k", loader)).rejects.toThrow("first attempt fails");
+    expect(await c.getOrLoad("k", loader)).toBe("ok"); // second call enters loader fresh
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it("set/get expose direct cache writes for deterministic tests", async () => {
+    const c = new TTLCache<string>({ ttlMs: 60_000, max: 10 });
+    c.set("k", "manual");
+    expect(c.get("k")).toBe("manual");
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(c.get("k")).toBeUndefined();         // expired from fresh
+    expect(c.getStale("k")).toBe("manual");     // still in stale
+  });
 });
 ```
 
@@ -630,6 +716,10 @@ export interface TTLCacheOpts {
 export class TTLCache<V extends NonNullable<unknown>> {
   private fresh: LRUCache<string, V>;
   private stale: LRUCache<string, V>;
+  // In-flight load coalescing: while a loader for key K is pending, all
+  // concurrent getOrLoad(K, ...) callers share its promise. Prevents the
+  // thundering herd on a cold-start hot key (Codex review F1).
+  private inFlight: Map<string, Promise<V>> = new Map();
 
   constructor(opts: TTLCacheOpts) {
     this.fresh = new LRUCache({ max: opts.max, ttl: opts.ttlMs });
@@ -639,10 +729,33 @@ export class TTLCache<V extends NonNullable<unknown>> {
   async getOrLoad(key: string, loader: () => Promise<V>): Promise<V> {
     const hit = this.fresh.get(key);
     if (hit !== undefined) return hit;
-    const v = await loader();
-    this.fresh.set(key, v);
-    this.stale.set(key, v);
-    return v;
+    const pending = this.inFlight.get(key);
+    if (pending) return pending;
+    const p = (async () => {
+      try {
+        const v = await loader();
+        this.fresh.set(key, v);
+        this.stale.set(key, v);
+        return v;
+      } finally {
+        // Clear in-flight whether the loader resolved or rejected, so a
+        // failed load does not poison subsequent retries.
+        this.inFlight.delete(key);
+      }
+    })();
+    this.inFlight.set(key, p);
+    return p;
+  }
+
+  /** Direct write — used by Task 6 cache-isolation tests and adapter prewarm. */
+  set(key: string, value: V): void {
+    this.fresh.set(key, value);
+    this.stale.set(key, value);
+  }
+
+  /** Returns the fresh (non-expired) entry, or undefined if expired or absent. */
+  get(key: string): V | undefined {
+    return this.fresh.get(key);
   }
 
   getStale(key: string): V | undefined {
@@ -657,13 +770,13 @@ export class TTLCache<V extends NonNullable<unknown>> {
 npm run test -- cache
 ```
 
-Expected: 4 passed.
+Expected: 8 passed (4 base TTL/LRU + 3 in-flight coalescing + 1 set/get).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/cache.ts tests/cache.test.ts
-git commit -m "feat(cache): TTL cache with stale-fallback support"
+git commit -m "feat(cache): TTL cache with stale fallback + in-flight coalescing"
 ```
 
 ---
@@ -727,10 +840,37 @@ describe("withCache", () => {
 });
 
 describe("makeContext", () => {
-  it("returns a context with caches keyed by adapter name", () => {
+  it("returns a context with a cache factory keyed by adapter name", () => {
     const ctx = makeContext({ env: { byok: {}, lang: "en" } });
-    expect(ctx.cache).toBeDefined();
+    expect(typeof ctx.cacheFor).toBe("function");
     expect(typeof ctx.fetch).toBe("function");
+  });
+
+  it("caches are isolated per adapter (no cross-contamination)", () => {
+    const ctx = makeContext({ env: { byok: {}, lang: "en" } });
+    const a = ctx.cacheFor({ name: "derivatives", ttlMs: 90_000, max: 32 });
+    const b = ctx.cacheFor({ name: "macro_rwa", ttlMs: 600_000, max: 32 });
+    expect(a).not.toBe(b);
+    a.set("k", { data: { from: "deriv" }, sources: [], asOf: "", stale: false });
+    expect(b.get("k")).toBeUndefined();
+  });
+
+  it("returns the same cache instance on repeated calls for the same adapter", () => {
+    const ctx = makeContext({ env: { byok: {}, lang: "en" } });
+    const a1 = ctx.cacheFor({ name: "derivatives", ttlMs: 90_000, max: 32 });
+    const a2 = ctx.cacheFor({ name: "derivatives", ttlMs: 90_000, max: 32 });
+    expect(a1).toBe(a2);
+  });
+
+  it("honours each adapter's declared ttlMs (no shared default override)", async () => {
+    const ctx = makeContext({ env: { byok: {}, lang: "en" } });
+    const shortLived = ctx.cacheFor({ name: "fast", ttlMs: 1, max: 8 });
+    const longLived = ctx.cacheFor({ name: "slow", ttlMs: 60_000, max: 8 });
+    shortLived.set("k", { data: 1 as unknown, sources: [], asOf: "", stale: false });
+    longLived.set("k", { data: 2 as unknown, sources: [], asOf: "", stale: false });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(shortLived.get("k")).toBeUndefined(); // expired
+    expect(longLived.get("k")).toBeDefined();    // still fresh
   });
 });
 
@@ -762,8 +902,23 @@ import type { AdapterResult } from "../types.js";
 import type { EnvConfig } from "../env.js";
 import { TTLCache } from "../cache.js";
 
+export interface CacheSpec {
+  name: string;     // adapter name — used as namespace key
+  ttlMs: number;    // adapter's declared TTL (NOT a shared default)
+  max: number;      // adapter's declared max entries
+}
+
 export interface AdapterContext {
-  cache: TTLCache<AdapterResult>;
+  /**
+   * Returns a cache instance scoped to a single adapter. Caches are isolated:
+   * adapter A cannot read or evict adapter B's entries. The same `spec.name`
+   * always yields the same instance for the lifetime of the context.
+   *
+   * Why per-adapter rather than shared: spec §4 requires adapter-specific TTLs
+   * (derivatives 90s, macro_rwa 10min, etc.). A shared cache forces a single
+   * compromise TTL and lets one adapter's evictions thrash another's hot keys.
+   */
+  cacheFor<T = AdapterResult>(spec: CacheSpec): TTLCache<T>;
   env: EnvConfig;
   fetch: typeof fetch;
 }
@@ -775,28 +930,48 @@ export interface Adapter<I = void> {
   fetch(input: I, ctx: AdapterContext): Promise<AdapterResult>;
 }
 
-export function makeContext(opts: { env: EnvConfig; fetchImpl?: typeof fetch; max?: number }): AdapterContext {
+export function makeContext(opts: {
+  env: EnvConfig;
+  fetchImpl?: typeof fetch;
+}): AdapterContext {
+  const caches = new Map<string, TTLCache<unknown>>();
   return {
-    cache: new TTLCache<AdapterResult>({ ttlMs: 60_000, max: opts.max ?? 256 }),
+    cacheFor<T>(spec: CacheSpec): TTLCache<T> {
+      const existing = caches.get(spec.name);
+      if (existing) return existing as TTLCache<T>;
+      const fresh = new TTLCache<T>({ ttlMs: spec.ttlMs, max: spec.max });
+      caches.set(spec.name, fresh as TTLCache<unknown>);
+      return fresh;
+    },
     env: opts.env,
     fetch: opts.fetchImpl ?? globalThis.fetch,
   };
 }
 
-export async function withCache(
-  cache: TTLCache<AdapterResult>,
+export async function withCache<T = AdapterResult>(
+  cache: TTLCache<T>,
   key: string,
-  loader: () => Promise<AdapterResult>,
-): Promise<AdapterResult> {
+  loader: () => Promise<T>,
+): Promise<T> {
   try {
     return await cache.getOrLoad(key, loader);
   } catch (err) {
     const fallback = cache.getStale(key);
-    if (fallback) return { ...fallback, stale: true };
+    if (fallback) {
+      // AdapterResult-shaped fallbacks gain `stale: true`; non-AdapterResult
+      // payloads are returned as-is. Adapters that need stale signalling must
+      // use the AdapterResult shape.
+      if (typeof fallback === "object" && fallback !== null && "stale" in fallback) {
+        return { ...(fallback as object), stale: true } as T;
+      }
+      return fallback;
+    }
     throw err;
   }
 }
 ```
+
+> **Adapter usage convention.** Each adapter calls `ctx.cacheFor({ name: this.name, ttlMs: this.ttlMs, max: 32 })` once at the top of `fetch()` and uses that instance for `withCache(cache, ...)`. Tasks 10–15 (and the warmup CLI in Task 22.5) rely on this isolation. Do **not** introduce a global default `ttlMs` here — every adapter declares its own.
 
 - [ ] **Step 4: Run — verify passing**
 
@@ -804,7 +979,7 @@ export async function withCache(
 npm run test -- adapters/base
 ```
 
-Expected: 5 passed.
+Expected: 8 passed (3 `withCache` + 4 `makeContext` + 1 Adapter interface).
 
 - [ ] **Step 5: Commit**
 
@@ -892,6 +1067,58 @@ reading_buckets:
     const cfg = loadPulseConfig();
     expect(Object.keys(cfg.weights)).toContain("etf_7d_net_flow_btc_eth");
   });
+
+  it("rejects when reading_buckets have a gap (uncovered score range)", () => {
+    const bad = `
+weights: { a: 1.0 }
+directions: { a: positive }
+funding_reverse_z_threshold: 2.0
+reading_buckets:
+  risk_off: [0, 25]
+  neutral: [30, 70]    # gap: scores 25–30 belong to no bucket
+  risk_on: [70, 100]
+`;
+    expect(() => parsePulseConfig(bad)).toThrow(/reading_buckets.*gap|continuous|cover/i);
+  });
+
+  it("rejects when reading_buckets overlap", () => {
+    const bad = `
+weights: { a: 1.0 }
+directions: { a: positive }
+funding_reverse_z_threshold: 2.0
+reading_buckets:
+  risk_off: [0, 35]
+  neutral: [30, 70]    # overlap with risk_off [30,35]
+  risk_on: [70, 100]
+`;
+    expect(() => parsePulseConfig(bad)).toThrow(/reading_buckets.*overlap/i);
+  });
+
+  it("rejects when reading_buckets do not cover [0, 100]", () => {
+    const bad = `
+weights: { a: 1.0 }
+directions: { a: positive }
+funding_reverse_z_threshold: 2.0
+reading_buckets:
+  risk_off: [0, 30]
+  neutral: [30, 70]
+  risk_on: [70, 95]    # leaves [95, 100] uncovered
+`;
+    expect(() => parsePulseConfig(bad)).toThrow(/reading_buckets.*0.*100|cover/i);
+  });
+
+  it("rejects when a reading_bucket interval is inverted (start > end)", () => {
+    const bad = `
+weights: { a: 1.0 }
+directions: { a: positive }
+funding_reverse_z_threshold: 2.0
+reading_buckets:
+  risk_off: [30, 0]
+  neutral: [30, 70]
+  risk_on: [70, 100]
+`;
+    expect(() => parsePulseConfig(bad)).toThrow(/reading_buckets.*invert|start.*end/i);
+  });
 });
 ```
 
@@ -937,7 +1164,40 @@ export function parsePulseConfig(raw: string): PulseConfig {
       throw new Error(`directions missing entry for weight key: ${key}`);
     }
   }
+  validateReadingBuckets(cfg.reading_buckets);
   return cfg;
+}
+
+/**
+ * The three reading buckets must (a) be non-inverted, (b) be continuous (no
+ * gaps), (c) be non-overlapping, and (d) jointly cover [0, 100]. Violating
+ * any of these makes `toReading()` ambiguous or undefined for some scores.
+ * Codex review F3 flagged the original Task 7 left this implicit.
+ */
+function validateReadingBuckets(b: PulseConfig["reading_buckets"]): void {
+  const ordered = [
+    { name: "risk_off", range: b.risk_off },
+    { name: "neutral",  range: b.neutral },
+    { name: "risk_on",  range: b.risk_on },
+  ];
+  for (const { name, range } of ordered) {
+    if (range[0] > range[1]) {
+      throw new Error(`reading_buckets.${name} inverted: start ${range[0]} > end ${range[1]}`);
+    }
+  }
+  if (ordered[0].range[0] !== 0 || ordered[2].range[1] !== 100) {
+    throw new Error(`reading_buckets must cover [0, 100] inclusively`);
+  }
+  for (let i = 0; i < ordered.length - 1; i++) {
+    const cur = ordered[i]!.range;
+    const next = ordered[i + 1]!.range;
+    if (cur[1] < next[0]) {
+      throw new Error(`reading_buckets gap between ${ordered[i]!.name} (ends ${cur[1]}) and ${ordered[i + 1]!.name} (starts ${next[0]})`);
+    }
+    if (cur[1] > next[0]) {
+      throw new Error(`reading_buckets overlap between ${ordered[i]!.name} and ${ordered[i + 1]!.name}`);
+    }
+  }
 }
 
 export function loadPulseConfig(path = resolve("config/pulse.yaml")): PulseConfig {
@@ -951,7 +1211,7 @@ export function loadPulseConfig(path = resolve("config/pulse.yaml")): PulseConfi
 npm run test -- pulse/config
 ```
 
-Expected: 3 passed.
+Expected: 7 passed (3 base + 4 reading_buckets validation).
 
 - [ ] **Step 6: Commit**
 
@@ -999,25 +1259,80 @@ describe("toReading", () => {
 });
 
 describe("formatSummary", () => {
-  it("formats English summary", () => {
+  // Codex review F4: regex-only assertions are too loose — they pass on
+  // formats that no human would call "the same summary". The exact-match
+  // tests below freeze the contract; if you change the format, update these
+  // intentionally and document why in the commit body.
+
+  it("English summary: exact format with both ETF and stablecoin inputs", () => {
     const s = formatSummary(
-      { score: 78, reading: "risk-on", inputs: { etf_7d_net_usd: 340_000_000 } },
+      {
+        score: 78,
+        reading: "risk-on",
+        inputs: { etf_7d_net_usd: 340_000_000, stablecoin_7d_delta_pct: 1.4 },
+      },
       "en",
     );
-    expect(s).toMatch(/risk-on/);
-    expect(s).toMatch(/78/);
+    expect(s).toBe("ETF +$340M 7d, stablecoin +1.4%, reading: risk-on (78/100)");
   });
-  it("formats Korean summary", () => {
+
+  it("Korean summary: exact format with both ETF and stablecoin inputs", () => {
     const s = formatSummary(
-      { score: 78, reading: "risk-on", inputs: { etf_7d_net_usd: 340_000_000 } },
+      {
+        score: 78,
+        reading: "risk-on",
+        inputs: { etf_7d_net_usd: 340_000_000, stablecoin_7d_delta_pct: 1.4 },
+      },
       "ko",
     );
-    expect(s).toMatch(/리스크-온|risk-on/);
-    expect(s).toMatch(/78/);
+    expect(s).toBe("ETF +$340M 7d, stablecoin +1.4%, reading: 리스크-온 (78/100)");
   });
-  it("handles unknown reading gracefully", () => {
-    expect(formatSummary({ score: null, reading: "unknown", inputs: {} }, "en")).toMatch(/unavailable/i);
-    expect(formatSummary({ score: null, reading: "unknown", inputs: {} }, "ko")).toMatch(/사용 불가|unavailable/);
+
+  it("English summary: ETF-only when stablecoin omitted (no trailing comma)", () => {
+    const s = formatSummary(
+      { score: 50, reading: "neutral", inputs: { etf_7d_net_usd: -120_000_000 } },
+      "en",
+    );
+    expect(s).toBe("ETF -$120M 7d, reading: neutral (50/100)");
+  });
+
+  it("English summary: no inputs falls back to reading line only", () => {
+    const s = formatSummary({ score: 25, reading: "risk-off", inputs: {} }, "en");
+    expect(s).toBe("reading: risk-off (25/100)");
+  });
+
+  it("English summary: signed dollar formatting rounds to nearest million", () => {
+    expect(
+      formatSummary(
+        { score: 60, reading: "neutral", inputs: { etf_7d_net_usd: 999_999 } },
+        "en",
+      ),
+    ).toBe("ETF +$1M 7d, reading: neutral (60/100)");
+    expect(
+      formatSummary(
+        { score: 60, reading: "neutral", inputs: { etf_7d_net_usd: 0 } },
+        "en",
+      ),
+    ).toBe("ETF +$0M 7d, reading: neutral (60/100)");
+  });
+
+  it("Korean summary: same comma-joined ordering, only reading word translated", () => {
+    const s = formatSummary(
+      {
+        score: 25,
+        reading: "risk-off",
+        inputs: { etf_7d_net_usd: -200_000_000, stablecoin_7d_delta_pct: -0.5 },
+      },
+      "ko",
+    );
+    expect(s).toBe("ETF -$200M 7d, stablecoin -0.5%, reading: 리스크-오프 (25/100)");
+  });
+
+  it("handles unknown reading: language-specific fixed string", () => {
+    expect(formatSummary({ score: null, reading: "unknown", inputs: {} }, "en"))
+      .toBe("data unavailable");
+    expect(formatSummary({ score: null, reading: "unknown", inputs: {} }, "ko"))
+      .toBe("데이터 사용 불가 (data unavailable)");
   });
 });
 ```
@@ -1094,7 +1409,7 @@ function signedPct(v: number): string {
 npm run test -- pulse/reading
 ```
 
-Expected: 8 passed.
+Expected: 12 passed (5 toReading + 7 formatSummary exact-match).
 
 - [ ] **Step 5: Commit**
 
@@ -1113,7 +1428,11 @@ git commit -m "feat(pulse): toReading bucket mapping + en/ko formatSummary"
 - Modify: `config/pulse.yaml` (extend with `history:` section)
 - Modify: `src/pulse/config.ts` (extend `PulseConfigSchema` with `history` block)
 
-> **Why this task exists:** The composite pulse score in Task 9 reads `history[key]` to compute z-scores; without persisted history, every production call collapses to `score=50, reading=neutral`. See ADR-0003 for the full design rationale, including the reconciliation with spec §2 N5 ("no persistence"). This task introduces a per-installation filesystem ring buffer that survives process restart and accumulates one datapoint per (key, 24h) bucket.
+> **Why this task exists:** The composite pulse score in Task 9 reads `history[key]` to compute z-scores; without persisted history, every production call collapses to `score=50, reading=neutral`. This task introduces a per-installation filesystem ring buffer that survives process restart and accumulates one datapoint per (key, 24h) bucket.
+>
+> **Reconciliation with spec §2 N5 ("영속 저장소 안 씀, in-memory cache only").** This persistence appears to violate N5 at first read. The reconciliation lives in **`docs/adr/0003-history-persistence.md`** and is binding for this task: N5 prohibits *shared/multi-process state stores* (DB, Redis, network FS) and per-caller server-side session memory. A per-installation local-only ring buffer that is read-mostly, idempotent under correct write semantics, and produces no MCP API surface change is treated as offline materialisation of inputs the adapter would otherwise refetch — not as state. Before any contributor changes this design (e.g. adds multi-process write paths, or shares the file across installations), they must amend ADR-0003 and run a fresh `/codex:rescue` pass on this task.
+>
+> **Failure modes addressed by tests below.** Codex review F6 flagged that the original tests covered only the happy path. Step 3 now adds: corrupt JSON handling (must not silently destroy the file), atomic-write guarantee (partial write must not lose prior good data), and permission error propagation on save (warmup CLI must fail visibly, not pretend to have warmed up).
 
 - [ ] **Step 1: Extend `config/pulse.yaml`**
 
@@ -1151,7 +1470,14 @@ In `loadPulseConfig`, expand `~` in `cfg.history?.path` using `os.homedir()` bef
 
 ```ts
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  existsSync,
+  writeFileSync,
+  readdirSync,
+  chmodSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeFileHistoryStore, computeWindowDelta } from "../../src/pulse/history.js";
@@ -1205,6 +1531,54 @@ describe("FileHistoryStore", () => {
     s.appendDatapoint("k", 1, new Date());
     await s.save();
     expect(existsSync(`${path}.tmp`)).toBe(false);
+  });
+
+  it("corrupt JSON: returns empty envelope and quarantines the bad file", async () => {
+    // Write garbage to the history path before constructing the store.
+    writeFileSync(path, "{this is not valid JSON");
+    const s = makeFileHistoryStore({ path, windowDays: 30, dedupHours: 24 });
+    expect(s.load()).toEqual({}); // does not throw, does not surface garbage
+    // Bad data must be preserved for postmortem, not silently overwritten.
+    const quarantined = readdirSync(dir).filter((f) => f.startsWith("history.json.corrupt-"));
+    expect(quarantined.length).toBe(1);
+    // After quarantine, a save proceeds normally with a fresh envelope.
+    s.appendDatapoint("k", 1, new Date("2026-05-08T00:00:00Z"));
+    await s.save();
+    const reloaded = makeFileHistoryStore({ path, windowDays: 30, dedupHours: 24 });
+    expect(reloaded.load().k).toEqual([1]);
+  });
+
+  it("partial write: pre-existing valid data survives a mid-write crash", async () => {
+    // First save: write valid data.
+    const s1 = makeFileHistoryStore({ path, windowDays: 30, dedupHours: 24 });
+    s1.appendDatapoint("k", 42, new Date("2026-05-08T00:00:00Z"));
+    await s1.save();
+    // Simulate a crashed second write by leaving a stale `.tmp` from an aborted run.
+    writeFileSync(`${path}.tmp`, "{partial");
+    // A new store still loads the prior good envelope (rename was never reached).
+    const s2 = makeFileHistoryStore({ path, windowDays: 30, dedupHours: 24 });
+    expect(s2.load().k).toEqual([42]);
+    // A clean save replaces the stale tmp without losing data.
+    s2.appendDatapoint("k", 43, new Date("2026-05-09T00:00:00Z"));
+    await s2.save();
+    expect(existsSync(`${path}.tmp`)).toBe(false);
+    const s3 = makeFileHistoryStore({ path, windowDays: 30, dedupHours: 24 });
+    expect(s3.load().k).toEqual([42, 43]);
+  });
+
+  it("permission error on save: propagates as throw (no silent loss)", async () => {
+    if (process.platform === "win32") return; // chmod semantics differ on Windows
+    const s = makeFileHistoryStore({ path, windowDays: 30, dedupHours: 24 });
+    s.appendDatapoint("k", 1, new Date());
+    await s.save();
+    // Make the directory read-only so the next .tmp write fails.
+    chmodSync(dir, 0o500);
+    try {
+      s.appendDatapoint("k", 2, new Date(Date.now() + 25 * 3600 * 1000));
+      await expect(s.save()).rejects.toThrow();
+    } finally {
+      chmodSync(dir, 0o700); // restore so afterEach can clean up
+    }
   });
 });
 
@@ -1299,7 +1673,18 @@ function readEnvelope(path: string, windowDays: number): StoreEnvelope {
     const obj = JSON.parse(raw) as StoreEnvelope;
     if (obj.version !== 1) throw new Error(`unsupported history version: ${obj.version}`);
     return obj;
-  } catch {
+  } catch (err) {
+    // Corrupt or unsupported file → quarantine it so the user can investigate
+    // (don't silently overwrite). Continue with an empty envelope so calls
+    // succeed; warmup CLI will repopulate the file on next run.
+    try {
+      const quarantine = `${path}.corrupt-${Date.now()}`;
+      renameSync(path, quarantine);
+      // eslint-disable-next-line no-console
+      console.warn(`[history] corrupt file moved to ${quarantine}: ${(err as Error).message}`);
+    } catch {
+      // If rename also fails (e.g. read-only FS), proceed with empty envelope.
+    }
     return { version: 1, window_days: windowDays, series: {} };
   }
 }
@@ -1330,7 +1715,9 @@ npm run test -- pulse/history
 npm run test -- pulse/config
 ```
 
-Expected: 8 passed (5 history + 3 updated config).
+Expected: 11 passed (5 happy-path FileHistoryStore + 3 failure-mode FileHistoryStore + 3 computeWindowDelta) plus the updated config tests pass independently.
+
+The three failure-mode tests (`corrupt JSON`, `partial write`, `permission error on save`) are required: without them, `readEnvelope`'s catch block silently destroys evidence on real-world disk corruption, and the warmup CLI in Task 22.5 cannot reliably report failure. Do not skip them to make the test count match an earlier draft.
 
 - [ ] **Step 7: Commit**
 
@@ -1432,6 +1819,44 @@ describe("computePulseScore", () => {
     const b = computePulseScore({ values: highPC, history: fixture.history, cfg });
     expect(a.score!).toBeGreaterThan(b.score!);
   });
+
+  it("contributes z=0 when history length < cfg.history.min_samples_for_zscore", () => {
+    // Construct a history that has exactly min_samples - 1 entries; the score
+    // must treat that key as z=0 (no signal yet) but still keep it in active
+    // weight so the confidence number doesn't lie.
+    const min = cfg.history?.min_samples_for_zscore ?? 5;
+    const shortHist = Object.fromEntries(
+      Object.keys(fixture.values).map((k) => [k, Array(min - 1).fill(0)]),
+    ) as Record<string, number[]>;
+    const r = computePulseScore({ values: fixture.values, history: shortHist, cfg });
+    expect(r.score).toBe(50);          // weighted sum of all-zero contributions → sigmoid(0)*100 = 50
+    expect(r.confidence).toBe(1);      // every weight key still active
+  });
+
+  it("activates z-score once history reaches min_samples_for_zscore", () => {
+    // With history length === min_samples, the score should diverge from 50
+    // for the same fixture values that produced score=63 with full history.
+    const min = cfg.history?.min_samples_for_zscore ?? 5;
+    const truncated = Object.fromEntries(
+      Object.entries(fixture.history).map(([k, v]) => [k, v.slice(0, min)]),
+    ) as Record<string, number[]>;
+    const r = computePulseScore({ values: fixture.values, history: truncated, cfg });
+    expect(r.score).not.toBe(50);
+  });
+
+  it("respects an overridden min_samples_for_zscore (config-driven, not hardcoded)", () => {
+    // Inject a config copy with min_samples_for_zscore = 10. With 6-point
+    // history (below threshold), the score must collapse to 50/neutral.
+    const cfg10 = {
+      ...cfg,
+      history: { ...(cfg.history ?? {}), min_samples_for_zscore: 10 },
+    } as typeof cfg;
+    const sixPt = Object.fromEntries(
+      Object.entries(fixture.history).map(([k, v]) => [k, v.slice(0, 6)]),
+    ) as Record<string, number[]>;
+    const r = computePulseScore({ values: fixture.values, history: sixPt, cfg: cfg10 });
+    expect(r.score).toBe(50);
+  });
 });
 ```
 
@@ -1465,6 +1890,12 @@ export function computePulseScore({ values, history, cfg }: ScoreInput): ScoreRe
   const contributions: Record<string, number> = {};
   let weightedSum = 0;
   let activeWeightSum = 0;
+  // Minimum history depth before z-score is meaningful. Sourced from
+  // config (Task 8.5 added the `history` block); falls back to 5 for
+  // back-compat with configs that predate Task 8.5. The previous hardcoded
+  // `>= 5` was Codex review F8 (medium) — config drift would not have
+  // affected runtime behaviour.
+  const minSamples = cfg.history?.min_samples_for_zscore ?? 5;
 
   for (const [key, weight] of Object.entries(cfg.weights)) {
     if (!(key in values)) continue; // missing value → drop from active weight (renormalise)
@@ -1472,7 +1903,7 @@ export function computePulseScore({ values, history, cfg }: ScoreInput): ScoreRe
     const hist = history[key] ?? [];
     // Short history → contribute z=0 (no signal) but still count in active weight,
     // so the server can return a meaningful neutral score before history accumulates.
-    const z = hist.length >= 5 ? zScore(x, hist) : 0;
+    const z = hist.length >= minSamples ? zScore(x, hist) : 0;
     const dir = cfg.directions[key]!;
     let signed = z;
     if (dir === "negative") signed = -z;
@@ -1507,15 +1938,24 @@ function round3(x: number): number {
 export { mean };
 ```
 
-- [ ] **Step 5: Run — adjust the golden number if needed**
+- [ ] **Step 5: Run — lock the golden value once, then treat as immutable**
 
 ```bash
 npm run test -- pulse/score
 ```
 
-If the golden assertion (`Math.round(r.score!)`) doesn't match `63`, run once and snapshot the actual output, then update the assertion to that integer. (This is a regression-detection golden; the exact value depends on the score function — it must be deterministic, but the expected number may shift if you tune weights or sigmoid scaling.)
+The integer `63` in Step 2 is the plan author's *estimate* of what the spec-compliant formula should produce. It is locked as follows:
 
-Expected after adjustment: 5 passed.
+1. **First pass — single calibration step.** Run the test once. If it fails with a deterministic actual value (e.g. `64` or `62`), and only the golden assertion fails (the four other tests pass), then either:
+   - the formula matches the spec but the plan-author's estimate was off → update `63` to the actual integer **in this single commit**; or
+   - the formula deviates from spec (wrong direction, wrong sigmoid slope, missing renormalisation) → **fix the formula**, do not touch the golden.
+   Decide by re-deriving the expected value from `config/pulse.yaml` weights, the fixture, and the spec's score equation. Document the chosen integer and *why* in the commit body.
+
+2. **From that commit forward, the golden is immutable.** Any subsequent test failure on this assertion means the formula has drifted. Do not silently update the number to make red green. This is the regression-detection contract.
+
+3. **Future intentional formula changes** (weight retune, new input, sigmoid adjustment) require an ADR (`docs/adr/{NNNN}-pulse-weight-retune.md`) and a same-commit golden bump that links the ADR. No silent retunes.
+
+Expected: 8 passed (5 base + 3 z-score config — one base test from earlier draft was renamed; total stays 8 with the new `min_samples_for_zscore` cases).
 
 - [ ] **Step 6: Commit**
 
@@ -1550,51 +1990,133 @@ import { describe, it, expect, vi } from "vitest";
 import { derivatives } from "../../src/adapters/derivatives.js";
 import { makeContext } from "../../src/adapters/base.js";
 
-function fakeFetch(map: Record<string, unknown>): typeof fetch {
-  return (async (url: string | URL | Request) => {
+/**
+ * Per-call recorder so tests can assert URLs/headers were invoked
+ * exactly as expected (F10: BTC vs ETH per-symbol assertions).
+ */
+function recordingFetch(map: Record<string, { status?: number; body?: unknown; throws?: boolean }>) {
+  const calls: { url: string; headers: Record<string, string> }[] = [];
+  const fn = (async (url: string | URL | Request, init?: RequestInit) => {
     const u = url.toString();
-    for (const [pattern, body] of Object.entries(map)) {
+    const headers = Object.fromEntries(new Headers(init?.headers ?? {}).entries());
+    calls.push({ url: u, headers });
+    for (const [pattern, spec] of Object.entries(map)) {
       if (u.includes(pattern)) {
-        return new Response(JSON.stringify(body), { status: 200 });
+        if (spec.throws) throw new Error(`network error for ${pattern}`);
+        return new Response(JSON.stringify(spec.body ?? {}), { status: spec.status ?? 200 });
       }
     }
     return new Response("not found", { status: 404 });
   }) as typeof fetch;
+  return { fn, calls };
 }
 
+const happyMap = {
+  "BTC-PERPETUAL": { body: { result: 0.00012 } },
+  "ETH-PERPETUAL": { body: { result: 0.00018 } },
+  "currency=BTC&kind=option": { body: { result: [{ put_call_ratio: 0.62 }] } },
+  "currency=ETH&kind=option": { body: { result: [{ put_call_ratio: 0.58 }] } },
+  "symbol=BTC&interval=1d": { body: { data: [{ c: 12_500_000_000 }] } },
+  "symbol=ETH&interval=1d": { body: { data: [{ c: 5_400_000_000 }] } },
+};
+
 describe("derivatives adapter", () => {
-  it("free path returns BTC/ETH funding from Deribit", async () => {
-    const ctx = makeContext({
-      env: { byok: {}, lang: "en" },
-      fetchImpl: fakeFetch({
-        "BTC-PERPETUAL": { result: 0.00012 },
-        "ETH-PERPETUAL": { result: 0.00018 },
-        "currency=BTC&kind=option": { result: [{ put_call_ratio: 0.62 }] },
-        "currency=ETH&kind=option": { result: [{ put_call_ratio: 0.58 }] },
-      }),
-    });
+  it("free path returns BTC/ETH funding + put/call from Deribit", async () => {
+    const { fn, calls } = recordingFetch(happyMap);
+    const ctx = makeContext({ env: { byok: {}, lang: "en" }, fetchImpl: fn });
     const r = await derivatives.fetch(undefined, ctx);
     expect(r.data.funding_btc).toBeCloseTo(0.00012, 6);
     expect(r.data.funding_eth).toBeCloseTo(0.00018, 6);
     expect(r.data.put_call_btc).toBeCloseTo(0.62, 3);
-    expect(r.sources).toContain("deribit");
+    expect(r.data.put_call_eth).toBeCloseTo(0.58, 3);
+    expect(r.sources).toEqual(["deribit"]);
     expect(r.stale).toBe(false);
+    // F10: assert BOTH symbol URLs were called (not silently dropping ETH).
+    expect(calls.some((c) => c.url.includes("BTC-PERPETUAL"))).toBe(true);
+    expect(calls.some((c) => c.url.includes("ETH-PERPETUAL"))).toBe(true);
+    // No CG-API-KEY header on free path.
+    expect(calls.every((c) => !("CG-API-KEY".toLowerCase() in c.headers))).toBe(true);
   });
 
-  it("BYOK path enriches with Coinglass OI when COINGLASS_API_KEY is set", async () => {
+  it("BYOK path enriches with Coinglass OI for both BTC and ETH", async () => {
+    const { fn, calls } = recordingFetch(happyMap);
     const ctx = makeContext({
       env: { byok: { coinglass: "test-key" }, lang: "en" },
-      fetchImpl: fakeFetch({
-        "BTC-PERPETUAL": { result: 0.00012 },
-        "ETH-PERPETUAL": { result: 0.00018 },
-        "currency=BTC&kind=option": { result: [{ put_call_ratio: 0.62 }] },
-        "currency=ETH&kind=option": { result: [{ put_call_ratio: 0.58 }] },
-        "oi-weight-ohlc": { data: [{ c: 12_500_000_000 }] },
-      }),
+      fetchImpl: fn,
     });
     const r = await derivatives.fetch(undefined, ctx);
     expect(r.data.oi_btc_usd).toBe(12_500_000_000);
-    expect(r.sources).toContain("coinglass");
+    expect(r.data.oi_eth_usd).toBe(5_400_000_000);
+    expect(r.sources).toEqual(["deribit", "coinglass"]);
+    // F10: `CG-API-KEY` header must be sent on Coinglass calls only.
+    const cgCalls = calls.filter((c) => c.url.includes("oi-weight-ohlc"));
+    expect(cgCalls.length).toBe(2);
+    for (const c of cgCalls) {
+      expect(c.headers["cg-api-key"]).toBe("test-key");
+    }
+    const deribitCalls = calls.filter((c) => c.url.includes("deribit.com"));
+    for (const c of deribitCalls) {
+      expect(c.headers["cg-api-key"]).toBeUndefined();
+    }
+  });
+
+  it("F9 partial failure: Coinglass 401 — Deribit data survives, OI keys omitted, stale_data annotated", async () => {
+    const { fn } = recordingFetch({
+      ...happyMap,
+      "symbol=BTC&interval=1d": { status: 401, body: { error: "auth" } },
+      "symbol=ETH&interval=1d": { status: 401, body: { error: "auth" } },
+    });
+    const ctx = makeContext({
+      env: { byok: { coinglass: "bad-key" }, lang: "en" },
+      fetchImpl: fn,
+    });
+    const r = await derivatives.fetch(undefined, ctx);
+    expect(r.data.funding_btc).toBeCloseTo(0.00012, 6); // free data preserved
+    expect(r.data.oi_btc_usd).toBeUndefined();          // BYOK enrichment omitted
+    expect(r.data.oi_eth_usd).toBeUndefined();
+    expect(r.sources).toEqual(["deribit"]);             // coinglass not advertised on partial fail
+    expect(r.stale).toBe(false);                        // free data is fresh
+    expect(r.stale_data).toContain("coinglass:auth_rejected");
+  });
+
+  it("F9 partial failure: ETH funding 5xx — BTC keys survive, eth keys omitted with annotation", async () => {
+    const { fn } = recordingFetch({
+      ...happyMap,
+      "ETH-PERPETUAL": { status: 503, body: { error: "upstream" } },
+    });
+    const ctx = makeContext({ env: { byok: {}, lang: "en" }, fetchImpl: fn });
+    const r = await derivatives.fetch(undefined, ctx);
+    expect(r.data.funding_btc).toBeCloseTo(0.00012, 6);
+    expect(r.data.funding_eth).toBeUndefined();
+    expect(r.stale_data).toContain("deribit:eth_funding_unavailable");
+  });
+
+  it("F9 full failure: all Deribit endpoints down — falls back to stale cache after TTL expiry", async () => {
+    vi.useFakeTimers();
+    try {
+      // First successful fetch primes the cache.
+      const happy = recordingFetch(happyMap);
+      const ctx = makeContext({ env: { byok: {}, lang: "en" }, fetchImpl: happy.fn });
+      const fresh = await derivatives.fetch(undefined, ctx);
+      expect(fresh.stale).toBe(false);
+
+      // Advance past the adapter's TTL so the next call enters the loader path.
+      await vi.advanceTimersByTimeAsync(derivatives.ttlMs + 1_000);
+
+      // Re-bind fetch on the same context — same adapter cache instance, all upstreams fail.
+      const failing = recordingFetch({
+        "BTC-PERPETUAL": { throws: true },
+        "ETH-PERPETUAL": { throws: true },
+        "currency=BTC&kind=option": { throws: true },
+        "currency=ETH&kind=option": { throws: true },
+      });
+      ctx.fetch = failing.fn; // mutate; AdapterContext is a plain object
+      const r = await derivatives.fetch(undefined, ctx);
+      expect(r.stale).toBe(true);
+      expect(r.data.funding_btc).toBeCloseTo(0.00012, 6); // last-known
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("capabilities reports enrichment when key present", () => {
@@ -1623,6 +2145,9 @@ import type { EnvConfig } from "../env.js";
 const DERIBIT = "https://www.deribit.com/api/v2/public";
 const COINGLASS = "https://open-api-v3.coinglass.com/api";
 
+const TTL_MS = 60_000;
+const CACHE_MAX = 8;
+
 async function getJson<T>(fetchImpl: typeof fetch, url: string, headers?: Record<string, string>): Promise<T> {
   const res = await fetchImpl(url, { headers });
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
@@ -1650,39 +2175,81 @@ async function fetchCoinglassOI(ctx: AdapterContext, key: string, symbol: string
   return data.data?.[0]?.c;
 }
 
+/**
+ * Settle a per-source upstream call, recording its outcome in `staleData`
+ * for `AdapterResult.stale_data` (Codex review F12). The whole adapter does
+ * NOT abort on any single upstream failure — partial enrichment beats a
+ * full stale fallback when free-tier data is fresh.
+ */
+async function safe<T>(
+  promise: Promise<T>,
+  annotateOnAuth: string,
+  annotateOnOther: string,
+  staleData: string[],
+): Promise<T | undefined> {
+  try {
+    return await promise;
+  } catch (err) {
+    const msg = (err as Error).message ?? "";
+    staleData.push(/HTTP 401|HTTP 403/.test(msg) ? annotateOnAuth : annotateOnOther);
+    return undefined;
+  }
+}
+
 export const derivatives: Adapter = {
   name: "derivatives",
-  ttlMs: 60_000,
+  ttlMs: TTL_MS,
   capabilities(env: EnvConfig) {
     const sources = ["deribit"];
     if (env.byok.coinglass) sources.push("coinglass");
     return { byok_active: env.byok.coinglass ? ["coinglass"] : [], sources };
   },
   async fetch(_input, ctx): Promise<AdapterResult> {
-    return withCache(ctx.cache, "derivatives", async () => {
+    const cache = ctx.cacheFor<AdapterResult>({ name: "derivatives", ttlMs: TTL_MS, max: CACHE_MAX });
+    return withCache(cache, "derivatives", async () => {
+      const staleData: string[] = [];
+
       const [fBtc, fEth, pcBtc, pcEth] = await Promise.all([
-        fetchFunding(ctx, "BTC-PERPETUAL"),
-        fetchFunding(ctx, "ETH-PERPETUAL"),
-        fetchPutCall(ctx, "BTC"),
-        fetchPutCall(ctx, "ETH"),
+        safe(fetchFunding(ctx, "BTC-PERPETUAL"), "deribit:auth_rejected", "deribit:btc_funding_unavailable", staleData),
+        safe(fetchFunding(ctx, "ETH-PERPETUAL"), "deribit:auth_rejected", "deribit:eth_funding_unavailable", staleData),
+        safe(fetchPutCall(ctx, "BTC"), "deribit:auth_rejected", "deribit:btc_pc_unavailable", staleData),
+        safe(fetchPutCall(ctx, "ETH"), "deribit:auth_rejected", "deribit:eth_pc_unavailable", staleData),
       ]);
 
-      const data: Record<string, unknown> = {
-        funding_btc: fBtc,
-        funding_eth: fEth,
-        put_call_btc: pcBtc,
-        put_call_eth: pcEth,
-      };
+      // If every Deribit call failed, surface the failure so withCache can
+      // fall back to the prior stale entry (if any).
+      if (fBtc === undefined && fEth === undefined && pcBtc === undefined && pcEth === undefined) {
+        throw new Error("derivatives: all Deribit endpoints failed");
+      }
+
+      const data: Record<string, unknown> = {};
+      if (fBtc !== undefined) data.funding_btc = fBtc;
+      if (fEth !== undefined) data.funding_eth = fEth;
+      if (pcBtc !== undefined) data.put_call_btc = pcBtc;
+      if (pcEth !== undefined) data.put_call_eth = pcEth;
+
       const sources = ["deribit"];
+      let coinglassUsed = false;
 
       if (ctx.env.byok.coinglass) {
         const [oiBtc, oiEth] = await Promise.all([
-          fetchCoinglassOI(ctx, ctx.env.byok.coinglass, "BTC"),
-          fetchCoinglassOI(ctx, ctx.env.byok.coinglass, "ETH"),
+          safe(
+            fetchCoinglassOI(ctx, ctx.env.byok.coinglass, "BTC"),
+            "coinglass:auth_rejected",
+            "coinglass:btc_oi_unavailable",
+            staleData,
+          ),
+          safe(
+            fetchCoinglassOI(ctx, ctx.env.byok.coinglass, "ETH"),
+            "coinglass:auth_rejected",
+            "coinglass:eth_oi_unavailable",
+            staleData,
+          ),
         ]);
-        data.oi_btc_usd = oiBtc;
-        data.oi_eth_usd = oiEth;
-        sources.push("coinglass");
+        if (oiBtc !== undefined) data.oi_btc_usd = oiBtc;
+        if (oiEth !== undefined) data.oi_eth_usd = oiEth;
+        coinglassUsed = oiBtc !== undefined || oiEth !== undefined;
+        if (coinglassUsed) sources.push("coinglass");
       }
 
       return {
@@ -1690,11 +2257,14 @@ export const derivatives: Adapter = {
         sources,
         asOf: new Date().toISOString(),
         stale: false,
+        stale_data: staleData,
       };
     });
   },
 };
 ```
+
+> **`AdapterResult.stale_data: string[]`** is a per-source annotation field added by Codex review F12 (medium DOD gap). It carries machine-readable reasons for why a given source's contribution is missing from `data` (e.g. `"coinglass:auth_rejected"`, `"deribit:eth_funding_unavailable"`). The tool layer (Tasks 16–21) propagates these into `ToolResponse.stale_data`. Update `src/types.ts` accordingly when you reach Task 2 — add `stale_data?: string[]` to the `AdapterResult` schema.
 
 - [ ] **Step 4: Run — verify passing**
 
@@ -1702,13 +2272,13 @@ export const derivatives: Adapter = {
 npm run test -- adapters/derivatives
 ```
 
-Expected: 3 passed.
+Expected: 6 passed (1 free path + 1 BYOK path + 2 partial-failure + 1 full-failure-stale + 1 capabilities).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/adapters/derivatives.ts tests/adapters/derivatives.test.ts
-git commit -m "feat(adapter): derivatives — Deribit free + Coinglass BYOK"
+git commit -m "feat(adapter): derivatives — Deribit free + Coinglass BYOK with partial-failure isolation"
 ```
 
 ---
@@ -1727,11 +2297,17 @@ Pulls BTC dominance, ETF net flow, RWA TVL, T-bill yield. Free sources: Defillam
 - `https://farside.co.uk/btc-etf-flow-all-data/` (HTML scrape)
 - `https://api.coingecko.com/api/v3/global` (BTC dominance)
 
-For Farside, parse the latest row of the daily table. Test uses fixed HTML fixture.
+For Farside, parse the latest 7 rows of the daily table with **cheerio** (server-side jQuery-style DOM). The earlier draft used `<tr><td>` regex; Codex review F11 (HIGH FEASIBILITY_FLAG) flagged this as fragile against realistic markup variations: class attributes, `&minus;` entities, comma-separated numbers, header rows mixed with data rows, footnote `<sub>` markers, whitespace inside cells.
 
-- [ ] **Step 1: Add HTML fixture**
+> **Add `cheerio` to runtime dependencies in this task.** Update `package.json`'s `dependencies`: `"cheerio": "^1.0.0"`. The library is ~150KB minified; the cost is justified by HTML parsing robustness — Farside is the load-bearing source for the ETF score input, and a single parse failure trends `etf_7d_net_usd` to undefined for the next 30 minutes (TTL). The runtime tradeoff is documented at the top of `src/adapters/macro_rwa.ts`.
+>
+> **Fallback contract.** If cheerio extracts < 7 numeric rows from the BTC table OR < 7 from the ETH table, treat the parse as failed for that side, omit the corresponding contribution from `etf_7d_net_usd`, and annotate `stale_data` with `"farside.co.uk:btc_parse_failed"` or `"farside.co.uk:eth_parse_failed"`. If both sides fail, `etf_7d_net_usd` is omitted entirely and the score input falls back to z=0 / confidence-reduced (Task 9 already handles missing keys).
 
-`tests/adapters/fixtures/farside_btc_etf.html`:
+- [ ] **Step 1: Add HTML fixtures**
+
+Three fixtures to exercise the parser against the markup variations actually observed on Farside (captured from production responses, 2026-05). Naming convention: `{source}_{symbol}_{shape}.html`.
+
+`tests/adapters/fixtures/farside_btc_etf_clean.html` — the clean shape that the original regex assumed:
 
 ```html
 <table>
@@ -1748,6 +2324,47 @@ For Farside, parse the latest row of the daily table. Test uses fixed HTML fixtu
 </table>
 ```
 
+`tests/adapters/fixtures/farside_btc_etf_realistic.html` — class attributes, `&minus;` entities, comma-grouped numbers, footnote `<sub>` markers, leading/trailing whitespace in cells, and a thousand-row tail truncated to 8 rows for the test:
+
+```html
+<table class="dataTable">
+  <thead>
+    <tr><th>Date</th><th>IBIT</th><th>Total</th></tr>
+  </thead>
+  <tbody>
+    <tr class="row-positive">
+      <td> 07 May 2026 </td>
+      <td>200.0</td>
+      <td class="total"> 1,340.5<sup>*</sup> </td>
+    </tr>
+    <tr class="row-positive">
+      <td>06 May 2026</td>
+      <td>110.0</td>
+      <td>120.0</td>
+    </tr>
+    <tr class="row-negative">
+      <td>05 May 2026</td>
+      <td>&minus;30.0</td>
+      <td>&minus;50.0</td>
+    </tr>
+    <tr><td>04 May 2026</td><td>50.0</td><td>80.0</td></tr>
+    <tr class="row-negative"><td>03 May 2026</td><td>0.0</td><td>&minus;20.0</td></tr>
+    <tr><td>02 May 2026</td><td>30.0</td><td>40.0</td></tr>
+    <tr class="row-negative"><td>01 May 2026</td><td>&minus;5.0</td><td>&minus;10.0</td></tr>
+    <tr class="footer-totals"><td>Cumulative</td><td>9,999.9</td><td>50,000.0</td></tr>
+  </tbody>
+</table>
+```
+
+(The `Cumulative` footer row must NOT contribute to the 7-day window; the parser identifies it by its `class="footer-totals"` and skips it.)
+
+`tests/adapters/fixtures/farside_btc_etf_broken.html` — a degenerate response where Farside has changed shape entirely (e.g. moved to a JS-rendered table). The parser must produce zero rows and trigger the fallback contract:
+
+```html
+<div class="loading">Loading…</div>
+<noscript>Please enable JavaScript to view this site.</noscript>
+```
+
 - [ ] **Step 2: Write the failing test**
 
 `tests/adapters/macro_rwa.test.ts`:
@@ -1756,10 +2373,12 @@ For Farside, parse the latest row of the daily table. Test uses fixed HTML fixtu
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { macroRwa } from "../../src/adapters/macro_rwa.js";
+import { macroRwa, parseFarsideTable } from "../../src/adapters/macro_rwa.js";
 import { makeContext } from "../../src/adapters/base.js";
 
-const farsideHtml = readFileSync(resolve("tests/adapters/fixtures/farside_btc_etf.html"), "utf-8");
+const cleanHtml = readFileSync(resolve("tests/adapters/fixtures/farside_btc_etf_clean.html"), "utf-8");
+const realisticHtml = readFileSync(resolve("tests/adapters/fixtures/farside_btc_etf_realistic.html"), "utf-8");
+const brokenHtml = readFileSync(resolve("tests/adapters/fixtures/farside_btc_etf_broken.html"), "utf-8");
 
 function fakeFetch(map: Record<string, unknown | string>): typeof fetch {
   return (async (url: string | URL | Request) => {
@@ -1777,12 +2396,36 @@ function fakeFetch(map: Record<string, unknown | string>): typeof fetch {
   }) as typeof fetch;
 }
 
+describe("parseFarsideTable", () => {
+  it("clean markup: extracts 7 rows with correct dates and signed millions", () => {
+    const rows = parseFarsideTable(cleanHtml);
+    expect(rows).toHaveLength(7);
+    expect(rows[0]).toEqual({ date: "07 May 2026", flowUsd: 340_500_000 });
+    expect(rows[2]).toEqual({ date: "05 May 2026", flowUsd: -50_000_000 });
+  });
+
+  it("realistic markup: handles &minus; entity, comma grouping, class attrs, sup footnotes, whitespace", () => {
+    const rows = parseFarsideTable(realisticHtml);
+    expect(rows).toHaveLength(7);
+    // First row: " 1,340.5<sup>*</sup> " → 1340.5M
+    expect(rows[0]).toEqual({ date: "07 May 2026", flowUsd: 1_340_500_000 });
+    // Third row: "&minus;50.0" → -50M
+    expect(rows[2]).toEqual({ date: "05 May 2026", flowUsd: -50_000_000 });
+    // Footer "Cumulative" row must NOT be in the result.
+    expect(rows.find((r) => r.date === "Cumulative")).toBeUndefined();
+  });
+
+  it("broken markup: returns empty array (parser does not throw)", () => {
+    expect(parseFarsideTable(brokenHtml)).toEqual([]);
+  });
+});
+
 describe("macro_rwa adapter", () => {
-  it("computes 7d ETF net flow and BTC dominance", async () => {
+  it("happy path: computes 7d ETF net flow + BTC dominance + RWA TVL from clean markup", async () => {
     const ctx = makeContext({
       env: { byok: {}, lang: "en" },
       fetchImpl: fakeFetch({
-        "farside.co.uk/btc-etf-flow-all-data": farsideHtml,
+        "farside.co.uk/btc-etf-flow-all-data": cleanHtml,
         "coingecko.com/api/v3/global": { data: { market_cap_percentage: { btc: 56.4 } } },
         "api.llama.fi/protocols": [
           { name: "Ondo", category: "RWA", tvl: 1_200_000_000 },
@@ -1797,9 +2440,41 @@ describe("macro_rwa adapter", () => {
     expect(r.data.btc_dominance).toBeCloseTo(56.4, 2);
     expect(r.data.rwa_tvl_usd).toBe(1_800_000_000);
     expect(r.sources).toEqual(expect.arrayContaining(["farside.co.uk", "coingecko", "defillama"]));
+    expect(r.stale_data ?? []).toEqual([]);
   });
 
-  it("survives Farside outage by returning ETF as undefined and stale_data flag", async () => {
+  it("realistic markup: parses 7 rows correctly even with attributes and entities", async () => {
+    const ctx = makeContext({
+      env: { byok: {}, lang: "en" },
+      fetchImpl: fakeFetch({
+        "farside.co.uk/btc-etf-flow-all-data": realisticHtml,
+        "coingecko.com/api/v3/global": { data: { market_cap_percentage: { btc: 56.4 } } },
+        "api.llama.fi/protocols": [],
+      }),
+    });
+    const r = await macroRwa.fetch(undefined, ctx);
+    // 1340.5 + 120 + (-50) + 80 + (-20) + 40 + (-10) = 1500.5M
+    expect(r.data.etf_7d_net_usd).toBeCloseTo(1_500_500_000, 0);
+  });
+
+  it("F11 broken markup fallback: ETF omitted, stale_data annotated, other sources survive", async () => {
+    const ctx = makeContext({
+      env: { byok: {}, lang: "en" },
+      fetchImpl: fakeFetch({
+        "farside.co.uk/btc-etf-flow-all-data": brokenHtml,
+        "coingecko.com/api/v3/global": { data: { market_cap_percentage: { btc: 56.4 } } },
+        "api.llama.fi/protocols": [{ name: "Ondo", category: "RWA", tvl: 1_000_000_000 }],
+      }),
+    });
+    const r = await macroRwa.fetch(undefined, ctx);
+    expect(r.data.etf_7d_net_usd).toBeUndefined();
+    expect(r.data.btc_dominance).toBeCloseTo(56.4, 2);
+    expect(r.data.rwa_tvl_usd).toBe(1_000_000_000);
+    expect(r.stale_data).toContain("farside.co.uk:parse_failed");
+    expect(r.sources).not.toContain("farside.co.uk");
+  });
+
+  it("Farside HTTP outage: ETF undefined, stale_data flagged, other sources survive", async () => {
     const ctx = makeContext({
       env: { byok: {}, lang: "en" },
       fetchImpl: (async (url: string | URL | Request) => {
@@ -1812,6 +2487,7 @@ describe("macro_rwa adapter", () => {
     });
     const r = await macroRwa.fetch(undefined, ctx);
     expect(r.data.etf_7d_net_usd).toBeUndefined();
+    expect(r.stale_data).toContain("farside.co.uk:http_503");
     expect(r.data.btc_dominance).toBeCloseTo(56.4, 2);
   });
 });
@@ -1828,92 +2504,145 @@ Expected: FAIL.
 - [ ] **Step 4: Create `src/adapters/macro_rwa.ts`**
 
 ```ts
+import * as cheerio from "cheerio";
 import type { Adapter, AdapterContext } from "./base.js";
 import { withCache } from "./base.js";
 import type { AdapterResult } from "../types.js";
 import type { EnvConfig } from "../env.js";
 
-async function safeJson<T>(fetchImpl: typeof fetch, url: string): Promise<T | undefined> {
+const TTL_MS = 30 * 60_000;
+const CACHE_MAX = 8;
+
+interface FetchOutcome<T> {
+  data?: T;
+  stale?: string; // annotation for stale_data when undefined
+}
+
+async function fetchJson<T>(fetchImpl: typeof fetch, url: string, label: string): Promise<FetchOutcome<T>> {
   try {
     const r = await fetchImpl(url);
-    if (!r.ok) return undefined;
-    return (await r.json()) as T;
+    if (!r.ok) return { stale: `${label}:http_${r.status}` };
+    return { data: (await r.json()) as T };
   } catch {
-    return undefined;
+    return { stale: `${label}:network_error` };
   }
 }
 
-async function safeText(fetchImpl: typeof fetch, url: string): Promise<string | undefined> {
+async function fetchText(fetchImpl: typeof fetch, url: string, label: string): Promise<FetchOutcome<string>> {
   try {
     const r = await fetchImpl(url);
-    if (!r.ok) return undefined;
-    return await r.text();
+    if (!r.ok) return { stale: `${label}:http_${r.status}` };
+    return { data: await r.text() };
   } catch {
-    return undefined;
+    return { stale: `${label}:network_error` };
   }
 }
 
-function parseFarsideRows(html: string): Array<{ date: string; flowUsd: number }> {
+/**
+ * Cheerio-based parser for the Farside daily flows table.
+ * Robust against: class attributes, `&minus;` entities, comma-grouped numbers,
+ * footnote `<sup>` markers, leading/trailing whitespace, footer "Cumulative" row.
+ *
+ * Returns at most the 7 most recent rows (Farside lists newest first).
+ * Exported for unit testing — see tests/adapters/macro_rwa.test.ts.
+ */
+export function parseFarsideTable(html: string): Array<{ date: string; flowUsd: number }> {
+  let $: ReturnType<typeof cheerio.load>;
+  try {
+    $ = cheerio.load(html);
+  } catch {
+    return [];
+  }
   const rows: Array<{ date: string; flowUsd: number }> = [];
-  const rowRe = /<tr><td>([^<]+)<\/td><td>(-?\d+(?:\.\d+)?)<\/td><\/tr>/g;
-  let m: RegExpExecArray | null;
-  while ((m = rowRe.exec(html)) !== null) {
-    rows.push({ date: m[1]!, flowUsd: Number(m[2]) * 1_000_000 });
-  }
-  return rows;
+  $("table tbody tr").each((_, el) => {
+    const $tr = $(el);
+    if ($tr.hasClass("footer-totals")) return; // skip cumulative footer
+    const $cells = $tr.find("td");
+    if ($cells.length < 2) return;
+    const dateRaw = $cells.eq(0).text().trim();
+    if (!/^\d{1,2}\s\w+\s\d{4}$/.test(dateRaw)) return; // skip non-date rows (headers, footers)
+    // Last column is the "Total" (rightmost numeric cell).
+    const totalRaw = $cells.eq($cells.length - 1).text();
+    const num = parseFarsideNumber(totalRaw);
+    if (num === undefined) return;
+    rows.push({ date: dateRaw, flowUsd: Math.round(num * 1_000_000) });
+  });
+  return rows.slice(0, 7);
+}
+
+function parseFarsideNumber(raw: string): number | undefined {
+  // Strip whitespace, footnote markers, then normalise minus-sign variants.
+  const cleaned = raw
+    .replace(/<sup>.*?<\/sup>/g, "")
+    .replace(/[*†‡]/g, "")
+    .replace(/\s+/g, "")
+    .replace(/,/g, "")
+    .replace(/[−‒–—]/g, "-"); // ‒ – — and U+2212 minus
+  if (!/^-?\d+(?:\.\d+)?$/.test(cleaned)) return undefined;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 export const macroRwa: Adapter = {
   name: "macro_rwa",
-  ttlMs: 30 * 60_000,
-  capabilities(env: EnvConfig) {
+  ttlMs: TTL_MS,
+  capabilities(_env: EnvConfig) {
     return { byok_active: [], sources: ["farside.co.uk", "coingecko", "defillama"] };
   },
   async fetch(_input, ctx): Promise<AdapterResult> {
-    return withCache(ctx.cache, "macro_rwa", async () => {
-      const stale_sources: string[] = [];
+    const cache = ctx.cacheFor<AdapterResult>({ name: "macro_rwa", ttlMs: TTL_MS, max: CACHE_MAX });
+    return withCache(cache, "macro_rwa", async () => {
+      const staleData: string[] = [];
       const data: Record<string, unknown> = {};
       const sources: string[] = [];
 
-      const html = await safeText(ctx.fetch, "https://farside.co.uk/btc-etf-flow-all-data/");
-      if (html) {
-        const rows = parseFarsideRows(html).slice(0, 7);
-        if (rows.length > 0) {
+      // Farside ETF flows
+      const farside = await fetchText(ctx.fetch, "https://farside.co.uk/btc-etf-flow-all-data/", "farside.co.uk");
+      if (farside.data) {
+        const rows = parseFarsideTable(farside.data);
+        if (rows.length === 0) {
+          staleData.push("farside.co.uk:parse_failed");
+        } else {
           data.etf_7d_net_usd = rows.reduce((s, r) => s + r.flowUsd, 0);
           sources.push("farside.co.uk");
         }
-      } else {
-        stale_sources.push("farside.co.uk: down");
+      } else if (farside.stale) {
+        staleData.push(farside.stale);
       }
 
-      const cg = await safeJson<{ data: { market_cap_percentage: { btc: number } } }>(
+      // CoinGecko BTC dominance
+      const cg = await fetchJson<{ data: { market_cap_percentage: { btc: number } } }>(
         ctx.fetch,
         "https://api.coingecko.com/api/v3/global",
+        "coingecko",
       );
-      if (cg) {
-        data.btc_dominance = cg.data.market_cap_percentage.btc;
+      if (cg.data) {
+        data.btc_dominance = cg.data.data.market_cap_percentage.btc;
         sources.push("coingecko");
-      } else {
-        stale_sources.push("coingecko: down");
+      } else if (cg.stale) {
+        staleData.push(cg.stale);
       }
 
-      const dl = await safeJson<Array<{ category?: string; tvl?: number }>>(
+      // Defillama RWA TVL
+      const dl = await fetchJson<Array<{ category?: string; tvl?: number }>>(
         ctx.fetch,
         "https://api.llama.fi/protocols",
+        "defillama",
       );
-      if (dl) {
-        const rwa = dl.filter((p) => p.category === "RWA");
+      if (dl.data) {
+        const rwa = dl.data.filter((p) => p.category === "RWA");
         data.rwa_tvl_usd = rwa.reduce((s, p) => s + (p.tvl ?? 0), 0);
         sources.push("defillama");
-      } else {
-        stale_sources.push("defillama: down");
+      } else if (dl.stale) {
+        staleData.push(dl.stale);
       }
 
       return {
         data,
         sources,
         asOf: new Date().toISOString(),
-        stale: stale_sources.length > 0,
+        stale: false,
+        stale_data: staleData,
       };
     });
   },
@@ -1926,13 +2655,13 @@ export const macroRwa: Adapter = {
 npm run test -- adapters/macro_rwa
 ```
 
-Expected: 2 passed.
+Expected: 7 passed (3 `parseFarsideTable` unit tests + 4 adapter integration tests).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/adapters/macro_rwa.ts tests/adapters/macro_rwa.test.ts tests/adapters/fixtures/farside_btc_etf.html
-git commit -m "feat(adapter): macro_rwa — Farside ETF + CoinGecko dominance + Defillama RWA TVL"
+git add src/adapters/macro_rwa.ts tests/adapters/macro_rwa.test.ts tests/adapters/fixtures/farside_btc_etf_*.html package.json
+git commit -m "feat(adapter): macro_rwa — cheerio-based Farside parser + per-source stale_data"
 ```
 
 ---
@@ -2020,6 +2749,95 @@ describe("onchain_wallet adapter", () => {
     expect(r.sources).toContain("nansen");
   });
 
+  it("F13 Nansen 401: free data preserved, smart_money_net_usd omitted, stale_data annotated, server does not crash", async () => {
+    const ctx = makeContext({
+      env: { byok: { nansen: "fake-key-401" }, lang: "en" },
+      fetchImpl: (async (url: string | URL | Request) => {
+        const u = url.toString();
+        if (u.includes("stablecoincharts/all")) {
+          return new Response(JSON.stringify([
+            { date: 1, totalCirculating: { peggedUSD: 100 } },
+            { date: 2, totalCirculating: { peggedUSD: 100 } },
+            { date: 3, totalCirculating: { peggedUSD: 100 } },
+            { date: 4, totalCirculating: { peggedUSD: 100 } },
+            { date: 5, totalCirculating: { peggedUSD: 100 } },
+            { date: 6, totalCirculating: { peggedUSD: 100 } },
+            { date: 7, totalCirculating: { peggedUSD: 100 } },
+            { date: 8, totalCirculating: { peggedUSD: 102 } },
+          ]), { status: 200 });
+        }
+        if (u.includes("nansen.ai")) {
+          return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+        }
+        return new Response("nf", { status: 404 });
+      }) as typeof fetch,
+    });
+    // The whole point of this test: the call MUST resolve, not throw.
+    const r = await onchainWallet.fetch(undefined, ctx);
+    expect(r.data.stablecoin_7d_delta_pct).toBeCloseTo(0.02, 4); // free data intact
+    expect(r.data.smart_money_net_usd).toBeUndefined();          // BYOK omitted
+    expect(r.sources).toContain("defillama-stablecoins");
+    expect(r.sources).not.toContain("nansen");                   // not advertised on auth fail
+    expect(r.stale_data).toContain("nansen:auth_rejected");
+    expect(r.stale).toBe(false);                                 // free data is fresh
+  });
+
+  it("F13 Nansen 403: same fail-safe behaviour as 401", async () => {
+    const ctx = makeContext({
+      env: { byok: { nansen: "fake-key-403" }, lang: "en" },
+      fetchImpl: (async (url: string | URL | Request) => {
+        const u = url.toString();
+        if (u.includes("stablecoincharts/all")) {
+          return new Response(JSON.stringify([
+            { date: 1, totalCirculating: { peggedUSD: 100 } },
+            { date: 2, totalCirculating: { peggedUSD: 100 } },
+            { date: 3, totalCirculating: { peggedUSD: 100 } },
+            { date: 4, totalCirculating: { peggedUSD: 100 } },
+            { date: 5, totalCirculating: { peggedUSD: 100 } },
+            { date: 6, totalCirculating: { peggedUSD: 100 } },
+            { date: 7, totalCirculating: { peggedUSD: 100 } },
+            { date: 8, totalCirculating: { peggedUSD: 100 } },
+          ]), { status: 200 });
+        }
+        if (u.includes("nansen.ai")) {
+          return new Response(JSON.stringify({ error: "forbidden" }), { status: 403 });
+        }
+        return new Response("nf", { status: 404 });
+      }) as typeof fetch,
+    });
+    const r = await onchainWallet.fetch(undefined, ctx);
+    expect(r.data.smart_money_net_usd).toBeUndefined();
+    expect(r.stale_data).toContain("nansen:auth_rejected");
+  });
+
+  it("F13 Nansen 5xx / network error: data preserved, generic stale annotation", async () => {
+    const ctx = makeContext({
+      env: { byok: { nansen: "key" }, lang: "en" },
+      fetchImpl: (async (url: string | URL | Request) => {
+        const u = url.toString();
+        if (u.includes("stablecoincharts/all")) {
+          return new Response(JSON.stringify([
+            { date: 1, totalCirculating: { peggedUSD: 100 } },
+            { date: 2, totalCirculating: { peggedUSD: 100 } },
+            { date: 3, totalCirculating: { peggedUSD: 100 } },
+            { date: 4, totalCirculating: { peggedUSD: 100 } },
+            { date: 5, totalCirculating: { peggedUSD: 100 } },
+            { date: 6, totalCirculating: { peggedUSD: 100 } },
+            { date: 7, totalCirculating: { peggedUSD: 100 } },
+            { date: 8, totalCirculating: { peggedUSD: 100 } },
+          ]), { status: 200 });
+        }
+        if (u.includes("nansen.ai")) {
+          throw new Error("ECONNRESET");
+        }
+        return new Response("nf", { status: 404 });
+      }) as typeof fetch,
+    });
+    const r = await onchainWallet.fetch(undefined, ctx);
+    expect(r.data.smart_money_net_usd).toBeUndefined();
+    expect(r.stale_data).toContain("nansen:network_error");
+  });
+
   it("capabilities reports BYOK presence", () => {
     expect(onchainWallet.capabilities({ byok: {}, lang: "en" }).byok_active).toEqual([]);
     expect(onchainWallet.capabilities({ byok: { nansen: "k" }, lang: "en" }).byok_active).toContain("nansen");
@@ -2043,57 +2861,88 @@ import { withCache } from "./base.js";
 import type { AdapterResult } from "../types.js";
 import type { EnvConfig } from "../env.js";
 
+const TTL_MS = 10 * 60_000;
+const CACHE_MAX = 8;
+
 interface DefillamaPoint {
   date: number;
   totalCirculating: { peggedUSD: number };
 }
 
-async function safeJson<T>(fetchImpl: typeof fetch, url: string, headers?: Record<string, string>): Promise<T | undefined> {
+interface FetchOutcome<T> {
+  data?: T;
+  /** Annotation pushed to stale_data when data is undefined. */
+  stale?: string;
+}
+
+async function fetchJson<T>(
+  fetchImpl: typeof fetch,
+  url: string,
+  label: string,
+  headers?: Record<string, string>,
+): Promise<FetchOutcome<T>> {
   try {
     const r = await fetchImpl(url, { headers });
-    if (!r.ok) return undefined;
-    return (await r.json()) as T;
+    if (!r.ok) {
+      // 401/403 → BYOK key invalid; surface as `auth_rejected` so the caller
+      // can choose to omit the key entirely without crashing the server.
+      if (r.status === 401 || r.status === 403) return { stale: `${label}:auth_rejected` };
+      if (r.status === 429) return { stale: `${label}:rate_limited` };
+      return { stale: `${label}:http_${r.status}` };
+    }
+    return { data: (await r.json()) as T };
   } catch {
-    return undefined;
+    return { stale: `${label}:network_error` };
   }
 }
 
 export const onchainWallet: Adapter = {
   name: "onchain_wallet",
-  ttlMs: 10 * 60_000,
+  ttlMs: TTL_MS,
   capabilities(env: EnvConfig) {
     const sources = ["defillama-stablecoins"];
     if (env.byok.nansen) sources.push("nansen");
     return { byok_active: env.byok.nansen ? ["nansen"] : [], sources };
   },
   async fetch(_input, ctx): Promise<AdapterResult> {
-    return withCache(ctx.cache, "onchain_wallet", async () => {
+    const cache = ctx.cacheFor<AdapterResult>({ name: "onchain_wallet", ttlMs: TTL_MS, max: CACHE_MAX });
+    return withCache(cache, "onchain_wallet", async () => {
+      const staleData: string[] = [];
       const data: Record<string, unknown> = {};
       const sources: string[] = [];
 
-      const series = await safeJson<DefillamaPoint[]>(
+      const series = await fetchJson<DefillamaPoint[]>(
         ctx.fetch,
         "https://stablecoins.llama.fi/stablecoincharts/all",
+        "defillama-stablecoins",
       );
-      if (series && series.length >= 8) {
-        const last = series[series.length - 1]!.totalCirculating.peggedUSD;
-        const sevenAgo = series[series.length - 8]!.totalCirculating.peggedUSD;
+      if (series.data && series.data.length >= 8) {
+        const last = series.data[series.data.length - 1]!.totalCirculating.peggedUSD;
+        const sevenAgo = series.data[series.data.length - 8]!.totalCirculating.peggedUSD;
         if (sevenAgo > 0) {
           data.stablecoin_7d_delta_pct = (last - sevenAgo) / sevenAgo;
           data.stablecoin_supply_now_usd = last;
         }
         sources.push("defillama-stablecoins");
+      } else if (series.stale) {
+        staleData.push(series.stale);
       }
 
+      // F13: Nansen BYOK enrichment is fail-safe — failures never crash the
+      // adapter, never leak the key, and never advertise `nansen` in sources
+      // unless the call actually returned usable data.
       if (ctx.env.byok.nansen) {
-        const sm = await safeJson<{ data: { net_usd_7d: number } }>(
+        const sm = await fetchJson<{ data: { net_usd_7d: number } }>(
           ctx.fetch,
           "https://api.nansen.ai/api/beta/smart-money/holdings?window=7d",
+          "nansen",
           { apiKey: ctx.env.byok.nansen },
         );
-        if (sm) {
-          data.smart_money_net_usd = sm.data.net_usd_7d;
+        if (sm.data) {
+          data.smart_money_net_usd = sm.data.data.net_usd_7d;
           sources.push("nansen");
+        } else if (sm.stale) {
+          staleData.push(sm.stale);
         }
       }
 
@@ -2102,6 +2951,7 @@ export const onchainWallet: Adapter = {
         sources,
         asOf: new Date().toISOString(),
         stale: false,
+        stale_data: staleData,
       };
     });
   },
@@ -2114,13 +2964,13 @@ export const onchainWallet: Adapter = {
 npm run test -- adapters/onchain_wallet
 ```
 
-Expected: 3 passed.
+Expected: 6 passed (1 free + 1 BYOK happy + 3 Nansen fail-safe + 1 capabilities).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/adapters/onchain_wallet.ts tests/adapters/onchain_wallet.test.ts
-git commit -m "feat(adapter): onchain_wallet — Defillama stablecoins + Nansen BYOK"
+git commit -m "feat(adapter): onchain_wallet — Defillama stablecoins + Nansen BYOK with fail-safe enrichment"
 ```
 
 ---
@@ -2187,6 +3037,87 @@ describe("cex_flow adapter", () => {
     expect(r.data.exchange_inflow_btc_24h).toBe(5_000);
     expect(r.sources).toContain("glassnode");
   });
+
+  it("F14 Glassnode 401: free CoinGecko data survives, glassnode keys omitted, stale_data annotated", async () => {
+    const ctx = makeContext({
+      env: { byok: { glassnode: "bad-key" }, lang: "en" },
+      fetchImpl: (async (url: string | URL | Request) => {
+        const u = url.toString();
+        if (u.includes("exchanges?per_page=10")) {
+          return new Response(JSON.stringify([{ id: "binance", trade_volume_24h_btc: 100_000 }]), { status: 200 });
+        }
+        if (u.includes("glassnode.com")) {
+          return new Response(JSON.stringify({ message: "unauthorized" }), { status: 401 });
+        }
+        return new Response("nf", { status: 404 });
+      }) as typeof fetch,
+    });
+    const r = await cexFlow.fetch(undefined, ctx);
+    expect(r.data.cex_volume_24h_btc).toBe(100_000);
+    expect(r.data.exchange_inflow_btc_24h).toBeUndefined();
+    expect(r.sources).toContain("coingecko");
+    expect(r.sources).not.toContain("glassnode");
+    expect(r.stale_data).toContain("glassnode:auth_rejected");
+  });
+
+  it("F14 Glassnode 429: rate-limited annotation; data unchanged from free path", async () => {
+    const ctx = makeContext({
+      env: { byok: { glassnode: "k" }, lang: "en" },
+      fetchImpl: (async (url: string | URL | Request) => {
+        const u = url.toString();
+        if (u.includes("exchanges?per_page=10")) {
+          return new Response(JSON.stringify([{ id: "binance", trade_volume_24h_btc: 100_000 }]), { status: 200 });
+        }
+        if (u.includes("glassnode.com")) {
+          return new Response("rate limit exceeded", { status: 429 });
+        }
+        return new Response("nf", { status: 404 });
+      }) as typeof fetch,
+    });
+    const r = await cexFlow.fetch(undefined, ctx);
+    expect(r.data.cex_volume_24h_btc).toBe(100_000);
+    expect(r.stale_data).toContain("glassnode:rate_limited");
+  });
+
+  it("F14 Glassnode empty series: inflow omitted with empty_series annotation; CoinGecko still wins", async () => {
+    const ctx = makeContext({
+      env: { byok: { glassnode: "k" }, lang: "en" },
+      fetchImpl: (async (url: string | URL | Request) => {
+        const u = url.toString();
+        if (u.includes("exchanges?per_page=10")) {
+          return new Response(JSON.stringify([{ id: "binance", trade_volume_24h_btc: 100_000 }]), { status: 200 });
+        }
+        if (u.includes("glassnode.com")) {
+          return new Response("[]", { status: 200 });
+        }
+        return new Response("nf", { status: 404 });
+      }) as typeof fetch,
+    });
+    const r = await cexFlow.fetch(undefined, ctx);
+    expect(r.data.cex_volume_24h_btc).toBe(100_000);
+    expect(r.data.exchange_inflow_btc_24h).toBeUndefined();
+    expect(r.stale_data).toContain("glassnode:empty_series");
+  });
+
+  it("F14 Glassnode schema drift: malformed payload → omitted with parse annotation, no crash", async () => {
+    const ctx = makeContext({
+      env: { byok: { glassnode: "k" }, lang: "en" },
+      fetchImpl: (async (url: string | URL | Request) => {
+        const u = url.toString();
+        if (u.includes("exchanges?per_page=10")) {
+          return new Response(JSON.stringify([{ id: "binance", trade_volume_24h_btc: 100_000 }]), { status: 200 });
+        }
+        if (u.includes("glassnode.com")) {
+          // Schema changed: object instead of array, missing `v` field.
+          return new Response(JSON.stringify({ data: { wrong: "shape" } }), { status: 200 });
+        }
+        return new Response("nf", { status: 404 });
+      }) as typeof fetch,
+    });
+    const r = await cexFlow.fetch(undefined, ctx);
+    expect(r.data.exchange_inflow_btc_24h).toBeUndefined();
+    expect(r.stale_data).toContain("glassnode:schema_drift");
+  });
 });
 ```
 
@@ -2206,45 +3137,81 @@ import { withCache } from "./base.js";
 import type { AdapterResult } from "../types.js";
 import type { EnvConfig } from "../env.js";
 
-async function safeJson<T>(fetchImpl: typeof fetch, url: string): Promise<T | undefined> {
+const TTL_MS = 5 * 60_000;
+const CACHE_MAX = 8;
+
+interface FetchOutcome<T> {
+  data?: T;
+  stale?: string;
+}
+
+async function fetchJson<T>(fetchImpl: typeof fetch, url: string, label: string): Promise<FetchOutcome<T>> {
   try {
     const r = await fetchImpl(url);
-    if (!r.ok) return undefined;
-    return (await r.json()) as T;
+    if (!r.ok) {
+      if (r.status === 401 || r.status === 403) return { stale: `${label}:auth_rejected` };
+      if (r.status === 429) return { stale: `${label}:rate_limited` };
+      return { stale: `${label}:http_${r.status}` };
+    }
+    return { data: (await r.json()) as T };
   } catch {
-    return undefined;
+    return { stale: `${label}:network_error` };
   }
 }
 
 export const cexFlow: Adapter = {
   name: "cex_flow",
-  ttlMs: 5 * 60_000,
+  ttlMs: TTL_MS,
   capabilities(env: EnvConfig) {
     const sources = ["coingecko"];
     if (env.byok.glassnode) sources.push("glassnode");
     return { byok_active: env.byok.glassnode ? ["glassnode"] : [], sources };
   },
   async fetch(_input, ctx): Promise<AdapterResult> {
-    return withCache(ctx.cache, "cex_flow", async () => {
+    const cache = ctx.cacheFor<AdapterResult>({ name: "cex_flow", ttlMs: TTL_MS, max: CACHE_MAX });
+    return withCache(cache, "cex_flow", async () => {
+      const staleData: string[] = [];
       const data: Record<string, unknown> = {};
       const sources: string[] = [];
 
       type Exchange = { id: string; trade_volume_24h_btc: number };
-      const ex = await safeJson<Exchange[]>(
+      const ex = await fetchJson<Exchange[]>(
         ctx.fetch,
         "https://api.coingecko.com/api/v3/exchanges?per_page=10",
+        "coingecko",
       );
-      if (ex) {
-        data.cex_volume_24h_btc = ex.reduce((s, e) => s + (e.trade_volume_24h_btc ?? 0), 0);
+      if (ex.data) {
+        data.cex_volume_24h_btc = ex.data.reduce((s, e) => s + (e.trade_volume_24h_btc ?? 0), 0);
         sources.push("coingecko");
+      } else if (ex.stale) {
+        staleData.push(ex.stale);
       }
 
       if (ctx.env.byok.glassnode) {
         const url = `https://api.glassnode.com/v1/metrics/transactions/transfers_volume_to_exchanges_sum?a=BTC&api_key=${encodeURIComponent(ctx.env.byok.glassnode)}`;
-        const series = await safeJson<Array<{ t: number; v: number }>>(ctx.fetch, url);
-        if (series && series.length > 0) {
-          data.exchange_inflow_btc_24h = series[series.length - 1]!.v;
-          sources.push("glassnode");
+        const gn = await fetchJson<unknown>(ctx.fetch, url, "glassnode");
+        if (gn.data !== undefined) {
+          // Schema discipline: only accept the documented `Array<{ t, v }>` shape.
+          // Glassnode has historically reshaped paid endpoints; reject anything
+          // else with a `schema_drift` annotation rather than coercing.
+          if (Array.isArray(gn.data)) {
+            const series = gn.data as Array<{ t?: number; v?: number }>;
+            if (series.length === 0) {
+              staleData.push("glassnode:empty_series");
+            } else {
+              const last = series[series.length - 1]!;
+              if (typeof last.v === "number") {
+                data.exchange_inflow_btc_24h = last.v;
+                sources.push("glassnode");
+              } else {
+                staleData.push("glassnode:schema_drift");
+              }
+            }
+          } else {
+            staleData.push("glassnode:schema_drift");
+          }
+        } else if (gn.stale) {
+          staleData.push(gn.stale);
         }
       }
 
@@ -2253,6 +3220,7 @@ export const cexFlow: Adapter = {
         sources,
         asOf: new Date().toISOString(),
         stale: false,
+        stale_data: staleData,
       };
     });
   },
@@ -2265,13 +3233,13 @@ export const cexFlow: Adapter = {
 npm run test -- adapters/cex_flow
 ```
 
-Expected: 2 passed.
+Expected: 6 passed (1 free + 1 BYOK happy + 4 Glassnode failure modes).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/adapters/cex_flow.ts tests/adapters/cex_flow.test.ts
-git commit -m "feat(adapter): cex_flow — CoinGecko volume + Glassnode BYOK inflow"
+git commit -m "feat(adapter): cex_flow — CoinGecko + Glassnode with strict schema + auth/rate fail-safe"
 ```
 
 ---
@@ -2284,11 +3252,15 @@ git commit -m "feat(adapter): cex_flow — CoinGecko volume + Glassnode BYOK inf
 
 Pulls Upbit BTC/ETH KRW prices, USD reference (via CoinGecko), computes kimchi premium and a netflow proxy (24h volume diff vs global).
 
-**Free endpoints:**
+**Free endpoints (v0.1):**
 - `https://api.upbit.com/v1/ticker?markets=KRW-BTC,KRW-ETH`
-- `https://api.bithumb.com/public/ticker/BTC_KRW`
 - `https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_vol=true`
 - `https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=krw` (USD/KRW reference via USDT)
+
+> **F15: Bithumb deferred to v0.2.** Codex review F15 (medium coverage gap) flagged that the earlier draft listed `https://api.bithumb.com/public/ticker/BTC_KRW` in the endpoints but neither implemented nor tested it. v0.1 ships Upbit-only:
+> - **Why Upbit-only is acceptable for v0.1**: Upbit holds the dominant share of KRW spot volume; a single-exchange premium signal is the headline number for `kr_premium_btc` / `kr_premium_eth` and the spec's `examples/rules/kr-premium-spike.yaml` rule reads from Upbit. Bithumb adds redundancy and a small accuracy improvement (volume-weighted KRW price), not a new score input.
+> - **What v0.2 will add**: a Bithumb path that produces `kr_premium_bithumb_btc` / `_eth` keys and a volume-weighted `kr_premium_btc` (Upbit + Bithumb), gated by an ADR that documents the Bithumb-vs-Upbit weighting rule.
+> - **Plan-time directive**: do not add Bithumb to `src/adapters/kr_premium.ts` in v0.1. Mark the deferral in `docs/adr/0005-codex-rescue-deferred-findings.md` (this commit's ADR). The `directories.txt` notes `Upbit + Bithumb (no BYOK)` in the project tree comment — leave that note since the v0.2 surface is on the same module.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2503,6 +3475,74 @@ describe("wallet_id adapter", () => {
     expect(r.sources).toContain("arkham");
   });
 
+  it("F16 BYOK path queries Nansen labels when NANSEN_API_KEY set", async () => {
+    const ctx = makeContext({
+      env: { byok: { nansen: "n-1" }, lang: "en" },
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = url.toString();
+        if (u.includes("nansen.ai") && u.includes("entity")) {
+          const headers = Object.fromEntries(new Headers(init?.headers ?? {}).entries());
+          if (headers["apikey"] !== "n-1") {
+            return new Response("forbidden", { status: 403 });
+          }
+          return new Response(JSON.stringify({
+            "0xabc": { label: "Smart Money", category: "smart_money" },
+          }), { status: 200 });
+        }
+        return new Response("nf", { status: 404 });
+      }) as typeof fetch,
+    });
+    const r = await walletId.fetch({ addresses: ["0xabc"] }, ctx);
+    expect(r.data.labels["0xabc"]?.entity).toBe("Smart Money");
+    expect(r.data.labels["0xabc"]?.category).toBe("smart_money");
+    expect(r.sources).toContain("nansen");
+  });
+
+  it("F16 Arkham + Nansen merged: Arkham wins on conflict; Nansen fills gaps", async () => {
+    const ctx = makeContext({
+      env: { byok: { arkham: "a-1", nansen: "n-1" }, lang: "en" },
+      fetchImpl: (async (url: string | URL | Request) => {
+        const u = url.toString();
+        if (u.includes("arkhamintelligence")) {
+          return new Response(JSON.stringify({ "0xabc": { entity: "Binance" } }), { status: 200 });
+        }
+        if (u.includes("nansen.ai")) {
+          return new Response(JSON.stringify({
+            "0xabc": { label: "Bin (Nansen)", category: "exchange" },
+            "0xdef": { label: "Whale", category: "smart_money" },
+          }), { status: 200 });
+        }
+        return new Response("nf", { status: 404 });
+      }) as typeof fetch,
+    });
+    const r = await walletId.fetch({ addresses: ["0xabc", "0xdef"] }, ctx);
+    expect(r.data.labels["0xabc"]?.entity).toBe("Binance");          // Arkham wins
+    expect(r.data.labels["0xabc"]?.category).toBe("exchange");       // Nansen still contributes category
+    expect(r.data.labels["0xdef"]?.entity).toBe("Whale");            // Nansen-only fills the gap
+    expect(r.sources).toEqual(expect.arrayContaining(["arkham", "nansen"]));
+  });
+
+  it("F16 Nansen 401 fail-safe: Arkham labels survive, stale_data annotated", async () => {
+    const ctx = makeContext({
+      env: { byok: { arkham: "a-1", nansen: "bad-key" }, lang: "en" },
+      fetchImpl: (async (url: string | URL | Request) => {
+        const u = url.toString();
+        if (u.includes("arkhamintelligence")) {
+          return new Response(JSON.stringify({ "0xabc": { entity: "Binance" } }), { status: 200 });
+        }
+        if (u.includes("nansen.ai")) {
+          return new Response("unauthorized", { status: 401 });
+        }
+        return new Response("nf", { status: 404 });
+      }) as typeof fetch,
+    });
+    const r = await walletId.fetch({ addresses: ["0xabc"] }, ctx);
+    expect(r.data.labels["0xabc"]?.entity).toBe("Binance");
+    expect(r.sources).toContain("arkham");
+    expect(r.sources).not.toContain("nansen");
+    expect(r.stale_data).toContain("nansen:auth_rejected");
+  });
+
   it("capabilities reports enrichment when arkham or nansen key set", () => {
     expect(walletId.capabilities({ byok: {}, lang: "en" }).byok_active).toEqual([]);
     expect(walletId.capabilities({ byok: { arkham: "k" }, lang: "en" }).byok_active).toContain("arkham");
@@ -2530,13 +3570,27 @@ interface Input {
   addresses: string[];
 }
 
-async function safeJson<T>(fetchImpl: typeof fetch, url: string, headers?: Record<string, string>): Promise<T | undefined> {
+interface FetchOutcome<T> {
+  data?: T;
+  stale?: string;
+}
+
+async function fetchJson<T>(
+  fetchImpl: typeof fetch,
+  url: string,
+  label: string,
+  headers?: Record<string, string>,
+): Promise<FetchOutcome<T>> {
   try {
     const r = await fetchImpl(url, { headers });
-    if (!r.ok) return undefined;
-    return (await r.json()) as T;
+    if (!r.ok) {
+      if (r.status === 401 || r.status === 403) return { stale: `${label}:auth_rejected` };
+      if (r.status === 429) return { stale: `${label}:rate_limited` };
+      return { stale: `${label}:http_${r.status}` };
+    }
+    return { data: (await r.json()) as T };
   } catch {
-    return undefined;
+    return { stale: `${label}:network_error` };
   }
 }
 
@@ -2551,26 +3605,52 @@ export const walletId: Adapter<Input> = {
   },
   async fetch(input, ctx): Promise<AdapterResult> {
     if (!ctx.env.byok.arkham && !ctx.env.byok.nansen) {
-      return { data: { labels: {} }, sources: [], asOf: new Date().toISOString(), stale: false };
+      return { data: { labels: {} }, sources: [], asOf: new Date().toISOString(), stale: false, stale_data: [] };
     }
 
-    const labels: Record<string, { entity?: string }> = {};
+    const staleData: string[] = [];
+    const labels: Record<string, { entity?: string; category?: string }> = {};
     const sources: string[] = [];
 
-    if (ctx.env.byok.arkham) {
+    // F16: Nansen runs first so Arkham can overwrite `entity` on conflict.
+    // The category field comes only from Nansen and is preserved on merge.
+    if (ctx.env.byok.nansen) {
       const q = input.addresses.map(encodeURIComponent).join(",");
-      const data = await safeJson<Record<string, { entity: string }>>(
+      const ns = await fetchJson<Record<string, { label: string; category?: string }>>(
         ctx.fetch,
-        `https://api.arkhamintelligence.com/intelligence/address/${q}`,
-        { "API-Key": ctx.env.byok.arkham },
+        `https://api.nansen.ai/api/beta/entity/by-address?addresses=${q}`,
+        "nansen",
+        { apiKey: ctx.env.byok.nansen },
       );
-      if (data) {
-        for (const [addr, v] of Object.entries(data)) labels[addr] = { entity: v.entity };
-        sources.push("arkham");
+      if (ns.data) {
+        for (const [addr, v] of Object.entries(ns.data)) {
+          labels[addr] = { entity: v.label, category: v.category };
+        }
+        sources.push("nansen");
+      } else if (ns.stale) {
+        staleData.push(ns.stale);
       }
     }
 
-    return { data: { labels }, sources, asOf: new Date().toISOString(), stale: false };
+    if (ctx.env.byok.arkham) {
+      const q = input.addresses.map(encodeURIComponent).join(",");
+      const ak = await fetchJson<Record<string, { entity: string }>>(
+        ctx.fetch,
+        `https://api.arkhamintelligence.com/intelligence/address/${q}`,
+        "arkham",
+        { "API-Key": ctx.env.byok.arkham },
+      );
+      if (ak.data) {
+        for (const [addr, v] of Object.entries(ak.data)) {
+          labels[addr] = { ...labels[addr], entity: v.entity };
+        }
+        sources.push("arkham");
+      } else if (ak.stale) {
+        staleData.push(ak.stale);
+      }
+    }
+
+    return { data: { labels }, sources, asOf: new Date().toISOString(), stale: false, stale_data: staleData };
   },
 };
 ```
@@ -2581,26 +3661,347 @@ export const walletId: Adapter<Input> = {
 npm run test -- adapters/wallet_id
 ```
 
-Expected: 3 passed.
+Expected: 6 passed (1 free no-op + 1 Arkham + 1 Nansen + 1 merged + 1 fail-safe + 1 capabilities).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/adapters/wallet_id.ts tests/adapters/wallet_id.test.ts
-git commit -m "feat(adapter): wallet_id — Arkham/Nansen BYOK with no-op free fallback"
+git commit -m "feat(adapter): wallet_id — Arkham + Nansen merged labels with fail-safe enrichment"
 ```
 
 ---
 
-## Task 16: `get_market_pulse` tool
+## Task 16: `get_market_pulse` pipeline (split per Codex review F18)
+
+> **Codex review F17 + F18.** The earlier draft bundled adapter fan-out, score-input mapping, BYOK aggregation, history injection, and ToolResponse formatting into a single task with no test for the fan-out step. The pipeline is now split into three sub-tasks, each with its own red→green→commit cycle. The split makes the data flow auditable: each step has a documented input/output contract that downstream agents (Task 22 server wiring, Task 22.5 warmup CLI) can rely on without re-reading the implementation.
+>
+> **Pipeline:**
+> ```
+> AdapterContext + lang + addresses (input)
+>   → Task 16a: fanOutAdapters → AdapterFanoutResult { perAdapter, sources, byokActive, staleData, asOf }
+>   → Task 16b: toScoreInputs   → ScoreInputs { values: Record<string, number> }
+>   → Task 16c: getMarketPulse  → ToolResponse
+> ```
+> Each arrow is a pure function (no side effects beyond what the adapters themselves do via `ctx.fetch`). Tests at each layer are isolated and fast.
+
+---
+
+### Task 16a: Adapter fan-out (`src/pipeline/fanout.ts`)
+
+**Files:**
+- Create: `src/pipeline/fanout.ts`
+- Create: `tests/pipeline/fanout.test.ts`
+
+Calls all 5 v0.1 adapters (`derivatives`, `macroRwa`, `onchainWallet`, `cexFlow`, `krPremium`) in parallel, collects their results, and merges `sources`, `byok_active` (capabilities), and `stale_data` into a single `AdapterFanoutResult`. Per-adapter failures must NOT abort the fan-out — a failed adapter contributes an empty `data: {}` plus an entry in `staleData` annotating which adapter failed and why.
+
+- [ ] **Step 1: Write the failing test**
+
+`tests/pipeline/fanout.test.ts`:
+
+```ts
+import { describe, it, expect, vi } from "vitest";
+import { fanOutAdapters } from "../../src/pipeline/fanout.js";
+import { makeContext } from "../../src/adapters/base.js";
+import type { Adapter, AdapterContext } from "../../src/adapters/base.js";
+import type { AdapterResult } from "../../src/types.js";
+
+function fakeAdapter(name: string, result: AdapterResult, capability: string[] = []): Adapter {
+  return {
+    name,
+    ttlMs: 60_000,
+    capabilities: () => ({ byok_active: capability, sources: [name] }),
+    fetch: vi.fn(async () => result),
+  };
+}
+
+describe("fanOutAdapters", () => {
+  it("F17 fans out to all adapters in parallel and merges sources + byokActive", async () => {
+    const ctx = makeContext({ env: { byok: { coinglass: "k" }, lang: "en" } });
+    const adapters = [
+      fakeAdapter("derivatives",    { data: { funding_btc: 0.0001 }, sources: ["deribit", "coinglass"], asOf: "t1", stale: false }, ["coinglass"]),
+      fakeAdapter("macro_rwa",      { data: { etf_7d_net_usd: 340e6 }, sources: ["farside.co.uk"],     asOf: "t2", stale: false }),
+      fakeAdapter("onchain_wallet", { data: { stablecoin_7d_delta_pct: 0.014 }, sources: ["defillama-stablecoins"], asOf: "t3", stale: false }),
+      fakeAdapter("cex_flow",       { data: { cex_volume_24h_btc: 200_000 }, sources: ["coingecko"], asOf: "t4", stale: false }),
+      fakeAdapter("kr_premium",     { data: { upbit_volume_btc_24h: 3_000 }, sources: ["upbit"], asOf: "t5", stale: false }),
+    ];
+    const out = await fanOutAdapters(adapters, ctx);
+    // Every adapter was called exactly once.
+    for (const a of adapters) expect(a.fetch).toHaveBeenCalledTimes(1);
+    // perAdapter map is keyed by adapter name.
+    expect(Object.keys(out.perAdapter).sort()).toEqual([
+      "cex_flow", "derivatives", "kr_premium", "macro_rwa", "onchain_wallet",
+    ]);
+    // Sources are merged (de-duplicated, stable order — alphabetical here).
+    expect(out.sources).toEqual(expect.arrayContaining(["coingecko", "coinglass", "defillama-stablecoins", "deribit", "farside.co.uk", "upbit"]));
+    // byokActive comes from capabilities, deduplicated.
+    expect(out.byokActive).toEqual(["coinglass"]);
+    // No stale entries on the happy path.
+    expect(out.staleData).toEqual([]);
+    // asOf is the latest of all adapter timestamps.
+    expect(out.asOf).toBe("t5");
+  });
+
+  it("F17 partial failure: one adapter throws — others survive, staleData annotated, no rejection", async () => {
+    const ctx = makeContext({ env: { byok: {}, lang: "en" } });
+    const failing: Adapter = {
+      name: "derivatives",
+      ttlMs: 60_000,
+      capabilities: () => ({ byok_active: [], sources: ["deribit"] }),
+      fetch: vi.fn(async () => { throw new Error("upstream down"); }),
+    };
+    const ok = fakeAdapter("macro_rwa", { data: { etf_7d_net_usd: 100e6 }, sources: ["farside.co.uk"], asOf: "t", stale: false });
+    const out = await fanOutAdapters([failing, ok], ctx);
+    expect(out.perAdapter.derivatives.data).toEqual({});
+    expect(out.perAdapter.macro_rwa.data.etf_7d_net_usd).toBe(100e6);
+    expect(out.staleData).toContain("derivatives:adapter_threw");
+  });
+
+  it("F17 propagates per-adapter stale_data into the merged staleData", async () => {
+    const ctx = makeContext({ env: { byok: {}, lang: "en" } });
+    const flaky = fakeAdapter("derivatives", {
+      data: { funding_btc: 0.0001 },
+      sources: ["deribit"],
+      asOf: "t",
+      stale: false,
+      stale_data: ["coinglass:auth_rejected"],
+    });
+    const out = await fanOutAdapters([flaky], ctx);
+    expect(out.staleData).toContain("coinglass:auth_rejected");
+  });
+
+  it("F17 stale fallback adapter result is preserved with `stale: true` flag bubbled up", async () => {
+    const ctx = makeContext({ env: { byok: {}, lang: "en" } });
+    const stale = fakeAdapter("macro_rwa", {
+      data: { etf_7d_net_usd: 200e6 },
+      sources: ["farside.co.uk"],
+      asOf: "t-old",
+      stale: true,
+    });
+    const out = await fanOutAdapters([stale], ctx);
+    expect(out.perAdapter.macro_rwa.stale).toBe(true);
+    expect(out.staleData).toContain("macro_rwa:stale_fallback");
+  });
+});
+```
+
+- [ ] **Step 2: Run — verify failure**
+
+```bash
+npm run test -- pipeline/fanout
+```
+
+Expected: FAIL.
+
+- [ ] **Step 3: Create `src/pipeline/fanout.ts`**
+
+```ts
+import type { Adapter, AdapterContext } from "../adapters/base.js";
+import type { AdapterResult } from "../types.js";
+
+export interface AdapterFanoutResult {
+  perAdapter: Record<string, AdapterResult>;
+  sources: string[];
+  byokActive: string[];
+  staleData: string[];
+  asOf: string;
+}
+
+export async function fanOutAdapters(
+  adapters: ReadonlyArray<Adapter>,
+  ctx: AdapterContext,
+): Promise<AdapterFanoutResult> {
+  const perAdapter: Record<string, AdapterResult> = {};
+  const sourcesSet = new Set<string>();
+  const byokSet = new Set<string>();
+  const staleData: string[] = [];
+  let latestAsOf = "";
+
+  const settled = await Promise.allSettled(
+    adapters.map(async (a) => {
+      const caps = a.capabilities(ctx.env);
+      for (const k of caps.byok_active) byokSet.add(k);
+      try {
+        const r = await a.fetch(undefined as never, ctx);
+        return { name: a.name, result: r };
+      } catch {
+        return { name: a.name, threw: true } as const;
+      }
+    }),
+  );
+
+  for (const s of settled) {
+    if (s.status !== "fulfilled") continue;
+    const v = s.value;
+    if ("threw" in v) {
+      perAdapter[v.name] = { data: {}, sources: [], asOf: "", stale: false };
+      staleData.push(`${v.name}:adapter_threw`);
+      continue;
+    }
+    perAdapter[v.name] = v.result;
+    for (const src of v.result.sources) sourcesSet.add(src);
+    for (const sd of v.result.stale_data ?? []) staleData.push(sd);
+    if (v.result.stale) staleData.push(`${v.name}:stale_fallback`);
+    if (v.result.asOf > latestAsOf) latestAsOf = v.result.asOf;
+  }
+
+  return {
+    perAdapter,
+    sources: [...sourcesSet].sort(),
+    byokActive: [...byokSet].sort(),
+    staleData,
+    asOf: latestAsOf,
+  };
+}
+```
+
+- [ ] **Step 4: Run — verify passing**
+
+```bash
+npm run test -- pipeline/fanout
+```
+
+Expected: 4 passed.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/pipeline/fanout.ts tests/pipeline/fanout.test.ts
+git commit -m "feat(pipeline): adapter fan-out with per-adapter failure isolation"
+```
+
+---
+
+### Task 16b: Score-input mapping (`src/pipeline/score_inputs.ts`)
+
+**Files:**
+- Create: `src/pipeline/score_inputs.ts`
+- Create: `tests/pipeline/score_inputs.test.ts`
+
+Translates `AdapterFanoutResult.perAdapter` into the 7-key `values: Record<string, number>` consumed by `computePulseScore` (Task 9). The mapping is a fixed table per spec §6 — adapter `data` field → score input key. Missing adapter values are simply absent from the output `values`; Task 9's renormalisation handles them.
+
+- [ ] **Step 1: Write the failing test**
+
+`tests/pipeline/score_inputs.test.ts`:
+
+```ts
+import { describe, it, expect } from "vitest";
+import { toScoreInputs } from "../../src/pipeline/score_inputs.js";
+import type { AdapterResult } from "../../src/types.js";
+
+function res(data: Record<string, unknown>): AdapterResult {
+  return { data, sources: [], asOf: "t", stale: false };
+}
+
+describe("toScoreInputs", () => {
+  it("maps every documented adapter field to its score-input key", () => {
+    const v = toScoreInputs({
+      macro_rwa:       res({ etf_7d_net_usd: 340e6, btc_dominance_7d_delta: -0.005, rwa_tvl_7d_delta: 0.012 }),
+      onchain_wallet:  res({ stablecoin_7d_supply_delta: 0.014 }),
+      kr_premium:      res({ upbit_netflow_7d_kr: 80e6 }),
+      derivatives:     res({ funding_avg_btc_eth: 0.0002, options_put_call_ratio: 0.6 }),
+      cex_flow:        res({}),
+    });
+    expect(v).toEqual({
+      etf_7d_net_flow_btc_eth: 340e6,
+      stablecoin_7d_supply_delta: 0.014,
+      upbit_netflow_7d_kr: 80e6,
+      funding_avg_btc_eth: 0.0002,
+      btc_dominance_7d_delta: -0.005,
+      options_put_call_ratio: 0.6,
+      rwa_tvl_7d_delta: 0.012,
+    });
+  });
+
+  it("omits keys whose source adapter returned no data", () => {
+    const v = toScoreInputs({
+      macro_rwa: res({ btc_dominance_7d_delta: -0.005 }), // only one of three keys
+    });
+    expect(v).toEqual({ btc_dominance_7d_delta: -0.005 });
+  });
+
+  it("ignores fields not in the score-input map (silent passthrough)", () => {
+    const v = toScoreInputs({
+      derivatives: res({ funding_avg_btc_eth: 0.0001, oi_btc_usd: 12.5e9 }),
+    });
+    expect(v).toEqual({ funding_avg_btc_eth: 0.0001 });
+  });
+
+  it("returns empty object when no adapter contributes any mapped key", () => {
+    expect(toScoreInputs({ derivatives: res({ random_field: 42 }) })).toEqual({});
+  });
+});
+```
+
+- [ ] **Step 2: Run — verify failure**
+
+```bash
+npm run test -- pipeline/score_inputs
+```
+
+Expected: FAIL.
+
+- [ ] **Step 3: Create `src/pipeline/score_inputs.ts`**
+
+```ts
+import type { AdapterResult } from "../types.js";
+
+/**
+ * Spec §6 score-input map: which adapter `data` field provides which
+ * `computePulseScore` input key. This table is the single source of truth
+ * for the pipeline mapping; do not duplicate it elsewhere.
+ *
+ * If you need to add a new score input in v0.2, extend this table AND the
+ * adapter that produces the field — both must change together.
+ */
+const MAP: Array<[adapterName: string, dataField: string, inputKey: string]> = [
+  ["macro_rwa",      "etf_7d_net_usd",            "etf_7d_net_flow_btc_eth"],
+  ["macro_rwa",      "btc_dominance_7d_delta",    "btc_dominance_7d_delta"],
+  ["macro_rwa",      "rwa_tvl_7d_delta",          "rwa_tvl_7d_delta"],
+  ["onchain_wallet", "stablecoin_7d_supply_delta","stablecoin_7d_supply_delta"],
+  ["kr_premium",     "upbit_netflow_7d_kr",       "upbit_netflow_7d_kr"],
+  ["derivatives",    "funding_avg_btc_eth",       "funding_avg_btc_eth"],
+  ["derivatives",    "options_put_call_ratio",    "options_put_call_ratio"],
+];
+
+export function toScoreInputs(perAdapter: Record<string, AdapterResult>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [adapterName, dataField, inputKey] of MAP) {
+    const r = perAdapter[adapterName];
+    if (!r) continue;
+    const v = r.data[dataField];
+    if (typeof v === "number" && Number.isFinite(v)) {
+      out[inputKey] = v;
+    }
+  }
+  return out;
+}
+```
+
+- [ ] **Step 4: Run — verify passing**
+
+```bash
+npm run test -- pipeline/score_inputs
+```
+
+Expected: 4 passed.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/pipeline/score_inputs.ts tests/pipeline/score_inputs.test.ts
+git commit -m "feat(pipeline): adapter→score-input mapping per spec §6"
+```
+
+---
+
+### Task 16c: `get_market_pulse` ToolResponse (`src/tools/get_market_pulse.ts`)
 
 **Files:**
 - Create: `src/tools/get_market_pulse.ts`
 - Create: `tests/tools/get_market_pulse.test.ts`
 
-Glue: fan out across 5 adapters (cex_flow, onchain_wallet, derivatives, macro_rwa, kr_premium), assemble the 7 pulse-score inputs, call `computePulseScore`, format summary.
-
-The tool is exported as a function that takes an `AdapterContext` plus a `PulseConfig` plus a *historical-series provider* (so production can wire to Defillama / Coinglass historical endpoints, while tests inject canned series).
+Pure response shaper. Takes the score inputs from 16b plus history (loaded by Task 22 server wiring from the Task 8.5 ring buffer), runs `computePulseScore`, applies `toReading` + `formatSummary`, returns a `ToolResponse`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2691,7 +4092,7 @@ export interface GetMarketPulseArgs {
   values: Record<string, number>;
   history: Record<string, number[]>;
   sources: string[];
-  byokActive: string[];   // camelCase — matches usage at line `args.byokActive`
+  byokActive: string[];
   lang: Lang;
   asOf: string;
   staleData: string[];
@@ -2745,13 +4146,15 @@ git commit -m "feat(tool): get_market_pulse — assemble inputs + score + summar
 
 Wraps `macroRwa` adapter, exposes ETF net flow over a window argument.
 
+> **F19: window scope locked to `"7d"` for v0.1.** Codex review F19 (medium coverage gap) flagged that the original schema accepted `"1d" | "7d" | "30d"` but only the `etf_7d_net_usd` key exists in the adapter. The fix: v0.1 schema is `"7d"` only; the adapter's data shape can deliver only that. A 1d/30d expansion is a v0.2 surface — it requires the `macro_rwa` adapter to expose `etf_1d_net_usd` and `etf_30d_net_usd` keys derived from Farside's daily history (which Task 22.5 warmup already imports for history seeding; v0.2 would re-use the same data). Documenting the deferral here so the schema and the adapter cannot drift.
+
 - [ ] **Step 1: Write the failing test**
 
 `tests/tools/get_etf_flow.test.ts`:
 
 ```ts
 import { describe, it, expect } from "vitest";
-import { getEtfFlow } from "../../src/tools/get_etf_flow.js";
+import { getEtfFlow, GetEtfFlowArgsSchema } from "../../src/tools/get_etf_flow.js";
 
 describe("get_etf_flow", () => {
   it("returns ToolResponse with summary and inputs from adapter result", async () => {
@@ -2785,6 +4188,13 @@ describe("get_etf_flow", () => {
     });
     expect(r.summary).toMatch(/unavailable/i);
   });
+
+  it("F19 schema rejects non-7d windows in v0.1 (1d / 30d unsupported)", () => {
+    expect(() => GetEtfFlowArgsSchema.parse({ window: "1d" })).toThrow();
+    expect(() => GetEtfFlowArgsSchema.parse({ window: "30d" })).toThrow();
+    expect(GetEtfFlowArgsSchema.parse({ window: "7d" }).window).toBe("7d");
+    expect(GetEtfFlowArgsSchema.parse({}).window).toBe("7d"); // defaults
+  });
 });
 ```
 
@@ -2799,14 +4209,25 @@ Expected: FAIL.
 - [ ] **Step 3: Create `src/tools/get_etf_flow.ts`**
 
 ```ts
+import { z } from "zod";
 import type { ToolResponse, Lang } from "../types.js";
 import type { AdapterResult } from "../types.js";
 
+/**
+ * F19: v0.1 schema accepts only `window: "7d"`. The literal type prevents
+ * the schema from advertising windows the adapter cannot satisfy.
+ * v0.2 will widen to `["1d", "7d", "30d"]` once the adapter exposes
+ * `etf_1d_net_usd` and `etf_30d_net_usd` keys.
+ */
+export const GetEtfFlowArgsSchema = z.object({
+  window: z.literal("7d").default("7d"),
+});
+
 export interface GetEtfFlowArgs {
-  window: "1d" | "7d" | "30d";
+  window: "7d";
   adapterResult: AdapterResult;
   lang: Lang;
-  byokActive: string[];   // camelCase — matches usage at `args.byokActive`
+  byokActive: string[];
   staleData: string[];
 }
 
@@ -2850,7 +4271,7 @@ export async function getEtfFlow(args: GetEtfFlowArgs): Promise<ToolResponse> {
 npm run test -- tools/get_etf_flow
 ```
 
-Expected: 2 passed.
+Expected: 3 passed (1 happy + 1 unavailable + 1 schema-window-rejection).
 
 - [ ] **Step 5: Commit**
 
@@ -2869,11 +4290,13 @@ git commit -m "feat(tool): get_etf_flow — window-summarised ETF net flow"
 
 - [ ] **Step 1: Write the failing test**
 
+> **F20: window scope locked to `"7d"` for v0.1** (same rationale as F19 for `get_etf_flow`). Adapter only exposes `stablecoin_7d_delta_pct`; widening to 1d/30d requires the adapter to compute and emit those keys. Deferred to v0.2.
+
 `tests/tools/get_stablecoin_pulse.test.ts`:
 
 ```ts
 import { describe, it, expect } from "vitest";
-import { getStablecoinPulse } from "../../src/tools/get_stablecoin_pulse.js";
+import { getStablecoinPulse, GetStablecoinPulseArgsSchema } from "../../src/tools/get_stablecoin_pulse.js";
 
 describe("get_stablecoin_pulse", () => {
   it("formats stablecoin delta and current supply", async () => {
@@ -2904,6 +4327,12 @@ describe("get_stablecoin_pulse", () => {
     });
     expect(r.summary).toMatch(/unavailable/i);
   });
+
+  it("F20 schema rejects non-7d windows in v0.1", () => {
+    expect(() => GetStablecoinPulseArgsSchema.parse({ window: "1d" })).toThrow();
+    expect(() => GetStablecoinPulseArgsSchema.parse({ window: "30d" })).toThrow();
+    expect(GetStablecoinPulseArgsSchema.parse({}).window).toBe("7d");
+  });
 });
 ```
 
@@ -2918,13 +4347,19 @@ Expected: FAIL.
 - [ ] **Step 3: Create `src/tools/get_stablecoin_pulse.ts`**
 
 ```ts
+import { z } from "zod";
 import type { ToolResponse, Lang, AdapterResult } from "../types.js";
 
+/** F20: v0.1 schema — 7d only. See plan note above. */
+export const GetStablecoinPulseArgsSchema = z.object({
+  window: z.literal("7d").default("7d"),
+});
+
 export interface Args {
-  window: "1d" | "7d" | "30d";
+  window: "7d";
   adapterResult: AdapterResult;
   lang: Lang;
-  byokActive: string[];   // camelCase — matches usage at `args.byokActive`
+  byokActive: string[];
   staleData: string[];
 }
 
@@ -2973,7 +4408,7 @@ function unavailable(args: Args, label: string): ToolResponse {
 npm run test -- tools/get_stablecoin_pulse
 ```
 
-Expected: 2 passed.
+Expected: 3 passed (1 happy + 1 unavailable + 1 schema-window-rejection).
 
 - [ ] **Step 5: Commit**
 
@@ -3271,6 +4706,60 @@ describe("get_rwa_pulse", () => {
     expect(r.summary).toMatch(/\$1\.8B/);
     expect(r.inputs.rwa_tvl_usd).toBe(1_800_000_000);
   });
+
+  it("F21 unavailable path: missing tvl → reading=unknown, confidence=0, no inputs", async () => {
+    const r = await getRwaPulse({
+      window: "7d",
+      adapterResult: {
+        data: {}, // adapter returned but no rwa_tvl_usd key
+        sources: [],
+        asOf: "2026-05-08T07:00:00Z",
+        stale: false,
+      },
+      lang: "en",
+      byokActive: [],
+      staleData: [],
+    });
+    expect(r.reading).toBe("unknown");
+    expect(r.score).toBeNull();
+    expect(r.confidence).toBe(0);
+    expect(r.summary).toMatch(/unavailable/i);
+    expect(r.inputs).toEqual({});
+  });
+
+  it("F21 stale propagation: adapter staleData passes through to ToolResponse", async () => {
+    const r = await getRwaPulse({
+      window: "7d",
+      adapterResult: {
+        data: { rwa_tvl_usd: 1_800_000_000 },
+        sources: ["defillama"],
+        asOf: "2026-05-08T00:00:00Z", // earlier as_of indicates stale fallback
+        stale: true,
+      },
+      lang: "en",
+      byokActive: [],
+      staleData: ["defillama:http_503", "macro_rwa:stale_fallback"],
+    });
+    expect(r.reading).toBe("unknown"); // tool layer preserves the unknown reading regardless of stale
+    expect(r.stale_data).toEqual(expect.arrayContaining(["defillama:http_503", "macro_rwa:stale_fallback"]));
+    expect(r.as_of).toBe("2026-05-08T00:00:00Z");
+  });
+
+  it("F21 Korean locale formats the summary in Korean parentheses style", async () => {
+    const r = await getRwaPulse({
+      window: "30d",
+      adapterResult: {
+        data: { rwa_tvl_usd: 2_500_000_000 },
+        sources: ["defillama"],
+        asOf: "x",
+        stale: false,
+      },
+      lang: "ko",
+      byokActive: [],
+      staleData: [],
+    });
+    expect(r.summary).toBe("RWA TVL $2.5B (30d)");
+  });
 });
 ```
 
@@ -3334,13 +4823,13 @@ export async function getRwaPulse(args: Args): Promise<ToolResponse> {
 npm run test -- tools/get_rwa_pulse
 ```
 
-Expected: 1 passed.
+Expected: 4 passed (1 happy + 1 unavailable + 1 stale-propagation + 1 ko locale).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/tools/get_rwa_pulse.ts tests/tools/get_rwa_pulse.test.ts
-git commit -m "feat(tool): get_rwa_pulse — RWA TVL summary"
+git commit -m "feat(tool): get_rwa_pulse — RWA TVL summary with stale + unknown propagation"
 ```
 
 ---
@@ -3352,9 +4841,24 @@ git commit -m "feat(tool): get_rwa_pulse — RWA TVL summary"
 - Create: `src/server.ts`
 - Create: `tests/server.test.ts`
 
-The server registers the 6 tools, exposes their JSON schemas via zod-to-JSONSchema (using zod's `.parse`/`.shape` directly), and dispatches incoming tool calls to the tool handler functions, sourcing adapter data from a single shared `AdapterContext`.
+The server registers the 6 tools, exposes their JSON schemas as **hand-written `inputSchema` literals** (no `zod-to-json-schema` dependency), and dispatches incoming tool calls to the tool handler functions, sourcing adapter data from a single shared `AdapterContext` whose **caches are isolated per adapter** (Task 6's `cacheFor` API).
+
+> **F22: schema generation strategy locked to manual.** Codex review F22 (HIGH FEASIBILITY_FLAG) flagged that the earlier draft mentioned `zod-to-json-schema` (no dependency in `package.json`) while the actual code used hand-written schemas. Decision: **stay manual, do not add the dep.** Justification:
+> - The 6 tool schemas total ~25 lines of object literals — generating them is more code than writing them.
+> - Manual schemas decouple MCP-side wire shape from the server-internal `zod` validation schema. The internal schemas (`SevenDayOnly`, `RwaWindowArgs`, `FundingArgs`, `KrPremiumArgs`) can evolve (e.g. adding internal fields) without breaking MCP clients.
+> - `zod-to-json-schema` adds ~15KB and re-renders schemas at startup; manual literals are zero-cost.
+> - The runtime check is `*.parse(raw)` against the zod schema, not the JSON Schema — so JSON Schema accuracy is descriptive (for clients), not enforcing.
+>
+> If a future task needs many more tools (v0.2 B/A views), revisit this decision in an ADR; until then, manual schemas are correct.
 
 For `get_market_pulse`, historical series are fetched from a small in-process series provider that calls Defillama's daily history APIs. To keep tests deterministic, the series provider is dependency-injected.
+
+> **Cache isolation invariant.** The single shared `AdapterContext` does *not* mean a single shared cache. `ctx.cacheFor({ name, ttlMs, max })` returns a per-adapter cache instance (Task 6). Each adapter must call `cacheFor` with its own `name`/`ttlMs`/`max` so:
+> - derivatives (90s TTL) cannot evict macro_rwa (10min TTL) entries;
+> - one adapter's `max` overflow does not LRU-evict another adapter's hot keys;
+> - per-adapter TTLs declared in spec §4 are respected at runtime, not silently flattened to a shared default.
+>
+> If you find yourself wanting to share a cache instance across adapters, stop and add a server-level test (`tests/server.test.ts` below) that asserts isolation, then keep them separate.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3389,8 +4893,20 @@ describe("server", () => {
     expect(s).toBeDefined();
     expect(typeof s.connect).toBe("function");
   });
+
+  it("server-built AdapterContext gives each adapter an isolated cache", () => {
+    // Regression guard for the per-adapter cache invariant (Task 6).
+    const { ctx } = createServer({ env: { byok: {}, lang: "en" } });
+    const a = ctx.cacheFor({ name: "derivatives", ttlMs: 90_000, max: 32 });
+    const b = ctx.cacheFor({ name: "macro_rwa",   ttlMs: 600_000, max: 32 });
+    expect(a).not.toBe(b);
+    a.set("k", { data: { x: "deriv" }, sources: [], asOf: "", stale: false });
+    expect(b.get("k")).toBeUndefined();
+  });
 });
 ```
+
+> Note: `createServer` must export the `AdapterContext` it builds (e.g. as `{ server, ctx }`) so the isolation test can introspect it. The actual MCP `Server` instance returned to callers can keep `connect()` etc.; the exposed `ctx` is just the context the server passes into adapter `fetch` calls.
 
 - [ ] **Step 2: Run — verify failure**
 
@@ -3426,7 +4942,11 @@ import { getRwaPulse } from "./tools/get_rwa_pulse.js";
 import type { ToolResponse } from "./types.js";
 
 const NoArgs = z.object({}).strict();
-const WindowArgs = z.object({ window: z.enum(["1d", "7d", "30d"]).default("7d") });
+// F19/F20: ETF and stablecoin v0.1 only support 7d. RWA pulse keeps the
+// wider window since `get_rwa_pulse` returns a raw TVL summary that does
+// not depend on a window-specific data key.
+const SevenDayOnly = z.object({ window: z.literal("7d").default("7d") });
+const RwaWindowArgs = z.object({ window: z.enum(["1d", "7d", "30d"]).default("7d") });
 const FundingArgs = z.object({ asset: z.enum(["BTC", "ETH"]) });
 const KrPremiumArgs = z.object({ asset: z.enum(["BTC", "ETH", "all"]).default("all") });
 
@@ -3446,14 +4966,14 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: "get_etf_flow",
-    description: "BTC/ETH spot ETF net flow over a window (default 7d).",
-    inputSchema: { type: "object", properties: { window: { type: "string", enum: ["1d", "7d", "30d"] } } },
+    description: "BTC/ETH spot ETF 7-day net flow (only `window: \"7d\"` supported in v0.1).",
+    inputSchema: { type: "object", properties: { window: { type: "string", enum: ["7d"] } } },
     handler: handleEtfFlow,
   },
   {
     name: "get_stablecoin_pulse",
-    description: "Stablecoin (USDT+USDC) supply delta over a window.",
-    inputSchema: { type: "object", properties: { window: { type: "string", enum: ["1d", "7d", "30d"] } } },
+    description: "Stablecoin (USDT+USDC) 7-day supply delta (only `window: \"7d\"` supported in v0.1).",
+    inputSchema: { type: "object", properties: { window: { type: "string", enum: ["7d"] } } },
     handler: handleStablecoinPulse,
   },
   {
@@ -3580,7 +5100,7 @@ async function handleMarketPulse(raw: unknown, env: EnvConfig): Promise<ToolResp
 }
 
 async function handleEtfFlow(raw: unknown, env: EnvConfig): Promise<ToolResponse> {
-  const args = WindowArgs.parse(raw ?? {});
+  const args = SevenDayOnly.parse(raw ?? {});
   const ctx = makeContext({ env });
   const r = await macroRwa.fetch(undefined, ctx);
   return getEtfFlow({
@@ -3593,7 +5113,7 @@ async function handleEtfFlow(raw: unknown, env: EnvConfig): Promise<ToolResponse
 }
 
 async function handleStablecoinPulse(raw: unknown, env: EnvConfig): Promise<ToolResponse> {
-  const args = WindowArgs.parse(raw ?? {});
+  const args = SevenDayOnly.parse(raw ?? {});
   const ctx = makeContext({ env });
   const r = await onchainWallet.fetch(undefined, ctx);
   return getStablecoinPulse({
@@ -3632,7 +5152,7 @@ async function handleKrPremium(raw: unknown, env: EnvConfig): Promise<ToolRespon
 }
 
 async function handleRwaPulse(raw: unknown, env: EnvConfig): Promise<ToolResponse> {
-  const args = WindowArgs.parse(raw ?? {});
+  const args = RwaWindowArgs.parse(raw ?? {});
   const ctx = makeContext({ env });
   const r = await macroRwa.fetch(undefined, ctx);
   return getRwaPulse({
@@ -3644,12 +5164,9 @@ async function handleRwaPulse(raw: unknown, env: EnvConfig): Promise<ToolRespons
   });
 }
 
-function resolveHistoryPath(cfg: PulseConfig, env: EnvConfig): string {
-  const fromEnv = process.env.OPM_HISTORY_PATH;
-  const fromCfg = cfg.history?.path;
-  const raw = fromEnv ?? fromCfg ?? "~/.cache/onchain-pulse-mcp/history.json";
-  return resolve(raw.replace(/^~(?=$|\/|\\)/, homedir()));
-}
+// `historyPath` resolution lives in `loadEnv` (Task 3) per ADR-0004 F24.
+// The server reads `env.historyPath` directly; do not duplicate the
+// `~` expansion logic here.
 
 export function createServer(opts: { env: EnvConfig }): Server {
   const server = new Server(
@@ -3801,9 +5318,33 @@ describe("runWarmup", () => {
 });
 ```
 
-- [ ] **Step 2: Implement `src/cli/warmup.ts`**
+- [ ] **Step 2: Implement `src/cli/warmup.ts` and `src/cli/fetcher.ts`**
 
-The implementation calls each adapter's historical endpoint where available (Farside daily CSV, Defillama daily history, Deribit funding-range query). Adapters without a historical endpoint contribute one datapoint (current value) and accrue over real elapsed days. Specific historical-fetcher per-adapter implementation is left to Codex; the warmup orchestrator's contract is captured in the test above.
+The warmup orchestrator's contract is captured by the test in Step 1: `runWarmup` opens a `FileHistoryStore` at `historyPath`, asks `fetcher` for each enabled key's history, calls `appendDatapoint` for every datapoint, and `save()`s once at the end. The orchestrator does not know about HTTP — all upstream calls live in `HistoricalFetcher`.
+
+> **Why this is fully specified here, not deferred.** Codex review F25 flagged that "left to Codex" is not an acceptable contract — without endpoint URLs, parse rules, auth behaviour, and failure semantics defined in this plan, two implementers would produce two different shapes for the same `HistoricalFetcher` and the warmup test in Step 1 would pass while v0.1's `get_market_pulse` produced different scores depending on who ran the warmup. The table below freezes those decisions.
+
+**`HistoricalFetcher` per-key contract (production implementation in `src/cli/fetcher.ts`):**
+
+| Key (`appendDatapoint` name)          | Source / endpoint                                                                                              | Auth                          | Parse → datapoint                                                                                                  | Failure mode                                                                                  |
+|---------------------------------------|----------------------------------------------------------------------------------------------------------------|-------------------------------|--------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
+| `etf_7d_net_flow_btc_eth`             | `https://farside.co.uk/?p=997` (BTC) + `https://farside.co.uk/eth/` (ETH) — daily HTML tables                  | None (free)                   | Same `<tr><td>` regex as Task 11. For each daily row: `value = btcRow.totalUsd + ethRow.totalUsd`, `asOf = row date 00:00Z`. Skip rows that fail to parse. | If both pages 4xx/5xx or zero rows parse: throw `WarmupSourceError("etf", reason)`. Caller (CLI) logs key skip + continues other keys; exit code 0 if at least 3 of 7 keys succeed, else 1. |
+| `stablecoin_7d_supply_delta`          | `https://api.llama.fi/v2/historicalChainTvl/Tron` + `…/Ethereum` daily series, restricted to stablecoin TVL via `https://api.llama.fi/protocols` filter `category=Stablecoins` | None (free)                   | Aggregate USDT+USDC+DAI daily totals per UTC midnight. Compute 7d delta as `(today − today-7) / today-7` per day; emit one datapoint per day with that delta. | Defillama 4xx/5xx → `WarmupSourceError("stablecoin", reason)`. Adapter retains current-day value contributed by Task 18 normal path. |
+| `rwa_tvl_7d_delta`                    | `https://api.llama.fi/v2/historicalChainTvl/RWA` (Defillama RWA category)                                       | None (free)                   | Same daily 7d-delta transform as stablecoin row.                                                                   | Same as stablecoin row.                                                                       |
+| `funding_avg_btc_eth`                 | `https://www.deribit.com/api/v2/public/get_funding_rate_value?instrument_name=BTC-PERPETUAL&start_timestamp=…&end_timestamp=…` (and ETH-PERPETUAL) | None (free)                   | Daily mean of returned funding samples; emit `(asOf=day 00:00Z, value = (btcMean+ethMean)/2)` for each of the last `days` days. | Deribit 4xx/5xx or empty result → `WarmupSourceError("funding", reason)`. No BYOK escalation; Coinglass enrichment is live-only, not warmup.                       |
+| `btc_dominance_7d_delta`              | `https://api.coingecko.com/api/v3/global` (CoinGecko free)                                                      | None (free, public)            | CoinGecko's free `/global` endpoint exposes only the current snapshot, not history. Warmup writes a **single current-value datapoint** (`asOf = now`); the buffer accrues organically thereafter. | If 4xx/5xx → `WarmupSourceError("btc_dominance", reason)`; key contributes z=0 in score until enough live samples accrue. |
+| `options_put_call_ratio`              | (no free history endpoint)                                                                                       | n/a                           | Skipped by warmup. Live Deribit `get_book_summary_by_currency` (Task 10) seeds one datapoint per actual `get_market_pulse` call.                                                  | Always skipped — no error path.                                                                |
+| `upbit_netflow_7d_kr`                 | (no free history endpoint — Upbit netflow requires CryptoQuant BYOK)                                            | n/a                           | If `env.byok.cryptoquant` present: call CryptoQuant `/exchange/inflow` & `/outflow` daily for `KRW market` (`exchange=upbit`), emit `inflow − outflow` per day. Otherwise skipped (warmup logs `key skipped: cryptoquant BYOK absent`). | CryptoQuant 401/403/429 → `WarmupSourceError("upbit_netflow", reason)`; key contributes z=0 until BYOK + live samples accrue. |
+
+**Failure semantics (binding for `realFetcher` and the CLI dispatcher):**
+
+- **Per-key isolation.** A failure on one key MUST NOT abort the others. Each `HistoricalFetcher.*History` call is awaited inside `runWarmup` with its own try/catch; failures are collected into a `failures: { key, reason }[]` array exposed via `runWarmup`'s return value (extend `WarmupOpts` to also return a result, OR have the CLI inspect it via the FS state — pick one in implementation, document in the test).
+- **Authentication failures** (Nansen/Coinglass/CryptoQuant 401/403): log `key skipped: <provider> auth rejected`, do NOT crash the process, do NOT save a partial datapoint for that key.
+- **Rate limit (429):** retry once with 5s sleep; on second 429 treat as auth-failure-style skip.
+- **Schema drift** (unexpected JSON shape): catch the parse error, treat as `WarmupSourceError`, do not write a `null`/`NaN` datapoint to the store.
+- **Exit code:** `0` if `≥3 of 7 keys` produced ≥1 datapoint (matches Task 23 acceptance criterion); `1` otherwise. The CLI prints a summary table to stderr regardless.
+
+> **Tests for the per-key fetcher logic** are not in `tests/cli/warmup.test.ts` (which only covers the orchestrator with mocked `HistoricalFetcher`). Each adapter's existing test file (Tasks 10–14) gains one extra `it("warmup historical path: <source>", ...)` case that mocks the relevant HTTP endpoint and asserts the parsed datapoint shape. Add those cases when you reach Step 2 — do not let them slide to Task 22.5 follow-up.
 
 Sketch:
 
@@ -3876,7 +5417,7 @@ main().catch((err) => {
 });
 ```
 
-(`loadEnv` is extended to expose `historyPath` derived via the same `~` expansion as `resolveHistoryPath` in `server.ts`. Codex may unify the two helpers.)
+(`loadEnv` is the single source of truth for `historyPath` resolution — Task 3 already ships the `~` expansion + `OPM_HISTORY_PATH` override. `server.ts` reads `env.historyPath` directly; do not introduce a duplicate `resolveHistoryPath` helper.)
 
 - [ ] **Step 4: Run — verify passing**
 
@@ -4096,7 +5637,7 @@ Then check `https://github.com/capitalparser/onchain-pulse-mcp/actions` — firs
 - [ ] After warmup, calling `get_market_pulse` produces a non-trivial score (i.e., not deterministically 50) for keys whose history has ≥5 samples; remaining keys contribute z=0 with `confidence < 1.0` reflecting the gap honestly.
 - [ ] Adding `onchain-pulse` to Claude Desktop config and asking *"call get_market_pulse"* returns a JSON `ToolResponse`.
 - [ ] Setting `NANSEN_API_KEY=fake` (or any unused-but-set value) does not crash the server; the adapter handles 4xx gracefully via `safeJson`.
-- [ ] All 6 reference YAML rules exist under `examples/rules/` (`kr-premium-spike.yaml`, not `kimchi-spread-spike.yaml`).
+- [ ] All 5 reference YAML rules exist under `examples/rules/`: `etf-outflow-streak.yaml`, `funding-extreme.yaml`, `kr-premium-spike.yaml` (not `kimchi-spread-spike.yaml`), `stablecoin-burn-streak.yaml`, `rwa-tvl-drop.yaml`. (The earlier "6 rules" wording was a stale draft — there are 5, one per spec §"User-defined alerts" example category.)
 - [ ] CI run on `feat/v0.1-implementation` passes.
 
 ---

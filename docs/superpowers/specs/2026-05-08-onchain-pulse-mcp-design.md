@@ -32,7 +32,7 @@ author: Kim Kyung-jun
 - **N2**. B view (스크리닝) / A view (타이밍) — v0.2 / v0.3 로 미룸
 - **N3**. 사용자 인증·SaaS 호스팅 (오픈소스 self-host 모델)
 - **N4**. write 동작 (포지션 진입, 자동 매매 등 모두 범위 밖)
-- **N5**. 영속 저장소 (DB·Redis 안 씀, in-memory cache only)
+- **N5**. 공유 영속 저장소 없음 (DB·Redis 안 씀). composite z-score용 per-installation local history ring buffer는 ADR-0003에 따라 v0.1 범위에 포함.
 
 ## 3. Users (Personas)
 
@@ -64,7 +64,7 @@ author: Kim Kyung-jun
 
 ### 핵심 원칙
 
-1. **Read-only · stateless**: write 없음, 응답 idempotent, 영속 store 없음 (in-memory TTL cache only)
+1. **Read-only · snapshot-oriented**: write 없음, 응답 idempotent, 공유 영속 store 없음. composite z-score는 ADR-0003의 local-only history materialisation을 사용.
 2. **Adapter plug-in**: source 별 독립 모듈. BYOK 키 detect 시 `capabilities.byok_active` 에 키 이름 추가 + paid endpoint 사용, 없으면 free fallback (graceful degradation)
 3. **알림은 MCP 밖**: cron/룰/봇은 사용자가 self-host. 본 repo는 reference YAML 룰만 `examples/rules/` 에 commit
 4. **합성 지표 투명**: composite pulse score 식·가중치 모두 코드/config로 공개 — 신뢰 = 투명성
@@ -90,7 +90,7 @@ author: Kim Kyung-jun
 | `derivatives` | Coinglass free (lag ~5min), Deribit public | Coinglass Pro, Laevitas | 펀딩률, OI, 옵션 IV, P/C ratio |
 | `macro_rwa` | RWA.xyz public, Defillama TVL, Farside ETF scrape | Bloomberg, paid RWA feeds | BTC dom, ETF flow, RWA TVL, T-bill yield |
 | `wallet_id` | (label 빈약 — N/A) | Arkham, Nansen | wallet 라벨 enrichment |
-| `kr_premium` | Upbit public, Bithumb public | (선택) | 김프 spread, Upbit netflow, KRW 거래량 |
+| `kr_premium` | Upbit public | (선택) | KR premium spread, Upbit netflow proxy, KRW 거래량 |
 
 각 어댑터는 동일 인터페이스를 구현:
 
@@ -114,10 +114,10 @@ interface AdapterResult {
 
 ```typescript
 get_market_pulse()            // 합성: pulse score 0~100 + reading + raw inputs
-get_etf_flow(window="7d")    // BTC/ETH spot ETF 순유입
-get_stablecoin_pulse()       // USDT/USDC supply Δ, mint/burn rate
+get_etf_flow(window="7d")    // BTC/ETH spot ETF 7d 순유입 (v0.1은 7d only)
+get_stablecoin_pulse()       // USDT/USDC 7d supply Δ, mint/burn rate
 get_funding_oi(asset)        // 펀딩률 + OI + put/call (BTC/ETH)
-get_kr_premium()             // 김프 spread, Upbit/Bithumb netflow
+get_kr_premium()             // KR premium spread, Upbit netflow proxy
 get_rwa_pulse()              // RWA TVL, 토큰화 미국채 yield curve
 ```
 
@@ -216,7 +216,7 @@ LAEVITAS_API_KEY
 
 - `etf-outflow-streak.yaml` — "ETF 7일 outflow > $200M for 3 consecutive days"
 - `funding-extreme.yaml` — "BTC funding |z| > 2"
-- `kimchi-spread-spike.yaml` — "김프 > 5%"
+- `kr-premium-spike.yaml` — "KR premium > 5%"
 - `stablecoin-burn-streak.yaml` — "stablecoin supply 5일 연속 감소"
 - `rwa-tvl-drop.yaml` — "RWA TVL 7d > 3% 감소"
 
@@ -231,7 +231,7 @@ YAML schema는 단순 declarative — `metric`, `condition`, `threshold`, `windo
 | 상황 | 응답 |
 |---|---|
 | BYOK 키 없음 | free fallback. `capabilities.byok_active: []` |
-| Rate limit hit | last cached 반환. `stale_data: ["coinglass: rate-limited, age=8min"]` |
+| Rate limit hit | last cached 반환. `stale_data: ["coinglass:rate_limited"]` |
 | 단일 source down | 그 입력 제외, weight 재정규화. `stale_data` 표시, `confidence < 1.0` |
 | 모든 source down | `summary: "data unavailable"`, `score: null`, `reading: "unknown"` (에러 throw 안 함) |
 | 잘못된 input | MCP tool schema validation reject (`zod`) |
@@ -256,7 +256,7 @@ CI: GitHub Actions. PR마다 unit + composite golden 통과. weekly smoke. paid 
 ## 9. Open questions
 
 - **Q1**. ETF flow 데이터 — Farside Investors scrape 가 ToS상 OK한지 / 안정한지. 대안: BitMEX research (지연 있음), 사용자 BYOK paid feed.
-- **Q2**. Upbit/Bithumb netflow — 거래소가 wallet 주소 공개하지 않음. on-chain 추적 어려움. KRW 입출금 API는 사용자 본인 계정만. → "Upbit netflow" 정의를 **Upbit 거래량 / 글로벌 거래량 비율** 로 proxy 할지 결정 필요.
+- **Q2**. Upbit netflow — 거래소가 wallet 주소 공개하지 않음. on-chain 추적 어려움. KRW 입출금 API는 사용자 본인 계정만. → v0.1은 `CONTEXT.md` 정의에 따라 **Upbit BTC/ETH 거래량 / 글로벌 거래량 비율** proxy로 처리.
 - **Q3**. pulse score `funding reverse` 임계 — `|z| > 2` 가 적정한지 backtest 필요. v0.1은 임의값으로 시작, v0.2에서 historical 검증.
 - **Q4**. RWA TVL 7d delta 의 가중치 0.05 — 너무 작은가? 거시 pulse에서 RWA가 가지는 의미는 "전통금융 자본 유입" proxy. 사용자가 thesis에 따라 config로 조정.
 
