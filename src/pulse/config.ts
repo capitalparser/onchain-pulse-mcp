@@ -1,9 +1,16 @@
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
 const DirectionSchema = z.enum(["positive", "negative", "positive_with_reverse"]);
+const HistoryConfigSchema = z.object({
+  path: z.string(),
+  window_days: z.number().int().positive(),
+  dedup_hours: z.number().positive(),
+  min_samples_for_zscore: z.number().int().positive(),
+});
 
 export const PulseConfigSchema = z.object({
   weights: z.record(z.string(), z.number().min(0).max(1)),
@@ -14,6 +21,7 @@ export const PulseConfigSchema = z.object({
     neutral: z.tuple([z.number(), z.number()]),
     risk_on: z.tuple([z.number(), z.number()]),
   }),
+  history: HistoryConfigSchema.optional(),
 });
 export type PulseConfig = z.infer<typeof PulseConfigSchema>;
 
@@ -65,5 +73,9 @@ function validateReadingBuckets(b: PulseConfig["reading_buckets"]): void {
 }
 
 export function loadPulseConfig(path = resolve("config/pulse.yaml")): PulseConfig {
-  return parsePulseConfig(readFileSync(path, "utf-8"));
+  const cfg = parsePulseConfig(readFileSync(path, "utf-8"));
+  if (cfg.history?.path.startsWith("~")) {
+    cfg.history.path = cfg.history.path.replace(/^~(?=$|\/|\\)/, homedir());
+  }
+  return cfg;
 }

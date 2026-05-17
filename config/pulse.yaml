@@ -22,3 +22,9 @@ reading_buckets:
   risk_off: [0, 30]
   neutral: [30, 70]
   risk_on: [70, 100]
+
+history:
+  path: ~/.cache/onchain-pulse-mcp/history.json
+  window_days: 30
+  dedup_hours: 24
+  min_samples_for_zscore: 5

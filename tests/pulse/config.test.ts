@@ -35,6 +35,15 @@ reading_buckets:
     expect(Object.keys(cfg.weights)).toContain("etf_7d_net_flow_btc_eth");
   });
 
+  it("loadPulseConfig expands history path and parses history settings", () => {
+    const cfg = loadPulseConfig();
+    expect(cfg.history?.path).not.toMatch(/^~/);
+    expect(cfg.history?.path).toContain(".cache/onchain-pulse-mcp/history.json");
+    expect(cfg.history?.window_days).toBe(30);
+    expect(cfg.history?.dedup_hours).toBe(24);
+    expect(cfg.history?.min_samples_for_zscore).toBe(5);
+  });
+
   it("rejects when reading_buckets have a gap (uncovered score range)", () => {
     const bad = `
 weights: { a: 1.0 }
