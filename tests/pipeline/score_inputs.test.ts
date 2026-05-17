@@ -10,7 +10,7 @@ describe("toScoreInputs", () => {
   it("maps every documented adapter field to its score-input key", () => {
     const v = toScoreInputs({
       macro_rwa: res({ etf_7d_net_usd: 340e6, btc_dominance_7d_delta: -0.005, rwa_tvl_7d_delta: 0.012 }),
-      onchain_wallet: res({ stablecoin_7d_supply_delta: 0.014 }),
+      onchain_wallet: res({ stablecoin_7d_delta_pct: 0.014 }),
       kr_premium: res({ upbit_netflow_7d_kr: 80e6 }),
       derivatives: res({ funding_avg_btc_eth: 0.0002, options_put_call_ratio: 0.6 }),
       cex_flow: res({}),
