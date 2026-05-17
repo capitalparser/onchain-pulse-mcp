@@ -1,0 +1,7 @@
+name: rwa-tvl-drop
+metric: rwa_tvl_usd
+condition: rolling_drop_pct
+threshold: 0.03
+window: 7d
+consecutive: 1
+description: "RWA TVL drops > 3% over 7d (TradFi capital retreat)."

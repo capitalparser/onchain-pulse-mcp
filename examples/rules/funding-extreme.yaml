@@ -1,0 +1,7 @@
+name: funding-extreme
+metric: funding_avg_btc_eth_zscore
+condition: abs_greater_than
+threshold: 2.0
+window: 1d
+consecutive: 1
+description: "BTC/ETH average funding |z| > 2 (extreme positioning)."

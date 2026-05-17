@@ -1,0 +1,7 @@
+name: stablecoin-burn-streak
+metric: stablecoin_7d_delta_pct
+condition: less_than
+threshold: 0
+window: 1d
+consecutive: 5
+description: "Stablecoin supply 5 consecutive days of contraction."

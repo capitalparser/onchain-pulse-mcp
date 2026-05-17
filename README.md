@@ -2,7 +2,7 @@
 
 > Read-only MCP server exposing onchain market pulse signals — CEX flow, on-chain wallets, derivatives, ETF/RWA macro, and Korea-market premium — designed for AI agents, retail, and institutions.
 
-**Status**: `v0.0.1` — v0.1 implementation branch active. Task 1 scaffold is complete; implementation continues from Task 2.
+**Status**: `v0.1` implementation branch active. Core adapters, MCP tools, stdio server, and warmup CLI are implemented.
 
 See the design spec at [`docs/superpowers/specs/2026-05-08-onchain-pulse-mcp-design.md`](docs/superpowers/specs/2026-05-08-onchain-pulse-mcp-design.md).
 
@@ -20,13 +20,13 @@ Existing onchain intelligence tools (Nansen, Arkham, Coinglass) are dashboards b
 - **Graceful degradation**: partial source failures yield reduced-confidence answers, never silent failure.
 - **Korea-aware**: Upbit netflow proxy and KR premium (commonly known as kimchi premium) are first-class inputs.
 
-## Quickstart (planned, post-v0.1)
+## Quickstart
 
 ```bash
 npx onchain-pulse-mcp
 ```
 
-Add to your Claude Desktop config:
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 
 ```json
 {
@@ -38,6 +38,40 @@ Add to your Claude Desktop config:
   }
 }
 ```
+
+Seed local history for composite z-scores:
+
+```bash
+npx onchain-pulse-mcp warmup
+```
+
+### BYOK enrichment
+
+Set any of these env vars to enrich responses with paid data sources. The server detects them automatically:
+
+| Env var | Source | What it adds |
+|---|---|---|
+| `NANSEN_API_KEY` | Nansen | Smart-money 7d net flow |
+| `GLASSNODE_API_KEY` | Glassnode | Exchange inflow series |
+| `COINGLASS_API_KEY` | Coinglass | Cross-venue OI for BTC/ETH |
+| `ARKHAM_API_KEY` | Arkham | Wallet entity labels |
+| `CRYPTOQUANT_API_KEY` | CryptoQuant | Reserved for v0.2 |
+| `LAEVITAS_API_KEY` | Laevitas | Reserved for v0.2 |
+
+### Locale
+
+Set `OPM_LANG=ko` for Korean `summary` strings. Default is `en`.
+
+### Tools
+
+| Tool | Args | Description |
+|---|---|---|
+| `get_market_pulse` | none | Composite pulse score 0-100 plus reading |
+| `get_etf_flow` | `window?` (`7d` only in v0.1) | ETF net flow |
+| `get_stablecoin_pulse` | `window?` (`7d` only in v0.1) | Stablecoin supply delta |
+| `get_funding_oi` | `asset` (`BTC` or `ETH`) | Funding/PCR/OI |
+| `get_kr_premium` | `asset?` (`BTC`, `ETH`, or `all`) | KR premium for BTC/ETH/all |
+| `get_rwa_pulse` | `window?` (`1d`, `7d`, `30d`) | RWA TVL pulse |
 
 ## Roadmap
 
