@@ -1,0 +1,24 @@
+weights:
+  etf_7d_net_flow_btc_eth: 0.25
+  stablecoin_7d_supply_delta: 0.20
+  upbit_netflow_7d_kr: 0.15
+  funding_avg_btc_eth: 0.15
+  btc_dominance_7d_delta: 0.10
+  options_put_call_ratio: 0.10
+  rwa_tvl_7d_delta: 0.05
+
+directions:
+  etf_7d_net_flow_btc_eth: positive
+  stablecoin_7d_supply_delta: positive
+  upbit_netflow_7d_kr: positive
+  funding_avg_btc_eth: positive_with_reverse
+  btc_dominance_7d_delta: negative
+  options_put_call_ratio: negative
+  rwa_tvl_7d_delta: positive
+
+funding_reverse_z_threshold: 2.0
+
+reading_buckets:
+  risk_off: [0, 30]
+  neutral: [30, 70]
+  risk_on: [70, 100]
