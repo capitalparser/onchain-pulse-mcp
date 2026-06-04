@@ -1,5 +1,9 @@
 # onchain-pulse-mcp
 
+## Project Profile
+- 개요: CEX flow, 온체인 지갑, 파생상품, RWA/ETF, 김치프리미엄 등 시장 상태 신호를 읽기 전용 MCP로 제공하는 프로젝트입니다.
+- 목적: 에이전트와 사람이 온체인 시장 상태를 recommendation이 아니라 해석 가능한 snapshot으로 조회하게 합니다.
+
 A read-only MCP server that exposes onchain market-state signals — CEX flow, on-chain wallets, derivatives, ETF/RWA macro, Korea premium — as a **query interface** for AI agents and humans.
 
 ## Frame
@@ -27,6 +31,12 @@ The 0–1 ratio of input weight present vs total weight in this Pulse computatio
 **Funding reverse**:
 A sign-flip of the funding-rate contribution to the Pulse when its z-score exceeds the configured threshold. Models the "extreme positioning is contrarian" effect.
 
+**RWA Lifecycle Snapshot**:
+A read-only response that reports tokenized asset lifecycle depth: AUM, holder
+count, transfer activity, chain distribution, redemption evidence, collateral
+usage evidence, official ledger evidence, gaps, sources, and stale data. It is
+not a recommendation and does not prove legal rights.
+
 ### Data plumbing
 
 **Adapter**:
@@ -47,6 +57,26 @@ The list of Sources whose response was a cached or fallback value rather than a 
 
 **Snapshot**:
 A complete tool response — Score, Reading, raw inputs, sources, stale_data, confidence, capabilities, all with a single `as_of` timestamp. Snapshots are stateless.
+
+### Token forensics
+
+**Token Forensics Snapshot**:
+A token-level response that reports pool context, flow reading, wallet-flow
+tables when available, sources, confidence, and explicit gaps. It is a forensic
+view, not a recommendation.
+
+**Flow Reading**:
+The observed flow classification for a token snapshot:
+`accumulation | distribution | mixed | thin-data | unknown`. It describes
+observed data quality and flow shape, not a buy/sell/hold instruction.
+
+**Gap**:
+An explicit missing-data or trust limitation such as `source_access_gap`,
+`thin_liquidity`, `rpc_gap`, or `cost_cap_gap`.
+
+**Pool Context**:
+Liquidity, volume, price, and pool identity from a DEX source. Pool context can
+support market analysis but does not establish wallet intent or legal rights.
 
 ### Korea layer
 
