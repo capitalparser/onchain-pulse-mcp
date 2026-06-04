@@ -5,7 +5,7 @@ import type { EnvConfig } from "../src/env.js";
 const env: EnvConfig = { byok: {}, lang: "en", historyPath: "/tmp/onchain-pulse-mcp-test-history.json" };
 
 describe("server", () => {
-  it("registers all six expected tools", () => {
+  it("registers all seven expected tools", () => {
     const names = listTools()
       .map((t) => t.name)
       .sort();
@@ -17,6 +17,7 @@ describe("server", () => {
       "get_market_pulse",
       "get_rwa_pulse",
       "get_stablecoin_pulse",
+      "get_token_forensics",
     ]);
   });
 
@@ -24,6 +25,13 @@ describe("server", () => {
     for (const t of listTools()) {
       expect(t.inputSchema.type).toBe("object");
     }
+  });
+
+  it("get_token_forensics requires chain and token_address", () => {
+    const tool = listTools().find((t) => t.name === "get_token_forensics");
+
+    expect(tool?.inputSchema.required).toEqual(["chain", "token_address"]);
+    expect(tool?.inputSchema.properties.chain).toEqual({ type: "string", enum: ["base", "ethereum"] });
   });
 
   it("createServer returns a connectable Server instance plus adapter context", () => {

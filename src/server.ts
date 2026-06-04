@@ -4,10 +4,12 @@ import { z } from "zod";
 import type { AdapterContext } from "./adapters/base.js";
 import { makeContext } from "./adapters/base.js";
 import { cexFlow } from "./adapters/cex_flow.js";
+import { dexPool } from "./adapters/dex_pool.js";
 import { derivatives } from "./adapters/derivatives.js";
 import { krPremium } from "./adapters/kr_premium.js";
 import { macroRwa } from "./adapters/macro_rwa.js";
 import { onchainWallet } from "./adapters/onchain_wallet.js";
+import { rpcCrossCheck } from "./adapters/rpc_cross_check.js";
 import type { EnvConfig } from "./env.js";
 import { fanOutAdapters } from "./pipeline/fanout.js";
 import { toScoreInputs } from "./pipeline/score_inputs.js";
@@ -19,13 +21,21 @@ import { getKrPremium } from "./tools/get_kr_premium.js";
 import { getMarketPulse } from "./tools/get_market_pulse.js";
 import { getRwaPulse } from "./tools/get_rwa_pulse.js";
 import { getStablecoinPulse } from "./tools/get_stablecoin_pulse.js";
-import type { ToolResponse } from "./types.js";
+import { getTokenForensics } from "./tools/get_token_forensics.js";
+import type { ForensicsSnapshot, ToolResponse } from "./types.js";
 
 const NoArgs = z.object({}).strict();
 const SevenDayOnly = z.object({ window: z.literal("7d").default("7d") });
 const RwaWindowArgs = z.object({ window: z.enum(["1d", "7d", "30d"]).default("7d") });
 const FundingArgs = z.object({ asset: z.enum(["BTC", "ETH"]) });
 const KrPremiumArgs = z.object({ asset: z.enum(["BTC", "ETH", "all"]).default("all") });
+const TokenForensicsArgs = z.object({
+  chain: z.enum(["base", "ethereum"]),
+  token_address: z.string().min(1),
+  pool_address: z.string().min(1).optional(),
+  max_wallets: z.number().int().positive().max(50).default(20),
+  paid_mode: z.enum(["free_only", "byok_allowed", "x402_allowed"]).default("free_only"),
+});
 
 interface JsonInputSchema {
   type: "object";
@@ -42,7 +52,7 @@ interface ToolDef {
   name: string;
   description: string;
   inputSchema: JsonInputSchema;
-  handler: (raw: unknown, hc: HandlerContext) => Promise<ToolResponse>;
+  handler: (raw: unknown, hc: HandlerContext) => Promise<ToolResponse | ForensicsSnapshot>;
 }
 
 const TOOLS: ToolDef[] = [
@@ -85,6 +95,22 @@ const TOOLS: ToolDef[] = [
     description: "RWA TVL summary over a requested display window.",
     inputSchema: { type: "object", properties: { window: { type: "string", enum: ["1d", "7d", "30d"] } } },
     handler: handleRwaPulse,
+  },
+  {
+    name: "get_token_forensics",
+    description: "Token-level forensic snapshot with pool discovery, explicit gaps, and non-prescriptive flow reading.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        chain: { type: "string", enum: ["base", "ethereum"] },
+        token_address: { type: "string" },
+        pool_address: { type: "string" },
+        max_wallets: { type: "number", minimum: 1, maximum: 50 },
+        paid_mode: { type: "string", enum: ["free_only", "byok_allowed", "x402_allowed"] },
+      },
+      required: ["chain", "token_address"],
+    },
+    handler: handleTokenForensics,
   },
 ];
 
@@ -235,5 +261,28 @@ async function handleRwaPulse(raw: unknown, hc: HandlerContext): Promise<ToolRes
     lang: hc.env.lang,
     byokActive: macroRwa.capabilities(hc.env).byok_active,
     staleData: r.stale ? ["macro_rwa:stale_fallback"] : (r.stale_data ?? []),
+  });
+}
+
+async function handleTokenForensics(raw: unknown, hc: HandlerContext): Promise<ForensicsSnapshot> {
+  const args = TokenForensicsArgs.parse(raw ?? {});
+  const poolResult = await dexPool.fetch({ chain: args.chain, tokenAddress: args.token_address }, hc.ctx);
+  const rpcResult = await rpcCrossCheck.fetch(
+    {
+      chain: args.chain,
+      tokenAddress: args.token_address,
+      wallets: [],
+      maxWallets: args.max_wallets,
+    },
+    hc.ctx,
+  );
+
+  return getTokenForensics({
+    chain: args.chain,
+    tokenAddress: args.token_address,
+    poolResult,
+    rpcResult,
+    byokActive: [],
+    paidSourcesActive: [],
   });
 }

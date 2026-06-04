@@ -72,6 +72,11 @@ Set `OPM_LANG=ko` for Korean `summary` strings. Default is `en`.
 | `get_funding_oi` | `asset` (`BTC` or `ETH`) | Funding/PCR/OI |
 | `get_kr_premium` | `asset?` (`BTC`, `ETH`, or `all`) | KR premium for BTC/ETH/all |
 | `get_rwa_pulse` | `window?` (`1d`, `7d`, `30d`) | RWA TVL pulse |
+| `get_token_forensics` | `chain`, `token_address`, `pool_address?`, `max_wallets?`, `paid_mode?` | Phase 1 token-level forensic snapshot with pool discovery, non-prescriptive flow reading, confidence, and explicit gaps |
+
+`get_token_forensics` is Phase 1. It discovers the best pool through DexScreener
+and returns a `ForensicsSnapshot` with `thin-data` or `unknown` flow reading
+until wallet-flow providers are wired. It does not prescribe trades.
 
 ## Roadmap
 
