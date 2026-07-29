@@ -9,11 +9,14 @@ let dir: string;
 let path: string;
 
 beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-05-12T00:00:00Z"));
   dir = mkdtempSync(join(tmpdir(), "opm-warmup-"));
   path = join(dir, "history.json");
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   rmSync(dir, { recursive: true, force: true });
 });
 
