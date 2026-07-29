@@ -173,8 +173,9 @@ Opt-in live source verification:
 npm run test:live:eth-value
 ```
 
-The live Coin Metrics check is free. The Dune check runs only when
-`DUNE_API_KEY` is present and consumes Dune credits. ETH collateral demand,
+The live Coin Metrics check is free. The Dune check consumes Dune credits and
+runs only when both `DUNE_API_KEY` is present and
+`RUN_LIVE_DUNE_ETH_VALUE=1` explicitly authorizes it. ETH collateral demand,
 price/ETH-BTC comparison, ETF or treasury-company flows, execution RPC
 re-indexing, and Beacon reward indexing remain deferred.
 
