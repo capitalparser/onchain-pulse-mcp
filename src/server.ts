@@ -10,12 +10,20 @@ import { krPremium } from "./adapters/kr_premium.js";
 import { macroRwa } from "./adapters/macro_rwa.js";
 import { onchainWallet } from "./adapters/onchain_wallet.js";
 import { rpcCrossCheck } from "./adapters/rpc_cross_check.js";
+import { fetchDuneEthValue } from "./adapters/eth_value_dune.js";
+import { fetchEthSupplyHistory } from "./adapters/eth_supply_coinmetrics.js";
 import type { EnvConfig } from "./env.js";
+import { windowToDays } from "./eth_value_capture/metrics.js";
+import {
+  GetEthValueCaptureInputSchema,
+  type EthValueCaptureSnapshot,
+} from "./eth_value_capture/types.js";
 import { fanOutAdapters } from "./pipeline/fanout.js";
 import { toScoreInputs } from "./pipeline/score_inputs.js";
 import { loadPulseConfig } from "./pulse/config.js";
 import { makeFileHistoryStore, computeWindowDelta } from "./pulse/history.js";
 import { getEtfFlow } from "./tools/get_etf_flow.js";
+import { getEthValueCapture } from "./tools/get_eth_value_capture.js";
 import { getFundingOi } from "./tools/get_funding_oi.js";
 import { getKrPremium } from "./tools/get_kr_premium.js";
 import { getMarketPulse } from "./tools/get_market_pulse.js";
@@ -43,7 +51,7 @@ interface JsonInputSchema {
   required?: string[];
 }
 
-interface HandlerContext {
+export interface HandlerContext {
   env: EnvConfig;
   ctx: AdapterContext;
 }
@@ -52,7 +60,10 @@ interface ToolDef {
   name: string;
   description: string;
   inputSchema: JsonInputSchema;
-  handler: (raw: unknown, hc: HandlerContext) => Promise<ToolResponse | ForensicsSnapshot>;
+  handler: (
+    raw: unknown,
+    hc: HandlerContext,
+  ) => Promise<ToolResponse | ForensicsSnapshot | EthValueCaptureSnapshot>;
 }
 
 const TOOLS: ToolDef[] = [
@@ -67,6 +78,31 @@ const TOOLS: ToolDef[] = [
     description: "BTC spot ETF 7-day net flow. v0.1 supports only window=7d.",
     inputSchema: { type: "object", properties: { window: { type: "string", enum: ["7d"] } } },
     handler: handleEtfFlow,
+  },
+  {
+    name: "get_eth_value_capture",
+    description:
+      "Ethereum fee burn, execution tips, L2 rent, supply change, and aligned issuance over completed UTC-day windows.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        window: {
+          type: "string",
+          enum: ["7d", "30d", "90d"],
+          default: "30d",
+        },
+        paid_mode: {
+          type: "string",
+          enum: ["free_only", "byok_allowed"],
+          default: "free_only",
+        },
+        include_rollups: {
+          type: "boolean",
+          default: false,
+        },
+      },
+    },
+    handler: handleEthValueCapture,
   },
   {
     name: "get_stablecoin_pulse",
@@ -213,6 +249,36 @@ async function handleEtfFlow(raw: unknown, hc: HandlerContext): Promise<ToolResp
     lang: hc.env.lang,
     byokActive: macroRwa.capabilities(hc.env).byok_active,
     staleData: r.stale ? ["macro_rwa:stale_fallback"] : (r.stale_data ?? []),
+  });
+}
+
+export async function handleEthValueCapture(
+  raw: unknown,
+  hc: HandlerContext,
+): Promise<EthValueCaptureSnapshot> {
+  const args = GetEthValueCaptureInputSchema.parse(raw ?? {});
+  const windowDays = windowToDays(args.window);
+  const now = new Date();
+  const supply = await fetchEthSupplyHistory({ windowDays, now }, hc.ctx);
+  const cutoffDay = supply.latestBoundary ?? now.toISOString().slice(0, 10);
+  const dune = await fetchDuneEthValue(
+    {
+      cutoffDay,
+      windowDays,
+      includeRollups: args.include_rollups,
+      allowExecution: args.paid_mode === "byok_allowed",
+    },
+    hc.ctx,
+  );
+
+  return getEthValueCapture({
+    window: args.window,
+    lang: hc.env.lang,
+    includeRollups: args.include_rollups,
+    byokActive: hc.env.byok.dune ? ["dune"] : [],
+    supply,
+    dune,
+    now,
   });
 }
 

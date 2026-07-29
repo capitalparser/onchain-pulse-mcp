@@ -1,17 +1,24 @@
-import { describe, it, expect } from "vitest";
-import { createServer, listTools } from "../src/server.js";
+import { describe, it, expect, vi } from "vitest";
+import { makeContext } from "../src/adapters/base.js";
+import { EthValueCaptureSnapshotSchema } from "../src/eth_value_capture/types.js";
+import {
+  createServer,
+  handleEthValueCapture,
+  listTools,
+} from "../src/server.js";
 import type { EnvConfig } from "../src/env.js";
 
 const env: EnvConfig = { byok: {}, lang: "en", historyPath: "/tmp/onchain-pulse-mcp-test-history.json" };
 
 describe("server", () => {
-  it("registers all seven expected tools", () => {
+  it("registers all eight expected tools", () => {
     const names = listTools()
       .map((t) => t.name)
       .sort();
 
     expect(names).toEqual([
       "get_etf_flow",
+      "get_eth_value_capture",
       "get_funding_oi",
       "get_kr_premium",
       "get_market_pulse",
@@ -34,6 +41,25 @@ describe("server", () => {
     expect(tool?.inputSchema.properties.chain).toEqual({ type: "string", enum: ["base", "ethereum"] });
   });
 
+  it("get_eth_value_capture advertises conservative defaults", () => {
+    const tool = listTools().find((t) => t.name === "get_eth_value_capture");
+
+    expect(tool?.inputSchema.properties.window).toEqual({
+      type: "string",
+      enum: ["7d", "30d", "90d"],
+      default: "30d",
+    });
+    expect(tool?.inputSchema.properties.paid_mode).toEqual({
+      type: "string",
+      enum: ["free_only", "byok_allowed"],
+      default: "free_only",
+    });
+    expect(tool?.inputSchema.properties.include_rollups).toEqual({
+      type: "boolean",
+      default: false,
+    });
+  });
+
   it("createServer returns a connectable Server instance plus adapter context", () => {
     const { server, ctx } = createServer({ env });
 
@@ -50,5 +76,169 @@ describe("server", () => {
     expect(a).not.toBe(b);
     a.set("k", { data: { x: "deriv" }, sources: [], asOf: "", stale: false });
     expect(b.get("k")).toBeUndefined();
+  });
+});
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function coinMetricsResponse() {
+  return jsonResponse({
+    data: [
+      { asset: "eth", time: "2026-05-30T00:00:00.000000000Z", SplyCur: "1000" },
+      { asset: "eth", time: "2026-06-29T00:00:00.000000000Z", SplyCur: "1002" },
+      { asset: "eth", time: "2026-07-29T00:00:00.000000000Z", SplyCur: "1001" },
+    ],
+  });
+}
+
+const duneRows = [
+  {
+    row_type: "summary",
+    rollup: null,
+    period: "current",
+    gross_l1_fees_eth: "15",
+    base_fee_burn_eth: "10",
+    blob_fee_burn_eth: "2",
+    priority_fee_eth: "3",
+    l2_rent_paid_eth: "4",
+    l2_calldata_fee_eth: "1",
+    l2_blob_fee_eth: "2",
+    l2_verification_fee_eth: "1",
+    base_component_present: true,
+    blob_component_present: true,
+    priority_component_present: true,
+    l2_reconciled: true,
+  },
+  {
+    row_type: "summary",
+    rollup: null,
+    period: "previous",
+    gross_l1_fees_eth: "11",
+    base_fee_burn_eth: "8",
+    blob_fee_burn_eth: "1",
+    priority_fee_eth: "2",
+    l2_rent_paid_eth: "3",
+    l2_calldata_fee_eth: "0.75",
+    l2_blob_fee_eth: "1.5",
+    l2_verification_fee_eth: "0.75",
+    base_component_present: true,
+    blob_component_present: true,
+    priority_component_present: true,
+    l2_reconciled: true,
+  },
+];
+
+describe("handleEthValueCapture", () => {
+  it("defaults to Coin Metrics-only and never submits Dune", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-29T12:00:00Z"));
+    try {
+      const fetchImpl = vi.fn(async (_input: string | URL | Request) =>
+        coinMetricsResponse(),
+      );
+      const localEnv: EnvConfig = {
+        byok: {},
+        lang: "en",
+        historyPath: "/tmp/history.json",
+      };
+      const output = await handleEthValueCapture(
+        {},
+        { env: localEnv, ctx: makeContext({ env: localEnv, fetchImpl: fetchImpl as typeof fetch }) },
+      );
+
+      expect(output.status).toBe("partial");
+      expect(output.metrics.net_issuance_eth.current).toBe(-1);
+      expect(output.metrics.base_fee_burn_eth.current).toBeNull();
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(String(fetchImpl.mock.calls[0]?.[0])).toContain("community-api.coinmetrics.io");
+      expect(EthValueCaptureSnapshotSchema.parse(output)).toEqual(output);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not submit Dune when byok_allowed has no key", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-29T12:00:00Z"));
+    try {
+      const fetchImpl = vi.fn(async () => coinMetricsResponse());
+      const localEnv: EnvConfig = {
+        byok: {},
+        lang: "en",
+        historyPath: "/tmp/history.json",
+      };
+      const output = await handleEthValueCapture(
+        { paid_mode: "byok_allowed" },
+        { env: localEnv, ctx: makeContext({ env: localEnv, fetchImpl: fetchImpl as typeof fetch }) },
+      );
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(output.gaps.map((gap) => gap.code)).toContain("source_access_gap");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses the Coin Metrics cutoff for one authorized Dune execution", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-29T12:00:00Z"));
+    try {
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(coinMetricsResponse())
+        .mockResolvedValueOnce(jsonResponse({
+          execution_id: "exec-server",
+          state: "QUERY_STATE_PENDING",
+        }))
+        .mockResolvedValueOnce(jsonResponse({
+          execution_id: "exec-server",
+          state: "QUERY_STATE_COMPLETED",
+        }))
+        .mockResolvedValueOnce(jsonResponse({
+          execution_id: "exec-server",
+          state: "QUERY_STATE_COMPLETED",
+          result: { rows: duneRows },
+        }));
+      const localEnv: EnvConfig = {
+        byok: { dune: "dune-key" },
+        lang: "en",
+        historyPath: "/tmp/history.json",
+      };
+      const output = await handleEthValueCapture(
+        { paid_mode: "byok_allowed" },
+        { env: localEnv, ctx: makeContext({ env: localEnv, fetchImpl: fetchImpl as typeof fetch }) },
+      );
+
+      expect(output.status).toBe("complete");
+      expect(fetchImpl).toHaveBeenCalledTimes(4);
+      const executeCall = fetchImpl.mock.calls.find(([url]) =>
+        String(url).endsWith("/api/v1/sql/execute"),
+      );
+      expect(executeCall).toBeDefined();
+      expect(JSON.parse(String(executeCall?.[1]?.body)).sql).toContain(
+        "DATE '2026-07-29'",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    { window: "1d" },
+    { paid_mode: "x402_allowed" },
+    { include_rollups: "yes" },
+    { unknown: true },
+  ])("rejects invalid public input %#", async (raw) => {
+    await expect(
+      handleEthValueCapture(raw, {
+        env,
+        ctx: makeContext({ env, fetchImpl: vi.fn() as typeof fetch }),
+      }),
+    ).rejects.toThrow();
   });
 });

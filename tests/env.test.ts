@@ -17,6 +17,7 @@ describe("loadEnv", () => {
       COINGLASS_API_KEY: "c-1",
       CRYPTOQUANT_API_KEY: "cq-1",
       LAEVITAS_API_KEY: "l-1",
+      DUNE_API_KEY: "d-1",
     });
     expect(cfg.byok.nansen).toBe("n-1");
     expect(cfg.byok.glassnode).toBe("g-1");
@@ -24,6 +25,7 @@ describe("loadEnv", () => {
     expect(cfg.byok.coinglass).toBe("c-1");
     expect(cfg.byok.cryptoquant).toBe("cq-1");
     expect(cfg.byok.laevitas).toBe("l-1");
+    expect(cfg.byok.dune).toBe("d-1");
   });
 
   it("respects OPM_LANG=ko", () => {

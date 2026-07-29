@@ -8,6 +8,7 @@ export interface BYOKKeys {
   coinglass?: string;
   cryptoquant?: string;
   laevitas?: string;
+  dune?: string;
 }
 
 export interface EnvConfig {
@@ -40,6 +41,7 @@ export function loadEnv(env: NodeJS.ProcessEnv | Record<string, string | undefin
       coinglass: env.COINGLASS_API_KEY,
       cryptoquant: env.CRYPTOQUANT_API_KEY,
       laevitas: env.LAEVITAS_API_KEY,
+      dune: env.DUNE_API_KEY,
     },
     lang: langParse.success ? langParse.data : "en",
     historyPath,
