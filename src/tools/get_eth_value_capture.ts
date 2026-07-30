@@ -44,7 +44,12 @@ function sourceUsable(status: string): boolean {
 }
 
 function completePair(current: number | null, previous: number | null): boolean {
-  return current !== null && previous !== null;
+  return (
+    current !== null &&
+    previous !== null &&
+    Number.isFinite(current) &&
+    Number.isFinite(previous)
+  );
 }
 
 type RentSource = "dune" | "growthepie" | null;
@@ -159,6 +164,10 @@ export function getEthValueCapture(
     duneRentComplete &&
     cutoffDay !== null &&
     args.dune.cutoffDay === cutoffDay;
+  const duneDecompositionAligned =
+    duneUsable &&
+    cutoffDay !== null &&
+    args.dune.cutoffDay === cutoffDay;
   const growthepieRentAligned =
     growthepieRentComplete &&
     cutoffDay !== null &&
@@ -175,19 +184,19 @@ export function getEthValueCapture(
         ? pair(args.growthepie.current.l2Rent, args.growthepie.previous.l2Rent)
         : pair(null, null);
   const l2Calldata = dunePair(
-    rentSource === "dune",
+    duneDecompositionAligned,
     args.dune.current,
     args.dune.previous,
     "l2CalldataFee",
   );
   const l2Blob = dunePair(
-    rentSource === "dune",
+    duneDecompositionAligned,
     args.dune.current,
     args.dune.previous,
     "l2BlobFee",
   );
   const l2Verification = dunePair(
-    rentSource === "dune",
+    duneDecompositionAligned,
     args.dune.current,
     args.dune.previous,
     "l2VerificationFee",
@@ -366,15 +375,22 @@ export function getEthValueCapture(
     metrics.l2_rent_paid_eth.current,
     metrics.l2_rent_paid_eth.previous,
   ]);
+  const duneBreakdownContributes = hasAny([
+    metrics.l2_calldata_fee_eth.current,
+    metrics.l2_calldata_fee_eth.previous,
+    metrics.l2_blob_fee_eth.current,
+    metrics.l2_blob_fee_eth.previous,
+    metrics.l2_verification_fee_eth.current,
+    metrics.l2_verification_fee_eth.previous,
+  ]);
   const sources = [
     ...(supplyContributes ? ["coinmetrics-community:SplyCur"] : []),
     ...(feesContribute ? ["dune:gas.fees"] : []),
-    ...(l2Contributes
-      ? [
-          rentSource === "dune"
-            ? "dune:rollup_economics_ethereum.l1_fees"
-            : "growthepie:rent_paid_eth",
-        ]
+    ...(rentSource === "dune" || duneBreakdownContributes
+      ? ["dune:rollup_economics_ethereum.l1_fees"]
+      : []),
+    ...(rentSource === "growthepie" && l2Contributes
+      ? ["growthepie:rent_paid_eth"]
       : []),
   ];
 
@@ -453,7 +469,11 @@ export function getEthValueCapture(
       {
         source: "dune",
         role:
-          rentSource === "dune" ? "Ethereum fees and L2 rent" : "Ethereum fees",
+          rentSource === "dune"
+            ? "Ethereum fees and L2 rent"
+            : duneBreakdownContributes
+              ? "Ethereum fees and L2 decomposition"
+              : "Ethereum fees",
         as_of: args.dune.asOf,
         stale: args.dune.stale,
       },

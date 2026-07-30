@@ -267,8 +267,71 @@ describe("getEthValueCapture", () => {
     expect(result.sources).toEqual([
       "coinmetrics-community:SplyCur",
       "dune:gas.fees",
+      "dune:rollup_economics_ethereum.l1_fees",
       "growthepie:rent_paid_eth",
     ]);
+  });
+
+  it("preserves aligned Dune decomposition when GrowThePie supplies the rent pair", () => {
+    const dune = validDune({
+      current: { ...feePeriod({ base: 10, blob: 2, priority: 3, l2Rent: 4 }), l2Rent: null },
+      previous: { ...feePeriod({ base: 8, blob: 1, priority: 2, l2Rent: 3 }), l2Rent: null },
+    });
+    const result = assemble({ dune });
+
+    expect(result.metrics.l2_rent_paid_eth).toMatchObject({
+      current: 5,
+      previous: 4,
+    });
+    expect(result.metrics.l2_calldata_fee_eth).toMatchObject({
+      current: 1,
+      previous: 0.75,
+    });
+    expect(result.metrics.l2_blob_fee_eth).toMatchObject({
+      current: 2,
+      previous: 1.5,
+    });
+    expect(result.metrics.l2_verification_fee_eth).toMatchObject({
+      current: 1,
+      previous: 0.75,
+    });
+    expect(result.sources).toContain("dune:rollup_economics_ethereum.l1_fees");
+    expect(result.sources).toContain("growthepie:rent_paid_eth");
+    expect(result.source_status).toContainEqual({
+      source: "dune",
+      role: "Ethereum fees and L2 decomposition",
+      as_of: "2026-07-29T00:01:00Z",
+      stale: false,
+    });
+    expect(result.confidence).toBe(1);
+  });
+
+  it("falls back to finite GrowThePie rent when Dune rent is NaN", () => {
+    const result = assemble({
+      dune: validDune({
+        current: { ...feePeriod({ base: 10, blob: 2, priority: 3, l2Rent: 4 }), l2Rent: Number.NaN },
+      }),
+    });
+
+    expect(result.metrics.l2_rent_paid_eth).toMatchObject({
+      current: 5,
+      previous: 4,
+    });
+    expect(result.sources).toContain("growthepie:rent_paid_eth");
+  });
+
+  it("falls back to finite GrowThePie rent when Dune rent is Infinity", () => {
+    const result = assemble({
+      dune: validDune({
+        previous: { ...feePeriod({ base: 8, blob: 1, priority: 2, l2Rent: 3 }), l2Rent: Number.POSITIVE_INFINITY },
+      }),
+    });
+
+    expect(result.metrics.l2_rent_paid_eth).toMatchObject({
+      current: 5,
+      previous: 4,
+    });
+    expect(result.sources).toContain("growthepie:rent_paid_eth");
   });
 
   it("prefers stale-but-usable complete Dune rent without fresh rent confidence", () => {
@@ -530,8 +593,20 @@ describe("getEthValueCapture", () => {
 
   it("weights fresh GrowThePie rent separately from missing Dune breakdown evidence", () => {
     const dune = validDune({
-      current: { ...feePeriod({ base: 10, blob: 2, priority: 3, l2Rent: 4 }), l2Rent: null },
-      previous: { ...feePeriod({ base: 8, blob: 1, priority: 2, l2Rent: 3 }), l2Rent: null },
+      current: {
+        ...feePeriod({ base: 10, blob: 2, priority: 3, l2Rent: 4 }),
+        l2Rent: null,
+        l2CalldataFee: null,
+        l2BlobFee: null,
+        l2VerificationFee: null,
+      },
+      previous: {
+        ...feePeriod({ base: 8, blob: 1, priority: 2, l2Rent: 3 }),
+        l2Rent: null,
+        l2CalldataFee: null,
+        l2BlobFee: null,
+        l2VerificationFee: null,
+      },
     });
 
     expect(assemble({ dune }).confidence).toBe(0.9);
