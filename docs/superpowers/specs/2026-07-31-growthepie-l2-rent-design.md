@@ -163,8 +163,10 @@ Dune remains the only source for:
 - `l2_blob_fee_eth`;
 - `l2_verification_fee_eth`.
 
-When GrowThePie supplies rent, the three decomposition metrics stay `null`.
-Rent is not added to burn or gross fees. The
+GrowThePie never supplies decomposition: independently valid Dune snapshot
+decomposition aligned to the selected cutoff remains visible, while
+GrowThePie-selected rollup decomposition is `null`. Rent is not added to burn
+or gross fees. The
 `l2_rent_share_of_l1_fees` ratio is calculated only when the selected rent
 pair and Dune gross-fee pair share the same cutoff.
 
@@ -264,4 +266,3 @@ npm test
 npm run typecheck
 npm run build
 ```
-

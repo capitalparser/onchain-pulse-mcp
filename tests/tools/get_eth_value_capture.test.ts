@@ -141,6 +141,7 @@ function assemble(overrides: {
   lang?: "en" | "ko";
   includeRollups?: boolean;
   byokActive?: string[];
+  selectedCutoffDay?: string;
   supply?: CoinMetricsSupplyResult;
   dune?: DuneEthValueResult;
   growthepie?: GrowThePieRentResult;
@@ -150,6 +151,7 @@ function assemble(overrides: {
     lang: overrides.lang ?? "en",
     includeRollups: overrides.includeRollups ?? false,
     byokActive: overrides.byokActive ?? ["dune"],
+    selectedCutoffDay: overrides.selectedCutoffDay ?? "2026-07-29",
     now: new Date("2026-07-29T12:00:00Z"),
     supply: overrides.supply ?? validSupply(),
     dune: overrides.dune ?? validDune(),
@@ -182,13 +184,13 @@ describe("getEthValueCapture", () => {
     });
 
     expect(result.status).toBe("partial");
-    expect(result.cutoff_day).toBeNull();
+    expect(result.cutoff_day).toBe("2026-07-29");
     expect(result.metrics.net_issuance_eth.current).toBe(-1);
-    expect(result.metrics.total_burn_eth.current).toBe(12);
+    expect(result.metrics.total_burn_eth.current).toBeNull();
     expect(result.metrics.consensus_issuance_eth.current).toBeNull();
     expect(result.gaps.map((gap) => gap.code)).toContain("period_mismatch");
     expect(result.gaps.map((gap) => gap.code)).toContain("derivation_blocked");
-    expect(result.confidence).toBe(0.6);
+    expect(result.confidence).toBe(0.4);
   });
 
   it("returns Coin Metrics-only partial data without fabricating Dune metrics", () => {
@@ -224,14 +226,51 @@ describe("getEthValueCapture", () => {
     const result = assemble({
       supply: unavailableSupply(),
       dune: unavailableDune(),
+      growthepie: unavailableGrowThePie(),
       byokActive: [],
     });
 
     expect(result.status).toBe("unavailable");
-    expect(result.cutoff_day).toBeNull();
+    expect(result.cutoff_day).toBe("2026-07-29");
     expect(result.confidence).toBe(0);
     expect(result.sources).toEqual([]);
     expect(result.as_of).toBe("2026-07-29T12:00:00.000Z");
+  });
+
+  it("uses the authoritative fallback cutoff for GrowThePie when Coin Metrics and Dune are unavailable", () => {
+    const result = assemble({
+      selectedCutoffDay: "2026-07-31",
+      supply: unavailableSupply(),
+      dune: unavailableDune(),
+      growthepie: validGrowThePie({ cutoffDay: "2026-07-31" }),
+      byokActive: [],
+    });
+
+    expect(result.cutoff_day).toBe("2026-07-31");
+    expect(result.metrics.l2_rent_paid_eth).toMatchObject({
+      current: 5,
+      previous: 4,
+    });
+    expect(result.metrics.consensus_issuance_eth.current).toBeNull();
+    expect(result.sources).toEqual(["growthepie:rent_paid_eth"]);
+    expect(result.confidence).toBe(0.15);
+  });
+
+  it("uses GrowThePie aligned to the authoritative cutoff when Dune is mismatched", () => {
+    const result = assemble({
+      selectedCutoffDay: "2026-07-29",
+      dune: validDune({ cutoffDay: "2026-07-28" }),
+      growthepie: validGrowThePie({ cutoffDay: "2026-07-29" }),
+    });
+
+    expect(result.cutoff_day).toBe("2026-07-29");
+    expect(result.metrics.l2_rent_paid_eth).toMatchObject({
+      current: 5,
+      previous: 4,
+    });
+    expect(result.metrics.consensus_issuance_eth.current).toBeNull();
+    expect(result.sources).toContain("growthepie:rent_paid_eth");
+    expect(result.gaps.map((gap) => gap.code)).toContain("period_mismatch");
   });
 
   it("prefers a complete Dune rent pair over GrowThePie", () => {

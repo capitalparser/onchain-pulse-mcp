@@ -26,6 +26,7 @@ export interface GetEthValueCaptureArgs {
   lang: Lang;
   includeRollups: boolean;
   byokActive: string[];
+  selectedCutoffDay: string;
   supply: CoinMetricsSupplyResult;
   dune: DuneEthValueResult;
   growthepie: GrowThePieRentResult;
@@ -121,31 +122,28 @@ export function getEthValueCapture(
   const duneUsable = sourceUsable(args.dune.status);
   const supplyBoundary = supplyUsable ? args.supply.latestBoundary : null;
   const duneBoundary = duneUsable ? args.dune.cutoffDay : null;
+  const cutoffDay = args.selectedCutoffDay;
   const issuanceAligned =
     supplyBoundary !== null &&
     duneBoundary !== null &&
-    supplyBoundary === duneBoundary;
-  const cutoffDay =
-    supplyBoundary !== null && duneBoundary !== null
-      ? issuanceAligned
-        ? supplyBoundary
-        : null
-      : supplyBoundary ?? duneBoundary;
+    supplyBoundary === cutoffDay &&
+    duneBoundary === cutoffDay;
+  const duneAligned = duneUsable && args.dune.cutoffDay === cutoffDay;
 
   const baseFee = dunePair(
-    duneUsable,
+    duneAligned,
     args.dune.current,
     args.dune.previous,
     "baseFeeBurn",
   );
   const blobFee = dunePair(
-    duneUsable,
+    duneAligned,
     args.dune.current,
     args.dune.previous,
     "blobFeeBurn",
   );
   const priorityFee = dunePair(
-    duneUsable,
+    duneAligned,
     args.dune.current,
     args.dune.previous,
     "priorityFee",
@@ -162,15 +160,10 @@ export function getEthValueCapture(
     );
   const duneRentAligned =
     duneRentComplete &&
-    cutoffDay !== null &&
-    args.dune.cutoffDay === cutoffDay;
-  const duneDecompositionAligned =
-    duneUsable &&
-    cutoffDay !== null &&
-    args.dune.cutoffDay === cutoffDay;
+    duneAligned;
+  const duneDecompositionAligned = duneAligned;
   const growthepieRentAligned =
     growthepieRentComplete &&
-    cutoffDay !== null &&
     args.growthepie.cutoffDay === cutoffDay;
   const rentSource: RentSource = duneRentAligned
     ? "dune"

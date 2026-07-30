@@ -287,6 +287,7 @@ export async function handleEthValueCapture(
     lang: hc.env.lang,
     includeRollups: args.include_rollups,
     byokActive: hc.env.byok.dune ? ["dune"] : [],
+    selectedCutoffDay: cutoffDay,
     supply,
     dune,
     growthepie,

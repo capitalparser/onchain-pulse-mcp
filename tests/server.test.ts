@@ -196,6 +196,50 @@ describe("handleEthValueCapture", () => {
     }
   });
 
+  it("uses the current-day fallback cutoff for free GrowThePie rent when Coin Metrics fails", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-29T12:00:00Z"));
+    try {
+      const requestedUrls: string[] = [];
+      const fetchImpl = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
+        const url = String(input);
+        requestedUrls.push(url);
+        if (url.startsWith("https://community-api.coinmetrics.io/")) {
+          return new Response("unavailable", { status: 503 });
+        }
+        if (url === "https://api.growthepie.com/v1/export/rent_paid.json") {
+          return growThePieRentResponse();
+        }
+        throw new Error(`unexpected request: ${url}`);
+      });
+      const localEnv: EnvConfig = {
+        byok: {},
+        lang: "en",
+        historyPath: "/tmp/history.json",
+      };
+      const output = await handleEthValueCapture(
+        { window: "7d", paid_mode: "free_only", include_rollups: true },
+        { env: localEnv, ctx: makeContext({ env: localEnv, fetchImpl: fetchImpl as typeof fetch }) },
+      );
+
+      expect(output.cutoff_day).toBe("2026-07-29");
+      expect(output.metrics.l2_rent_paid_eth).toMatchObject({ current: 7, previous: 7 });
+      expect(output.metrics.consensus_issuance_eth.current).toBeNull();
+      expect(output.sources).toEqual(["growthepie:rent_paid_eth"]);
+      expect(output.source_status).toContainEqual({
+        source: "growthepie",
+        role: "L2 rent paid to Ethereum",
+        as_of: "2026-07-28T00:00:00Z",
+        stale: false,
+      });
+      expect(output.capabilities.paid_sources_active).toEqual([]);
+      expect(output.confidence).toBe(0.15);
+      expect(requestedUrls.some((url) => url.startsWith("https://api.dune.com/"))).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("prefers authorized Dune rent while both sources align to the Coin Metrics cutoff", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-29T12:00:00Z"));
