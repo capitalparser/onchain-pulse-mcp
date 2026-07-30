@@ -1,0 +1,7 @@
+name: etf-outflow-streak
+metric: etf_7d_net_usd
+condition: less_than
+threshold: -200000000
+window: 1d
+consecutive: 3
+description: "BTC/ETH spot ETF outflow > $200M for 3 consecutive days."

@@ -1,0 +1,7 @@
+name: kr-premium-spike
+metric: kr_premium_btc
+condition: greater_than
+threshold: 0.05
+window: 1d
+consecutive: 1
+description: "BTC kr_premium > 5% (commonly known as kimchi premium - KR retail euphoria signal)."

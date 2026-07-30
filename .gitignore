@@ -14,3 +14,4 @@ coverage/
 .turbo/
 .vscode/
 .idea/
+.worktrees/
