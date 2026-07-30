@@ -94,4 +94,13 @@ describe("EthValueCaptureSnapshotSchema", () => {
     candidate.gaps = [{ code: "unknown_gap", detail: "bad" }];
     expect(EthValueCaptureSnapshotSchema.safeParse(candidate).success).toBe(false);
   });
+
+  it("accepts the GrowThePie schema-drift gap", () => {
+    const candidate = makeValidSnapshotFixture() as Record<string, unknown>;
+    candidate.gaps = [{
+      code: "growthepie_schema_drift",
+      detail: "GrowThePie rent rows were incomplete.",
+    }];
+    expect(EthValueCaptureSnapshotSchema.parse(candidate)).toEqual(candidate);
+  });
 });
