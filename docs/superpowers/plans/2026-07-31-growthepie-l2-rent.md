@@ -535,10 +535,12 @@ Run:
 
 ```bash
 npx vitest run tests/tools/get_eth_value_capture.test.ts
-npm run typecheck
 ```
 
-Expected: PASS.
+Expected: PASS. This task intentionally makes the pure assembler's
+`growthepie` input required. Project-wide typecheck and server tests remain a
+Task 3 load-bearing gate because `src/server.ts` is the only production caller
+and Task 3 owns its source fetching and argument wiring.
 
 - [ ] **Step 10: Commit Task 2**
 
@@ -723,4 +725,3 @@ git add src/server.ts \
   README.md
 git commit -m "feat: expose free GrowThePie L2 rent"
 ```
-
