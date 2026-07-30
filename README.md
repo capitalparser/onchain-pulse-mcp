@@ -107,8 +107,9 @@ Free request:
 }
 ```
 
-Without a previously cached Dune result, this returns a partial
-Coin Metrics-only snapshot. Missing fee values remain `null`:
+In `free_only`, the server fetches Coin Metrics supply boundaries and
+GrowThePie total L2 rent. This returns a partial snapshot because fee and
+decomposed-rent values remain `null`:
 
 ```json
 {
@@ -130,8 +131,11 @@ Coin Metrics-only snapshot. Missing fee values remain `null`:
       "unit": "ETH"
     }
   },
-  "sources": ["coinmetrics-community:SplyCur"],
-  "confidence": 0.25
+  "sources": [
+    "coinmetrics-community:SplyCur",
+    "growthepie:rent_paid_eth"
+  ],
+  "confidence": 0.4
 }
 ```
 
@@ -147,6 +151,13 @@ Explicit Dune request:
   }
 }
 ```
+
+Dune remains explicitly authorized and is preferred for fee and decomposed L2
+rent data. GrowThePie rollups contain total rent only; their calldata, blob,
+and verification components remain unavailable. Its full-history export
+endpoint supports every comparison window, including 90 days. Source precedence
+selects a complete Dune or GrowThePie rent pair and never adds or averages
+their rent values.
 
 The Dune cache key includes cutoff day, window, and rollup detail. Fresh results
 remain in process for 30 minutes; concurrent identical requests share one
@@ -173,8 +184,8 @@ Opt-in live source verification:
 npm run test:live:eth-value
 ```
 
-The live Coin Metrics check is free. The Dune check consumes Dune credits and
-runs only when both `DUNE_API_KEY` is present and
+The live Coin Metrics and GrowThePie checks are free. The Dune check consumes
+Dune credits and runs only when both `DUNE_API_KEY` is present and
 `RUN_LIVE_DUNE_ETH_VALUE=1` explicitly authorizes it. ETH collateral demand,
 price/ETH-BTC comparison, ETF or treasury-company flows, execution RPC
 re-indexing, and Beacon reward indexing remain deferred.

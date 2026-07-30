@@ -44,6 +44,7 @@ export const EthValueGapCodeSchema = z.enum([
   "dune_execution_failed",
   "dune_execution_timeout",
   "dune_schema_drift",
+  "growthepie_schema_drift",
   "partial_result",
   "period_mismatch",
   "derivation_blocked",

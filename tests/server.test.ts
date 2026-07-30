@@ -89,11 +89,30 @@ function jsonResponse(body: unknown): Response {
 function coinMetricsResponse() {
   return jsonResponse({
     data: [
-      { asset: "eth", time: "2026-05-30T00:00:00.000000000Z", SplyCur: "1000" },
-      { asset: "eth", time: "2026-06-29T00:00:00.000000000Z", SplyCur: "1002" },
+      { asset: "eth", time: "2026-07-15T00:00:00.000000000Z", SplyCur: "1000" },
+      { asset: "eth", time: "2026-07-22T00:00:00.000000000Z", SplyCur: "1002" },
       { asset: "eth", time: "2026-07-29T00:00:00.000000000Z", SplyCur: "1001" },
     ],
   });
+}
+
+function growThePieRentResponse() {
+  return jsonResponse([
+    { metric_key: "rent_paid_eth", origin_key: "arbitrum", date: "2026-07-15", value: 1 },
+    { metric_key: "rent_paid_eth", origin_key: "arbitrum", date: "2026-07-16", value: 1 },
+    { metric_key: "rent_paid_eth", origin_key: "arbitrum", date: "2026-07-17", value: 1 },
+    { metric_key: "rent_paid_eth", origin_key: "arbitrum", date: "2026-07-18", value: 1 },
+    { metric_key: "rent_paid_eth", origin_key: "arbitrum", date: "2026-07-19", value: 1 },
+    { metric_key: "rent_paid_eth", origin_key: "arbitrum", date: "2026-07-20", value: 1 },
+    { metric_key: "rent_paid_eth", origin_key: "arbitrum", date: "2026-07-21", value: 1 },
+    { metric_key: "rent_paid_eth", origin_key: "arbitrum", date: "2026-07-22", value: 1 },
+    { metric_key: "rent_paid_eth", origin_key: "arbitrum", date: "2026-07-23", value: 1 },
+    { metric_key: "rent_paid_eth", origin_key: "arbitrum", date: "2026-07-24", value: 1 },
+    { metric_key: "rent_paid_eth", origin_key: "arbitrum", date: "2026-07-25", value: 1 },
+    { metric_key: "rent_paid_eth", origin_key: "arbitrum", date: "2026-07-26", value: 1 },
+    { metric_key: "rent_paid_eth", origin_key: "arbitrum", date: "2026-07-27", value: 1 },
+    { metric_key: "rent_paid_eth", origin_key: "arbitrum", date: "2026-07-28", value: 1 },
+  ]);
 }
 
 const duneRows = [
@@ -134,88 +153,137 @@ const duneRows = [
 ];
 
 describe("handleEthValueCapture", () => {
-  it("defaults to Coin Metrics-only and never submits Dune", async () => {
+  it("returns free GrowThePie L2 rent without submitting Dune", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-29T12:00:00Z"));
     try {
-      const fetchImpl = vi.fn(async (_input: string | URL | Request) =>
-        coinMetricsResponse(),
-      );
+      const requestedUrls: string[] = [];
+      const fetchImpl = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
+        const url = String(input);
+        requestedUrls.push(url);
+        if (url.startsWith("https://community-api.coinmetrics.io/")) {
+          return coinMetricsResponse();
+        }
+        if (url === "https://api.growthepie.com/v1/export/rent_paid.json") {
+          return growThePieRentResponse();
+        }
+        throw new Error(`unexpected request: ${url}`);
+      });
       const localEnv: EnvConfig = {
         byok: {},
         lang: "en",
         historyPath: "/tmp/history.json",
       };
       const output = await handleEthValueCapture(
-        {},
+        { window: "7d", paid_mode: "free_only", include_rollups: true },
         { env: localEnv, ctx: makeContext({ env: localEnv, fetchImpl: fetchImpl as typeof fetch }) },
       );
 
       expect(output.status).toBe("partial");
       expect(output.metrics.net_issuance_eth.current).toBe(-1);
       expect(output.metrics.base_fee_burn_eth.current).toBeNull();
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
-      expect(String(fetchImpl.mock.calls[0]?.[0])).toContain("community-api.coinmetrics.io");
+      expect(output.metrics.l2_rent_paid_eth.current).toBe(7);
+      expect(output.metrics.l2_rent_paid_eth.previous).toBe(7);
+      expect(output.sources).toContain("growthepie:rent_paid_eth");
+      expect(output.capabilities.paid_sources_active).toEqual([]);
+      expect(requestedUrls).toContain(
+        "https://api.growthepie.com/v1/export/rent_paid.json",
+      );
+      expect(requestedUrls.some((url) => url.startsWith("https://api.dune.com/"))).toBe(false);
       expect(EthValueCaptureSnapshotSchema.parse(output)).toEqual(output);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("does not submit Dune when byok_allowed has no key", async () => {
+  it("uses the current-day fallback cutoff for free GrowThePie rent when Coin Metrics fails", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-29T12:00:00Z"));
     try {
-      const fetchImpl = vi.fn(async () => coinMetricsResponse());
+      const requestedUrls: string[] = [];
+      const fetchImpl = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
+        const url = String(input);
+        requestedUrls.push(url);
+        if (url.startsWith("https://community-api.coinmetrics.io/")) {
+          return new Response("unavailable", { status: 503 });
+        }
+        if (url === "https://api.growthepie.com/v1/export/rent_paid.json") {
+          return growThePieRentResponse();
+        }
+        throw new Error(`unexpected request: ${url}`);
+      });
       const localEnv: EnvConfig = {
         byok: {},
         lang: "en",
         historyPath: "/tmp/history.json",
       };
       const output = await handleEthValueCapture(
-        { paid_mode: "byok_allowed" },
+        { window: "7d", paid_mode: "free_only", include_rollups: true },
         { env: localEnv, ctx: makeContext({ env: localEnv, fetchImpl: fetchImpl as typeof fetch }) },
       );
 
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
-      expect(output.gaps.map((gap) => gap.code)).toContain("source_access_gap");
+      expect(output.cutoff_day).toBe("2026-07-29");
+      expect(output.metrics.l2_rent_paid_eth).toMatchObject({ current: 7, previous: 7 });
+      expect(output.metrics.consensus_issuance_eth.current).toBeNull();
+      expect(output.sources).toEqual(["growthepie:rent_paid_eth"]);
+      expect(output.source_status).toContainEqual({
+        source: "growthepie",
+        role: "L2 rent paid to Ethereum",
+        as_of: "2026-07-28T00:00:00Z",
+        stale: false,
+      });
+      expect(output.capabilities.paid_sources_active).toEqual([]);
+      expect(output.confidence).toBe(0.15);
+      expect(requestedUrls.some((url) => url.startsWith("https://api.dune.com/"))).toBe(false);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("uses the Coin Metrics cutoff for one authorized Dune execution", async () => {
+  it("prefers authorized Dune rent while both sources align to the Coin Metrics cutoff", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-29T12:00:00Z"));
     try {
-      const fetchImpl = vi
-        .fn()
-        .mockResolvedValueOnce(coinMetricsResponse())
-        .mockResolvedValueOnce(jsonResponse({
-          execution_id: "exec-server",
-          state: "QUERY_STATE_PENDING",
-        }))
-        .mockResolvedValueOnce(jsonResponse({
-          execution_id: "exec-server",
-          state: "QUERY_STATE_COMPLETED",
-        }))
-        .mockResolvedValueOnce(jsonResponse({
-          execution_id: "exec-server",
-          state: "QUERY_STATE_COMPLETED",
-          result: { rows: duneRows },
-        }));
+      const requestedUrls: string[] = [];
+      const fetchImpl = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
+        const url = String(input);
+        requestedUrls.push(url);
+        if (url.startsWith("https://community-api.coinmetrics.io/")) {
+          return coinMetricsResponse();
+        }
+        if (url === "https://api.growthepie.com/v1/export/rent_paid.json") {
+          return growThePieRentResponse();
+        }
+        if (url.endsWith("/api/v1/sql/execute")) {
+          return jsonResponse({ execution_id: "exec-server", state: "QUERY_STATE_PENDING" });
+        }
+        if (url.endsWith("/execution/exec-server/status")) {
+          return jsonResponse({ execution_id: "exec-server", state: "QUERY_STATE_COMPLETED" });
+        }
+        if (url.endsWith("/execution/exec-server/results")) {
+          return jsonResponse({
+            execution_id: "exec-server",
+            state: "QUERY_STATE_COMPLETED",
+            result: { rows: duneRows },
+          });
+        }
+        throw new Error(`unexpected request: ${url}`);
+      });
       const localEnv: EnvConfig = {
         byok: { dune: "dune-key" },
         lang: "en",
         historyPath: "/tmp/history.json",
       };
       const output = await handleEthValueCapture(
-        { paid_mode: "byok_allowed" },
+        { window: "7d", paid_mode: "byok_allowed", include_rollups: true },
         { env: localEnv, ctx: makeContext({ env: localEnv, fetchImpl: fetchImpl as typeof fetch }) },
       );
 
       expect(output.status).toBe("complete");
-      expect(fetchImpl).toHaveBeenCalledTimes(4);
+      expect(output.metrics.l2_rent_paid_eth.current).toBe(4);
+      expect(output.metrics.l2_rent_paid_eth.previous).toBe(3);
+      expect(output.sources).not.toContain("growthepie:rent_paid_eth");
+      expect(requestedUrls).toContain("https://api.growthepie.com/v1/export/rent_paid.json");
       const executeCall = fetchImpl.mock.calls.find(([url]) =>
         String(url).endsWith("/api/v1/sql/execute"),
       );
