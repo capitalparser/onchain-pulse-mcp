@@ -4,6 +4,7 @@ import type {
   DuneEthValueResult,
   DunePeriodValues,
 } from "../adapters/eth_value_dune.js";
+import type { GrowThePieRentResult } from "../adapters/eth_value_growthepie.js";
 import {
   deriveFeeMetrics,
   makeEthWindowMetric,
@@ -27,6 +28,7 @@ export interface GetEthValueCaptureArgs {
   byokActive: string[];
   supply: CoinMetricsSupplyResult;
   dune: DuneEthValueResult;
+  growthepie: GrowThePieRentResult;
   now: Date;
 }
 
@@ -40,6 +42,12 @@ function pair(
 function sourceUsable(status: string): boolean {
   return status === "valid" || status === "stale";
 }
+
+function completePair(current: number | null, previous: number | null): boolean {
+  return current !== null && previous !== null;
+}
+
+type RentSource = "dune" | "growthepie" | null;
 
 function hasAny(values: Array<number | null>): boolean {
   return values.some((value) => value !== null);
@@ -108,13 +116,13 @@ export function getEthValueCapture(
   const duneUsable = sourceUsable(args.dune.status);
   const supplyBoundary = supplyUsable ? args.supply.latestBoundary : null;
   const duneBoundary = duneUsable ? args.dune.cutoffDay : null;
-  const aligned =
+  const issuanceAligned =
     supplyBoundary !== null &&
     duneBoundary !== null &&
     supplyBoundary === duneBoundary;
   const cutoffDay =
     supplyBoundary !== null && duneBoundary !== null
-      ? aligned
+      ? issuanceAligned
         ? supplyBoundary
         : null
       : supplyBoundary ?? duneBoundary;
@@ -137,26 +145,49 @@ export function getEthValueCapture(
     args.dune.previous,
     "priorityFee",
   );
-  const l2Rent = dunePair(
-    duneUsable,
-    args.dune.current,
-    args.dune.previous,
-    "l2Rent",
-  );
+  const duneRentComplete =
+    duneUsable &&
+    completePair(args.dune.current.l2Rent, args.dune.previous.l2Rent);
+  const growthepieUsable = sourceUsable(args.growthepie.status);
+  const growthepieRentComplete =
+    growthepieUsable &&
+    completePair(
+      args.growthepie.current.l2Rent,
+      args.growthepie.previous.l2Rent,
+    );
+  const duneRentAligned =
+    duneRentComplete &&
+    cutoffDay !== null &&
+    args.dune.cutoffDay === cutoffDay;
+  const growthepieRentAligned =
+    growthepieRentComplete &&
+    cutoffDay !== null &&
+    args.growthepie.cutoffDay === cutoffDay;
+  const rentSource: RentSource = duneRentAligned
+    ? "dune"
+    : growthepieRentAligned
+      ? "growthepie"
+      : null;
+  const l2Rent =
+    rentSource === "dune"
+      ? pair(args.dune.current.l2Rent, args.dune.previous.l2Rent)
+      : rentSource === "growthepie"
+        ? pair(args.growthepie.current.l2Rent, args.growthepie.previous.l2Rent)
+        : pair(null, null);
   const l2Calldata = dunePair(
-    duneUsable,
+    rentSource === "dune",
     args.dune.current,
     args.dune.previous,
     "l2CalldataFee",
   );
   const l2Blob = dunePair(
-    duneUsable,
+    rentSource === "dune",
     args.dune.current,
     args.dune.previous,
     "l2BlobFee",
   );
   const l2Verification = dunePair(
-    duneUsable,
+    rentSource === "dune",
     args.dune.current,
     args.dune.previous,
     "l2VerificationFee",
@@ -178,7 +209,7 @@ export function getEthValueCapture(
     );
   }
 
-  const consensusIssuance = aligned
+  const consensusIssuance = issuanceAligned
     ? pair(
         nullableAdd(netIssuance.current, derivedFees.totalBurn.current),
         nullableAdd(netIssuance.previous, derivedFees.totalBurn.previous),
@@ -230,9 +261,11 @@ export function getEthValueCapture(
     metrics.priority_fee_eth.current,
     metrics.priority_fee_eth.previous,
   ]);
-  const l2Coverage = hasAll([
+  const l2RentCoverage = hasAll([
     metrics.l2_rent_paid_eth.current,
     metrics.l2_rent_paid_eth.previous,
+  ]);
+  const l2BreakdownCoverage = hasAll([
     metrics.l2_calldata_fee_eth.current,
     metrics.l2_calldata_fee_eth.previous,
     metrics.l2_blob_fee_eth.current,
@@ -250,11 +283,18 @@ export function getEthValueCapture(
   ]);
   const freshDune = args.dune.status === "valid" && !args.dune.stale;
   const freshSupply = args.supply.status === "valid" && !args.supply.stale;
+  const freshSelectedRent =
+    rentSource === "dune"
+      ? freshDune
+      : rentSource === "growthepie"
+        ? args.growthepie.status === "valid" && !args.growthepie.stale
+        : false;
   const confidence =
     (freshDune && feeCoverage ? 0.35 : 0) +
-    (freshDune && l2Coverage ? 0.25 : 0) +
+    (freshSelectedRent && l2RentCoverage ? 0.15 : 0) +
+    (freshDune && l2BreakdownCoverage ? 0.1 : 0) +
     (freshSupply && supplyCoverage ? 0.25 : 0) +
-    (freshDune && freshSupply && aligned && consensusCoverage ? 0.15 : 0);
+    (freshDune && freshSupply && issuanceAligned && consensusCoverage ? 0.15 : 0);
   const roundedConfidence = Math.round(confidence * 100) / 100;
 
   const coreValues = Object.values(metrics).flatMap((metric) => [
@@ -272,15 +312,27 @@ export function getEthValueCapture(
   const gaps: EthValueGap[] = [
     ...args.supply.gaps,
     ...args.dune.gaps,
+    ...(!duneRentComplete ? args.growthepie.gaps : []),
   ];
   if (
     supplyBoundary !== null &&
     duneBoundary !== null &&
-    !aligned
+    !issuanceAligned
   ) {
     gaps.push({
       code: "period_mismatch",
       detail: "Coin Metrics and Dune cutoff boundaries do not match.",
+    });
+  }
+  if (
+    !duneRentComplete &&
+    growthepieRentComplete &&
+    cutoffDay !== null &&
+    !growthepieRentAligned
+  ) {
+    gaps.push({
+      code: "period_mismatch",
+      detail: "GrowThePie and snapshot cutoff boundaries do not match.",
     });
   }
   if (!consensusCoverage) {
@@ -313,23 +365,22 @@ export function getEthValueCapture(
   const l2Contributes = hasAny([
     metrics.l2_rent_paid_eth.current,
     metrics.l2_rent_paid_eth.previous,
-    metrics.l2_calldata_fee_eth.current,
-    metrics.l2_calldata_fee_eth.previous,
-    metrics.l2_blob_fee_eth.current,
-    metrics.l2_blob_fee_eth.previous,
-    metrics.l2_verification_fee_eth.current,
-    metrics.l2_verification_fee_eth.previous,
   ]);
   const sources = [
     ...(supplyContributes ? ["coinmetrics-community:SplyCur"] : []),
     ...(feesContribute ? ["dune:gas.fees"] : []),
     ...(l2Contributes
-      ? ["dune:rollup_economics_ethereum.l1_fees"]
+      ? [
+          rentSource === "dune"
+            ? "dune:rollup_economics_ethereum.l1_fees"
+            : "growthepie:rent_paid_eth",
+        ]
       : []),
   ];
 
   const rollups = args.includeRollups
-    ? (args.dune.rollups ?? []).map((rollup) => ({
+    ? rentSource === "dune"
+      ? (args.dune.rollups ?? []).map((rollup) => ({
         name: rollup.name,
         l1_rent_eth: makeEthWindowMetric(
           rollup.current.l2Rent,
@@ -347,14 +398,33 @@ export function getEthValueCapture(
           rollup.current.l2VerificationFee,
           rollup.previous.l2VerificationFee,
         ),
-      }))
+        }))
+      : rentSource === "growthepie"
+        ? (args.growthepie.rollups ?? []).map((rollup) => ({
+            name: rollup.name,
+            l1_rent_eth: makeEthWindowMetric(
+              rollup.current.l2Rent,
+              rollup.previous.l2Rent,
+            ),
+            calldata_fee_eth: makeEthWindowMetric(null, null),
+            blob_fee_eth: makeEthWindowMetric(null, null),
+            verification_fee_eth: makeEthWindowMetric(null, null),
+          }))
+        : []
     : undefined;
 
   const snapshot: EthValueCaptureSnapshot = {
     summary: summaryFor(status, args.lang),
     window: args.window,
     cutoff_day: cutoffDay,
-    as_of: latestAsOf([args.supply.asOf, args.dune.asOf], args.now),
+    as_of: latestAsOf(
+      [
+        args.supply.asOf,
+        args.dune.asOf,
+        ...(rentSource === "growthepie" ? [args.growthepie.asOf] : []),
+      ],
+      args.now,
+    ),
     status,
     metrics,
     ratios: {
@@ -382,14 +452,26 @@ export function getEthValueCapture(
       },
       {
         source: "dune",
-        role: "Ethereum fees and L2 rent",
+        role:
+          rentSource === "dune" ? "Ethereum fees and L2 rent" : "Ethereum fees",
         as_of: args.dune.asOf,
         stale: args.dune.stale,
       },
+      ...(rentSource === "growthepie"
+        ? [{
+            source: "growthepie",
+            role: "L2 rent paid to Ethereum",
+            as_of: args.growthepie.asOf,
+            stale: args.growthepie.stale,
+          }]
+        : []),
     ],
     stale_data: [
       ...(args.supply.stale ? ["coinmetrics-community:stale"] : []),
       ...(args.dune.stale ? ["dune:stale_cache"] : []),
+      ...(rentSource === "growthepie" && args.growthepie.stale
+        ? ["growthepie:stale_cache"]
+        : []),
     ],
     confidence: roundedConfidence,
     capabilities: {
