@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { makeContext } from "../../src/adapters/base.js";
 import { fetchEthSupplyHistory } from "../../src/adapters/eth_supply_coinmetrics.js";
 import { fetchDuneEthValue } from "../../src/adapters/eth_value_dune.js";
+import { fetchGrowThePieRent } from "../../src/adapters/eth_value_growthepie.js";
 import { loadEnv } from "../../src/env.js";
 
 const runLive = process.env.RUN_LIVE_ETH_VALUE === "1";
@@ -28,6 +29,29 @@ describe.skipIf(!runLive)("ETH value capture live sources", () => {
     expect(result.latestBoundary).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(result.points.length).toBeGreaterThanOrEqual(15);
     expect(result.gaps).toEqual([]);
+  }, 30_000);
+
+  it("reads aligned free L2 rent windows from GrowThePie", async () => {
+    const now = new Date();
+    const ctx = makeContext({ env: loadEnv(process.env) });
+    const supply = await fetchEthSupplyHistory({ windowDays: 7, now }, ctx);
+    expect(supply.latestBoundary).not.toBeNull();
+
+    const result = await fetchGrowThePieRent(
+      {
+        cutoffDay: supply.latestBoundary!,
+        windowDays: 7,
+        includeRollups: true,
+      },
+      ctx,
+    );
+
+    expect(result.status).toBe("valid");
+    expect(result.current.l2Rent).not.toBeNull();
+    expect(result.previous.l2Rent).not.toBeNull();
+    expect(result.current.l2Rent).toBeGreaterThanOrEqual(0);
+    expect(result.previous.l2Rent).toBeGreaterThanOrEqual(0);
+    expect(result.rollups?.length).toBeGreaterThan(0);
   }, 30_000);
 
   it.skipIf(!runLiveDune)(

@@ -11,6 +11,7 @@ import { macroRwa } from "./adapters/macro_rwa.js";
 import { onchainWallet } from "./adapters/onchain_wallet.js";
 import { rpcCrossCheck } from "./adapters/rpc_cross_check.js";
 import { fetchDuneEthValue } from "./adapters/eth_value_dune.js";
+import { fetchGrowThePieRent } from "./adapters/eth_value_growthepie.js";
 import { fetchEthSupplyHistory } from "./adapters/eth_supply_coinmetrics.js";
 import type { EnvConfig } from "./env.js";
 import { windowToDays } from "./eth_value_capture/metrics.js";
@@ -261,15 +262,25 @@ export async function handleEthValueCapture(
   const now = new Date();
   const supply = await fetchEthSupplyHistory({ windowDays, now }, hc.ctx);
   const cutoffDay = supply.latestBoundary ?? now.toISOString().slice(0, 10);
-  const dune = await fetchDuneEthValue(
-    {
-      cutoffDay,
-      windowDays,
-      includeRollups: args.include_rollups,
-      allowExecution: args.paid_mode === "byok_allowed",
-    },
-    hc.ctx,
-  );
+  const [dune, growthepie] = await Promise.all([
+    fetchDuneEthValue(
+      {
+        cutoffDay,
+        windowDays,
+        includeRollups: args.include_rollups,
+        allowExecution: args.paid_mode === "byok_allowed",
+      },
+      hc.ctx,
+    ),
+    fetchGrowThePieRent(
+      {
+        cutoffDay,
+        windowDays,
+        includeRollups: args.include_rollups,
+      },
+      hc.ctx,
+    ),
+  ]);
 
   return getEthValueCapture({
     window: args.window,
@@ -278,6 +289,7 @@ export async function handleEthValueCapture(
     byokActive: hc.env.byok.dune ? ["dune"] : [],
     supply,
     dune,
+    growthepie,
     now,
   });
 }
