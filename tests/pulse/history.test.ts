@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   chmodSync,
   existsSync,
@@ -15,11 +15,14 @@ let dir: string;
 let path: string;
 
 beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-05-12T00:00:00Z"));
   dir = mkdtempSync(join(tmpdir(), "opm-history-"));
   path = join(dir, "history.json");
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   rmSync(dir, { recursive: true, force: true });
 });
 

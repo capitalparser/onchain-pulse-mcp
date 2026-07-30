@@ -13,8 +13,8 @@ Existing onchain intelligence tools (Nansen, Arkham, Coinglass) are dashboards b
 ## Design Highlights
 
 - **Read-only · snapshot-oriented**: idempotent MCP responses, no write actions, local-only history materialisation for composite z-scores.
-- **6 data adapters**: CEX flow, on-chain wallet, derivatives, macro/RWA, wallet identity, Korea layer.
-- **6 MCP tools (v0.1)**: `get_market_pulse`, `get_etf_flow`, `get_stablecoin_pulse`, `get_funding_oi`, `get_kr_premium`, `get_rwa_pulse`.
+- **Source adapters**: free and BYOK-backed market, Ethereum, RWA, derivatives, and Korea data paths.
+- **8 MCP tools**: the six original macro tools, token forensics, and ETH value capture.
 - **BYOK enrichment**: free defaults work out of the box; paid keys (Nansen/Glassnode/Arkham/Coinglass/CryptoQuant/Laevitas) are auto-detected via env vars.
 - **Composite pulse score**: 7-input weighted z-score with weights externalized to `config/pulse.yaml` — tweak to your thesis.
 - **Graceful degradation**: partial source failures yield reduced-confidence answers, never silent failure.
@@ -57,6 +57,12 @@ Set any of these env vars to enrich responses with paid data sources. The server
 | `ARKHAM_API_KEY` | Arkham | Wallet entity labels |
 | `CRYPTOQUANT_API_KEY` | CryptoQuant | Reserved for v0.2 |
 | `LAEVITAS_API_KEY` | Laevitas | Reserved for v0.2 |
+| `DUNE_API_KEY` | Dune | ETH fee burn and labelled L2 rent through direct SQL execution |
+
+`DUNE_API_KEY` is used only when a caller explicitly selects
+`paid_mode="byok_allowed"`. Dune direct SQL is usage-based and consumes credits
+from the key owner's account. The default `free_only` mode never starts a Dune
+execution.
 
 ### Locale
 
@@ -73,14 +79,109 @@ Set `OPM_LANG=ko` for Korean `summary` strings. Default is `en`.
 | `get_kr_premium` | `asset?` (`BTC`, `ETH`, or `all`) | KR premium for BTC/ETH/all |
 | `get_rwa_pulse` | `window?` (`1d`, `7d`, `30d`) | RWA TVL pulse |
 | `get_token_forensics` | `chain`, `token_address`, `pool_address?`, `max_wallets?`, `paid_mode?` | Phase 1 token-level forensic snapshot with pool discovery, non-prescriptive flow reading, confidence, and explicit gaps |
+| `get_eth_value_capture` | `window?`, `paid_mode?`, `include_rollups?` | ETH fee burn, execution tips, L2 rent, supply change, and aligned issuance |
 
 `get_token_forensics` is Phase 1. It discovers the best pool through DexScreener
 and returns a `ForensicsSnapshot` with `thin-data` or `unknown` flow reading
 until wallet-flow providers are wired. It does not prescribe trades.
 
+### ETH value capture
+
+`get_eth_value_capture` uses completed UTC-day boundaries and compares the
+selected window with the immediately preceding equal-length window.
+
+| Argument | Values | Default |
+|---|---|---|
+| `window` | `7d`, `30d`, `90d` | `30d` |
+| `paid_mode` | `free_only`, `byok_allowed` | `free_only` |
+| `include_rollups` | `true`, `false` | `false` |
+
+Free request:
+
+```json
+{
+  "name": "get_eth_value_capture",
+  "arguments": {
+    "window": "30d"
+  }
+}
+```
+
+Without a previously cached Dune result, this returns a partial
+Coin Metrics-only snapshot. Missing fee values remain `null`:
+
+```json
+{
+  "status": "partial",
+  "window": "30d",
+  "metrics": {
+    "base_fee_burn_eth": {
+      "current": null,
+      "previous": null,
+      "delta": null,
+      "pct_change": null,
+      "unit": "ETH"
+    },
+    "net_issuance_eth": {
+      "current": -12000.5,
+      "previous": 8300.25,
+      "delta": -20300.75,
+      "pct_change": -2.4458,
+      "unit": "ETH"
+    }
+  },
+  "sources": ["coinmetrics-community:SplyCur"],
+  "confidence": 0.25
+}
+```
+
+Explicit Dune request:
+
+```json
+{
+  "name": "get_eth_value_capture",
+  "arguments": {
+    "window": "30d",
+    "paid_mode": "byok_allowed",
+    "include_rollups": true
+  }
+}
+```
+
+The Dune cache key includes cutoff day, window, and rollup detail. Fresh results
+remain in process for 30 minutes; concurrent identical requests share one
+execution. Failed and timed-out executions are not automatically resubmitted
+during that cache interval. API keys are sent only in the
+`X-DUNE-API-KEY` header and are never returned or persisted.
+
+Metric identities and overlap:
+
+- gross L1 fees = base fee burn + priority fee + blob fee burn;
+- total burn = base fee burn + blob fee burn;
+- consensus issuance = net issuance + total burn only for identical boundaries;
+- priority fees exclude MEV and builder payments;
+- L2 rent is already contained in gross L1 fees, and its blob component
+  overlaps blob fee burn.
+
+Do not add burn and L2 rent into a synthetic total. The response reports
+measurements, provenance, freshness, confidence, and explicit gaps—not a price
+forecast or investment recommendation.
+
+Opt-in live source verification:
+
+```bash
+npm run test:live:eth-value
+```
+
+The live Coin Metrics check is free. The Dune check consumes Dune credits and
+runs only when both `DUNE_API_KEY` is present and
+`RUN_LIVE_DUNE_ETH_VALUE=1` explicitly authorizes it. ETH collateral demand,
+price/ETH-BTC comparison, ETF or treasury-company flows, execution RPC
+re-indexing, and Beacon reward indexing remain deferred.
+
 ## Roadmap
 
-- **v0.1**: D view (macro pulse) — 6 tools above, stdio transport.
+- **v0.1**: D view (macro pulse) plus read-only forensic and ETH value-capture snapshots, stdio transport.
 - **v0.2**: B view (screening) — `find_unusual_flows`, `find_whale_accumulation`, `screen_by_signal`.
 - **v0.3**: A view (timing) — `should_long_short`, `position_health`.
 - **v0.4**: HTTP transport + remote hosting option.

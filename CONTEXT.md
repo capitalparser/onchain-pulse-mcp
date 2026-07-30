@@ -56,7 +56,49 @@ _Avoid_: `enriched` (single boolean — too coarse).
 The list of Sources whose response was a cached or fallback value rather than a fresh fetch. Surfaced per response as `stale_data: [...]` so consumers can downgrade trust on those fields.
 
 **Snapshot**:
-A complete tool response — Score, Reading, raw inputs, sources, stale_data, confidence, capabilities, all with a single `as_of` timestamp. Snapshots are stateless.
+A complete tool response with sources, stale data, confidence, capabilities, and
+an `as_of` timestamp. Composite Pulse snapshots also contain Score and Reading;
+specialized measurement snapshots use their own domain fields. Snapshots are
+stateless.
+
+### ETH value capture
+
+**ETH Value Capture Snapshot**:
+A read-only measurement of whether Ethereum usage accrues to ETH through fee
+burn, execution tips, L2 payments to L1, and supply change. It has no composite
+score or trading Reading and does not predict price.
+
+**Gross L1 fees**:
+Execution base fee plus execution priority fee plus blob fee over an exact
+completed-UTC-day window.
+
+**Total burn**:
+Base fee burn plus blob fee burn. Priority fee is excluded because it is paid
+to the proposer rather than burned.
+
+**Priority fee**:
+Execution-layer tips paid to block proposers. It is not total validator revenue
+and excludes out-of-protocol MEV and builder payments.
+
+**Net issuance**:
+The signed change in total ETH supply between exact Coin Metrics `SplyCur`
+boundary points. Negative values represent supply contraction.
+
+**Consensus issuance**:
+For identical post-Merge UTC boundaries only,
+`net issuance + total burn`. A missing or mismatched boundary blocks this
+derivation and returns `null`.
+
+**L2 rent paid to Ethereum**:
+Calldata, blob, and proof-verification costs paid by labelled L2 rollups on
+Ethereum L1. This is a subset of gross L1 fees; L2 blob rent also overlaps blob
+fee burn. L2 rent and burn must never be added into a synthetic value-capture
+total.
+
+ETH value-capture windows are half-open and exclude the current partial UTC
+day: current `[cutoff - window, cutoff)`, previous
+`[cutoff - 2 × window, cutoff - window)`. Missing components and missing
+boundaries remain `null`, not zero.
 
 ### Token forensics
 
@@ -101,7 +143,9 @@ Flat key form is intentional: yaml legibility, zod validation, golden test fixtu
 ## Relationships
 
 - A **Tool call** produces one **Snapshot**.
-- A **Snapshot** contains exactly one **Score** and one **Reading**.
+- A composite Pulse **Snapshot** contains one **Score** and one **Reading**.
+  Specialized snapshots, including ETH Value Capture, expose domain
+  measurements without inventing a score.
 - A **Score** is computed from up to seven weighted inputs (see Metric key convention).
 - An **Adapter** wraps one or more **Sources**; the Snapshot's `sources: [...]` lists every Source that contributed.
 - A **BYOK key** activates one or more **Adapter** enrichments; the Snapshot's `capabilities.byok_active: [...]` lists which keys were actually used (not just present).

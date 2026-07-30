@@ -23,6 +23,7 @@
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:live:eth-value": "RUN_LIVE_ETH_VALUE=1 vitest run tests/live/eth_value_capture.live.test.ts",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run typecheck && npm run test && npm run build"
   },
