@@ -487,8 +487,9 @@ sfrxETH, lsETH. These seven broader metrics remain `null`:
 `combined_aave_spark_lido_sky_eigenlayer_demand`, `rehypothecation_ratio`, and
 `executable_withdrawal_capacity_eth_wei`. The snapshot therefore does not
 establish a full LST/native/EigenLayer total, unique or net locked ETH,
-combined protocol demand, rehypothecation, independent backing, cbETH/osETH
-reward/mETH oracle-record freshness, or executable withdrawal/liquidity.
+combined protocol demand, rehypothecation, independent backing reconciliation,
+cbETH exchange-rate freshness, osETH virtual-reward-input freshness, or mETH
+oracle-record freshness; nor executable withdrawal/liquidity.
 Permanent gaps are `lst_quote_coverage_partial`,
 `native_restaked_eth_not_measured`, `lst_restaked_eth_equivalent_not_measured`,
 `eigenlayer_eth_family_exposure_not_measured`,

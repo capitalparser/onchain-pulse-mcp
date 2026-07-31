@@ -215,8 +215,9 @@ The seven broader fields `lst_restaked_eth_equivalent_wei`,
 `rehypothecation_ratio`, and `executable_withdrawal_capacity_eth_wei` remain
 `null`. The snapshot does not establish full LST/native/EigenLayer totals,
 unique/net locked ETH, combined Aave/Spark/Lido/Sky/EigenLayer demand,
-rehypothecation, independent backing, cbETH/osETH reward/mETH oracle-record
-freshness, or executable withdrawal/liquidity. Permanent gaps are
+rehypothecation, independent backing reconciliation, cbETH exchange-rate
+freshness, osETH virtual-reward-input freshness, or mETH oracle-record
+freshness; nor executable withdrawal/liquidity. Permanent gaps are
 `lst_quote_coverage_partial`, `native_restaked_eth_not_measured`,
 `lst_restaked_eth_equivalent_not_measured`,
 `eigenlayer_eth_family_exposure_not_measured`,
