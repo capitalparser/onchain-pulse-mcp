@@ -43,6 +43,28 @@ function verified() {
   };
 }
 
+function unavailable(code: "rpc_not_configured" | "rpc_access_gap" = "rpc_access_gap") {
+  const configured = code !== "rpc_not_configured";
+  return {
+    status: "unavailable", summary: "unavailable", methodology: "spark-eth-collateral-capacity-v1",
+    verified_block: null,
+    metrics: {
+      spark_eth_family_supplied: null, spark_collateral_eligible_supplied: null,
+      combined_aave_spark_supplied: null, actual_user_collateral: null, net_eth_locked: null,
+      gross_eth_collateral: null, rehypothecation_ratio: null,
+    },
+    assets: [], identities: null,
+    coverage: {
+      spark_lend_ethereum_complete: false, aave_spark_overlap_reconciled: false,
+      user_collateral_usage_complete: false, net_eth_locked_complete: false,
+      gross_collateral_complete: false, rehypothecation_complete: false,
+    },
+    sources: configured ? ["ethereum_rpc"] : [],
+    source_status: configured ? [{ source: "ethereum_rpc", role: "spark_lend_finalized_reserve_evidence", stale: false }] : [],
+    gaps: [{ code, detail: code }], capabilities: { ethereum_rpc_active: false },
+  };
+}
+
 describe("SparkCollateralCapacitySnapshotSchema", () => {
   it("accepts the strict complete six-asset verified fixture", () => {
     expect(SparkCollateralCapacitySnapshotSchema.safeParse(verified()).success).toBe(true);
@@ -55,9 +77,26 @@ describe("SparkCollateralCapacitySnapshotSchema", () => {
     ["partial asset coverage", (value: ReturnType<typeof verified>) => { value.assets = value.assets.slice(1); }],
     ["mismatched provenance", (value: ReturnType<typeof verified>) => { value.source_status = []; }],
     ["an unmarked stale source", (value: ReturnType<typeof verified>) => { value.source_status[0]!.stale = true; }],
+    ["a duplicate permanent gap", (value: ReturnType<typeof verified>) => { value.gaps.push({ ...value.gaps[0]! }); }],
+    ["an arbitrary verified gap", (value: ReturnType<typeof verified>) => { value.gaps.push({ code: "rpc_access_gap", detail: "not verified" }); }],
   ])("rejects %s", (_name, mutate) => {
     const value = verified();
     mutate(value);
     expect(SparkCollateralCapacitySnapshotSchema.safeParse(value).success).toBe(false);
+  });
+
+  it.each([
+    ["rpc_not_configured provenance", (() => { const value = unavailable("rpc_not_configured"); value.sources = ["ethereum_rpc"]; value.source_status = [{ source: "ethereum_rpc", role: "role", stale: false }]; return value; })()],
+    ["configured failure without provenance", (() => { const value = unavailable(); value.sources = []; value.source_status = []; return value; })()],
+    ["mismatched unavailable source sets", (() => { const value = unavailable(); value.source_status = []; return value; })()],
+    ["a stale unavailable source", (() => { const value = unavailable(); value.source_status[0]!.stale = true; return value; })()],
+    ["source_stale unavailable gap", (() => { const value = unavailable(); (value.gaps as Array<{ code: string; detail: string }>).push({ code: "source_stale", detail: "bad" }); return value; })()],
+  ])("rejects incoherent unavailable %s", (_name, value) => {
+    expect(SparkCollateralCapacitySnapshotSchema.safeParse(value).success).toBe(false);
+  });
+
+  it("accepts coherent configured and unconfigured bounded failures", () => {
+    expect(SparkCollateralCapacitySnapshotSchema.safeParse(unavailable()).success).toBe(true);
+    expect(SparkCollateralCapacitySnapshotSchema.safeParse(unavailable("rpc_not_configured")).success).toBe(true);
   });
 });

@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { makeContext } from "../../src/adapters/base.js";
+import { fetchEthCollateralAaveV3 } from "../../src/adapters/eth_collateral_aave_v3.js";
 import { fetchEthCollateralSpark } from "../../src/adapters/eth_collateral_spark.js";
 
 const env = { byok: {}, lang: "en" as const, historyPath: "/tmp/history.json" };
 const PROVIDER = "0x02c3ea4e34c0cbd694d2adfa2c690eecbc1793ee";
+const AAVE_PROVIDER = "0x2f39d218133afab8f2b819b1066c7e434ad94e9e";
 const DATA_PROVIDER = "0x1111111111111111111111111111111111111111";
 const ORACLE = "0x2222222222222222222222222222222222222222";
 const WETH = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
@@ -28,8 +30,8 @@ function finalizedFetch(mutate?: (round: number, results: unknown[]) => unknown[
       if (request.method === "eth_chainId") return { jsonrpc: "2.0", id: request.id, result: "0x1" };
       if (request.method === "eth_getBlockByNumber") return { jsonrpc: "2.0", id: request.id, result: { number: "0x100", hash: `0x${"a".repeat(64)}`, timestamp: "0x65" } };
       const call = request.params[0] as { to: string; data: string };
-      if (call.to === PROVIDER && call.data === "0xe860accb") return { jsonrpc: "2.0", id: request.id, result: `0x${addressWord(DATA_PROVIDER)}` };
-      if (call.to === PROVIDER && call.data === "0xfca513a8") return { jsonrpc: "2.0", id: request.id, result: `0x${addressWord(ORACLE)}` };
+      if ((call.to === PROVIDER || call.to === AAVE_PROVIDER) && call.data === "0xe860accb") return { jsonrpc: "2.0", id: request.id, result: `0x${addressWord(DATA_PROVIDER)}` };
+      if ((call.to === PROVIDER || call.to === AAVE_PROVIDER) && call.data === "0xfca513a8") return { jsonrpc: "2.0", id: request.id, result: `0x${addressWord(ORACLE)}` };
       if (call.to === DATA_PROVIDER && call.data.startsWith("0x3e150141")) return { jsonrpc: "2.0", id: request.id, result: configuration() };
       if (call.to === DATA_PROVIDER && call.data.startsWith("0x51460e25")) return { jsonrpc: "2.0", id: request.id, result: `0x${word(call.data.endsWith(WETH.slice(2)) ? 2n : 0n)}` };
       if (call.to === ORACLE && call.data.startsWith("0xb3596f07")) return { jsonrpc: "2.0", id: request.id, result: `0x${word(2n)}` };
@@ -50,6 +52,8 @@ describe("fetchEthCollateralSpark", () => {
     const rounds = fetchImpl.mock.calls.map(([, init]) => JSON.parse((init as RequestInit).body as string));
     expect(rounds.map((items) => items.length)).toEqual([2, 2, 12, 7]);
     expect(rounds.flat()).toHaveLength(23);
+    expect(rounds.slice(1).flat().every((request: { params: unknown[] }) => request.params[1] === "0x100")).toBe(true);
+    expect(result.source_status).toEqual([{ source: "ethereum_rpc", role: "spark_lend_finalized_reserve_evidence", stale: false }]);
   });
 
   it.each([
@@ -79,5 +83,30 @@ describe("fetchEthCollateralSpark", () => {
       expect(stale.gaps.filter((gap) => gap.code === "source_stale")).toHaveLength(1);
       expect(JSON.stringify(stale)).not.toContain("secret detail");
     } finally { vi.useRealTimers(); }
+  });
+
+  it("keeps actual Aave and Spark provider/cache bindings independent for shared and distinct provider URLs", async () => {
+    for (const [aaveUrl, sparkUrl] of [["https://rpc.example/shared", "https://rpc.example/shared"], ["https://rpc.example/aave-secret", "https://rpc.example/spark-secret"]]) {
+      const fetchImpl = finalizedFetch();
+      const ctx = makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch });
+      await expect(fetchEthCollateralAaveV3({ rpcUrl: aaveUrl }, ctx)).resolves.toMatchObject({ status: "verified" });
+      await expect(fetchEthCollateralSpark({ rpcUrl: sparkUrl }, ctx)).resolves.toMatchObject({ status: "verified" });
+      const rounds = fetchImpl.mock.calls.map(([, init]) => JSON.parse((init as RequestInit).body as string));
+      expect(rounds.flat()).toHaveLength(35 + 23);
+      expect(fetchImpl).toHaveBeenCalledTimes(8);
+      await expect(fetchEthCollateralAaveV3({ rpcUrl: aaveUrl }, ctx)).resolves.toMatchObject({ status: "verified" });
+      await expect(fetchEthCollateralSpark({ rpcUrl: sparkUrl }, ctx)).resolves.toMatchObject({ status: "verified" });
+      expect(fetchImpl).toHaveBeenCalledTimes(8);
+    }
+  });
+
+  it("redacts first-fetch provider URLs and thrown details", async () => {
+    const result = await fetchEthCollateralSpark(
+      { rpcUrl: "https://rpc.example/first-secret" },
+      makeContext({ env, fetchImpl: vi.fn().mockRejectedValue(new Error("provider secret detail")) as unknown as typeof fetch }),
+    );
+    expect(result.gaps[0]?.code).toBe("rpc_access_gap");
+    expect(JSON.stringify(result)).not.toContain("first-secret");
+    expect(JSON.stringify(result)).not.toContain("provider secret detail");
   });
 });

@@ -81,3 +81,41 @@ Tests       618 passed | 6 skipped (624)
 
 No live RPC or network call was run. The public Spark MCP tool and opt-in live
 test remain Task 3 scope.
+
+## QA follow-up — strict gap and unavailable provenance contract
+
+### RED
+
+The new strict-schema tests failed before the hardening change:
+
+```text
+tests/spark_collateral_capacity/types.test.ts (15 tests | 6 failed)
+expected true to be false
+
+failing cases: duplicate permanent gap; rpc_not_configured provenance;
+configured failure without provenance; mismatched source sets; stale unavailable
+source; source_stale unavailable gap
+```
+
+### GREEN
+
+- Verified Snapshots now require each of the five permanent gap codes exactly
+  once. No other verified gap is permitted except exactly one `source_stale`
+  when every provenance entry is stale.
+- Unavailable Snapshots now contain exactly one bounded source failure;
+  `rpc_not_configured` requires empty provenance, while all configured failures
+  require unique, matching, nonempty `sources` and `source_status` sets.
+  Stale provenance and `source_stale` are forbidden when unavailable.
+- Adapter coverage now directly exercises real Aave and Spark adapters in one
+  context for both shared and distinct per-market provider URLs (35 + 23
+  calls), exact finalized tags, Spark source role mapping, and first-fetch URL
+  and error-detail redaction.
+
+### Follow-up verification
+
+```text
+Focused Spark/Aave suite: 72 passed (72)
+npm test: 628 passed | 6 opt-in skipped (634)
+npm run typecheck: passed
+git diff --check: passed
+```

@@ -118,7 +118,7 @@ const SparkCollateralCapacitySnapshotBaseSchema = z.object({
 }).strict();
 
 export const SparkCollateralCapacitySnapshotSchema = SparkCollateralCapacitySnapshotBaseSchema.superRefine((snapshot, context) => {
-  const permanentGapsPresent = [...PermanentGapCodes].every((code) => snapshot.gaps.some((gap) => gap.code === code));
+  const permanentGapsExact = [...PermanentGapCodes].every((code) => snapshot.gaps.filter((gap) => gap.code === code).length === 1);
   if (snapshot.status === "verified") {
     const symbols = snapshot.assets.map((asset) => asset.symbol);
     const exactCoverage = symbols.length === SPARK_COLLATERAL_ASSETS.length && new Set(symbols).size === symbols.length
@@ -126,19 +126,19 @@ export const SparkCollateralCapacitySnapshotSchema = SparkCollateralCapacitySnap
     const supplied = snapshot.metrics.spark_eth_family_supplied;
     const eligible = snapshot.metrics.spark_collateral_eligible_supplied;
     if (!exactCoverage || snapshot.verified_block === null || snapshot.identities === null || supplied === null || eligible === null
-      || !snapshot.coverage.spark_lend_ethereum_complete || !snapshot.capabilities.ethereum_rpc_active || !permanentGapsPresent) {
+      || !snapshot.coverage.spark_lend_ethereum_complete || !snapshot.capabilities.ethereum_rpc_active || !permanentGapsExact) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: "verified Spark snapshot is incomplete" });
       return;
     }
     const sources = new Set(snapshot.sources);
     const statuses = new Set(snapshot.source_status.map((status) => status.source));
     const staleGaps = snapshot.gaps.filter((gap) => gap.code === "source_stale");
-    const sourceFailures = snapshot.gaps.filter((gap) => !PermanentGapCodes.has(gap.code) && gap.code !== "source_stale");
+    const onlyPermanentOrStale = snapshot.gaps.every((gap) => PermanentGapCodes.has(gap.code) || gap.code === "source_stale");
     const allStale = snapshot.source_status.every((status) => status.stale);
     const allFresh = snapshot.source_status.every((status) => !status.stale);
     if (sources.size !== snapshot.sources.length || statuses.size !== snapshot.source_status.length || sources.size === 0
-      || sources.size !== statuses.size || ![...sources].every((source) => statuses.has(source)) || sourceFailures.length > 0
-      || staleGaps.length > 1 || (staleGaps.length === 1 && !allStale) || (staleGaps.length === 0 && !allFresh)) {
+      || sources.size !== statuses.size || ![...sources].every((source) => statuses.has(source)) || !onlyPermanentOrStale
+      || (allStale && staleGaps.length !== 1) || (allFresh && staleGaps.length !== 0) || (!allStale && !allFresh)) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: "verified Spark snapshot has inconsistent provenance" });
     }
     const weth = snapshot.assets.find((asset) => asset.symbol === "WETH");
@@ -160,9 +160,18 @@ export const SparkCollateralCapacitySnapshotSchema = SparkCollateralCapacitySnap
     return;
   }
   const metricsAbsent = snapshot.metrics.spark_eth_family_supplied === null && snapshot.metrics.spark_collateral_eligible_supplied === null;
-  const sourceFailure = snapshot.gaps.some((gap) => SourceFailureGapCodes.has(gap.code));
+  const sourceFailure = snapshot.gaps.length === 1 && SourceFailureGapCodes.has(snapshot.gaps[0]!.code);
+  const sources = new Set(snapshot.sources);
+  const statuses = new Set(snapshot.source_status.map((status) => status.source));
+  const matchingProvenance = sources.size === snapshot.sources.length && statuses.size === snapshot.source_status.length
+    && sources.size === statuses.size && [...sources].every((source) => statuses.has(source));
+  const rpcNotConfigured = snapshot.gaps[0]?.code === "rpc_not_configured";
+  const provenanceCoherent = rpcNotConfigured
+    ? snapshot.sources.length === 0 && snapshot.source_status.length === 0
+    : snapshot.sources.length > 0 && snapshot.source_status.length > 0 && matchingProvenance
+      && snapshot.source_status.every((status) => !status.stale);
   if (snapshot.verified_block !== null || snapshot.identities !== null || snapshot.assets.length !== 0 || !metricsAbsent
-    || snapshot.coverage.spark_lend_ethereum_complete || snapshot.capabilities.ethereum_rpc_active || !sourceFailure) {
+    || snapshot.coverage.spark_lend_ethereum_complete || snapshot.capabilities.ethereum_rpc_active || !sourceFailure || !provenanceCoherent) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "unavailable Spark snapshot contains partial evidence" });
   }
 });
