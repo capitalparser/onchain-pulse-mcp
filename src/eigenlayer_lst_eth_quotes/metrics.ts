@@ -15,9 +15,9 @@ const UINT256_MAX = (2n ** 256n) - 1n;
 const WAD = 10n ** 18n;
 
 const PERMANENT_GAP_DETAILS: Record<(typeof EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES)[number], string> = {
-  lst_quote_coverage_partial: "Only six of the twelve fixed legacy EigenLayer LST strategies have bounded ETH accounting quotes.",
+  lst_quote_coverage_partial: "Only seven of the twelve fixed legacy EigenLayer LST strategies have bounded ETH accounting quotes.",
   native_restaked_eth_not_measured: "No native-restaked ETH total is measured.",
-  lst_restaked_eth_equivalent_not_measured: "Six covered quotes do not establish a full EigenLayer LST ETH-equivalent total.",
+  lst_restaked_eth_equivalent_not_measured: "Seven covered quotes do not establish a full EigenLayer LST ETH-equivalent total.",
   eigenlayer_eth_family_exposure_not_measured: "Native and full LST evidence are not combined into an ETH-family total.",
   unique_net_eth_locked_not_reconciled: "Issuer backing and downstream reuse are not deduplicated or netted.",
   combined_aave_spark_lido_sky_eigenlayer_demand_not_reconciled: "No cross-protocol demand total is reconciled.",
@@ -31,6 +31,9 @@ const PERMANENT_GAP_DETAILS: Record<(typeof EIGENLAYER_LST_ETH_QUOTES_PERMANENT_
   lseth_oracle_report_freshness_not_verified: "Liquid Collective's last completed epoch is report context, not an independently verified freshness proof.",
   lseth_proxy_upgradeability_not_verified: "The bounded River proxy call does not independently verify current implementation-source correspondence.",
   lseth_backing_not_reconciled: "Liquid Collective River accounting is not an independent backing reconciliation.",
+  ethx_oracle_report_freshness_not_verified: "Stader's oracle reporting block is context, not an independently verified freshness proof.",
+  ethx_proxy_upgradeability_not_verified: "The bounded ETHx proxy calls do not independently verify current implementation-source correspondence.",
+  ethx_backing_not_reconciled: "Stader pool accounting is not an independent backing reconciliation.",
 };
 const PERMANENT_GAPS: readonly EigenLayerLstEthQuoteGap[] = EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES.map(
   (code) => ({ code, detail: PERMANENT_GAP_DETAILS[code] }),
@@ -99,7 +102,7 @@ function normalizeQuote(input: EigenLayerCoveredLstQuoteInput, index: number): E
     custodyQuote = custodyAmount;
     quoteKind = "steth_token_wei_identity_quote";
     trustBasis = "lido_pooled_eth_accounting";
-  } else if (expected.label === "rETH" || expected.label === "osETH" || expected.label === "lsETH" || expected.label === "mETH") {
+  } else if (expected.label === "rETH" || expected.label === "ETHx" || expected.label === "osETH" || expected.label === "lsETH" || expected.label === "mETH") {
     if ("rethExchangeRate" in input
       || "fabricatedConversionRate" in input
       || (input.cbethExchangeRate !== undefined && input.cbethExchangeRate !== null)) {
@@ -110,6 +113,9 @@ function normalizeQuote(input: EigenLayerCoveredLstQuoteInput, index: number): E
     if (expected.label === "rETH") {
       quoteKind = "rocket_pool_direct_aggregate_quote";
       trustBasis = "rocket_pool_network_accounting";
+    } else if (expected.label === "ETHx") {
+      quoteKind = "stader_direct_pool_accounting_quote";
+      trustBasis = "stader_oracle_reported_accounting";
     } else if (expected.label === "osETH") {
       quoteKind = "stakewise_v3_direct_controller_quote";
       trustBasis = "stakewise_v3_keeper_reward_accounting";
@@ -148,7 +154,7 @@ export function buildVerifiedEigenLayerLstEthQuotesSnapshot(
   input: BuildVerifiedEigenLayerLstEthQuotesInput,
 ): EigenLayerLstEthQuotesSnapshot {
   if (input.quotes.length !== EIGENLAYER_COVERED_LST_STRATEGIES.length) {
-    fail("evidence_mismatch", "Exactly six ordered covered quote inputs are required.");
+    fail("evidence_mismatch", "Exactly seven ordered covered quote inputs are required.");
   }
   const coveredQuotes = input.quotes.map(normalizeQuote);
   let shareSum = 0n;
@@ -160,11 +166,14 @@ export function buildVerifiedEigenLayerLstEthQuotesSnapshot(
   const stale = input.stale === true;
   const snapshot = {
     status: "verified" as const,
-    summary: "Exact finalized stETH, rETH, cbETH, osETH, lsETH, and mETH EigenLayer token amounts and bounded ETH accounting quotes cover six of twelve fixed strategies.",
-    methodology: "eigenlayer-covered-lst-eth-quotes-v3" as const,
+    summary: "Exact finalized stETH, rETH, cbETH, ETHx, osETH, lsETH, and mETH EigenLayer token amounts and bounded ETH accounting quotes cover seven of twelve fixed strategies.",
+    methodology: "eigenlayer-covered-lst-eth-quotes-v4" as const,
     verified_block: input.block,
     covered_quotes: coveredQuotes,
-    report_context: { lseth_last_completed_epoch_id: uint(input.lsethLastCompletedEpochId, "lsETH last completed epoch").toString() },
+    report_context: {
+      lseth_last_completed_epoch_id: uint(input.lsethLastCompletedEpochId, "lsETH last completed epoch").toString(),
+      ethx_oracle_reporting_block_number: uint(input.ethxOracleReportingBlockNumber, "ETHx oracle reporting block").toString(),
+    },
     metrics: {
       covered_share_accounting_eth_equivalent_wei: shareSum.toString(),
       covered_token_custody_eth_equivalent_wei: custodySum.toString(),
@@ -184,7 +193,7 @@ export function buildVerifiedEigenLayerLstEthQuotesSnapshot(
       partial_aggregates_only: true as const,
     },
     coverage: {
-      quoted_strategy_count: 6 as const,
+      quoted_strategy_count: 7 as const,
       fixed_strategy_count: 12 as const,
       unquoted_strategy_labels: [...EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS] as const,
     },
@@ -220,7 +229,7 @@ export function buildUnavailableEigenLayerLstEthQuotesSnapshot(input: {
   const snapshot = {
     status: "unavailable" as const,
     summary: input.summary,
-    methodology: "eigenlayer-covered-lst-eth-quotes-v3" as const,
+    methodology: "eigenlayer-covered-lst-eth-quotes-v4" as const,
     verified_block: null,
     covered_quotes: [],
     report_context: null,
