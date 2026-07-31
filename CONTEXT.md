@@ -164,8 +164,8 @@ gaps.
 
 **EigenLayer Covered LST ETH Quotes Snapshot**:
 A separate read-only direct protocol-accounting quote view for exactly 6 of the
-12 fixed legacy strategies, in this fixed order: stETH, rETH, cbETH, osETH,
-lsETH, and mETH. The base authority is EigenLayer release `v1.12.0`, commit
+12 fixed legacy strategies, in this fixed order: stETH, rETH, cbETH, ETHx,
+osETH, lsETH, and mETH. The base authority is EigenLayer release `v1.12.0`, commit
 `d302f65042164c8d8d0a983c1540d85a8710030b`. The 18-decimal token identities
 are stETH `0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84`, rETH
 `0xae78736Cd615f374D3085123A210448E74Fc6393`, cbETH
@@ -173,12 +173,12 @@ are stETH `0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84`, rETH
 `0xf1C9acDc66974dFB6dEcB12aA385b9cD01190E38`, lsETH
 `0x8c1BEd5b9a0928467c9B1341Da1D7BD5e10b6549`, and mETH
 `0xd5F7838F5C461fefF7FE49ea5ebaF7728bB0ADfa`. The exact unquoted list is
-ETHx, ankrETH, oETH, swETH, wBETH, sfrxETH.
+ankrETH, oETH, swETH, wBETH, sfrxETH.
 
 **Covered partial metrics**:
 `covered_share_accounting_eth_equivalent_wei` and
 `covered_token_custody_eth_equivalent_wei` are distinct partial sums across
-only the six covered strategy amounts. They are not full LST, native-restaked,
+only the seven covered strategy amounts. They are not full LST, native-restaked,
 or total EigenLayer exposure, independent backing, or downstream-reuse views.
 
 **Covered LST quote trust basis**:
@@ -212,12 +212,11 @@ only, not freshness proof. The bounded target does not independently verify
 proxy implementation/source correspondence or backing.
 
 **Covered LST quote acquisition boundary**:
-One cold verification is exactly 5 JSON-RPC batches, 103 logical requests, 101
-`eth_call` requests, and contiguous IDs 1--103 at one numeric finalized block.
-IDs 92--100 preserve rETH/cbETH/osETH/Mantle calls; IDs 101--102 are River
-share/custody conversions and ID 103 is its completed-epoch report context.
-The sole v3 30-minute combined cache neither consumes the base public cache nor
-accepts a stale base; stale fallback requires prior complete six-token verified
+One cold verification is exactly 5 JSON-RPC batches, 111 logical requests, 109
+`eth_call` requests, and contiguous IDs 1--111 at one numeric finalized block.
+IDs 92--103 preserve existing calls; IDs 104--111 verify ETHx configuration
+pointers, two conversions, and its Oracle tuple. The sole v4 30-minute combined cache neither consumes the base public cache nor
+accepts a stale base; stale fallback requires prior complete seven-token verified
 evidence.
 
 The seven broader fields `lst_restaked_eth_equivalent_wei`,
