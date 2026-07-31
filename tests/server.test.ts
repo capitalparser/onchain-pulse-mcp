@@ -161,7 +161,7 @@ describe("server", () => {
     const fetchImpl = vi.fn();
     const hc = { env, ctx: makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }) };
     expect(tool?.inputSchema).toEqual({ type: "object", properties: {}, additionalProperties: false });
-    expect(tool?.description).toBe("Finalized direct protocol-accounting quotes for stETH/rETH/cbETH/ETHx/osETH/swETH/lsETH/mETH covering only 8 of 12 fixed EigenLayer strategies; broader totals stay null.");
+    expect(tool?.description).toBe("Finalized bounded quotes for 9 of 12 fixed EigenLayer strategies; OETH is nominal unit accounting, not redeemability, and broader totals stay null.");
     const output = await tool?.handler({}, hc);
     expect(output).toMatchObject({ status: "unavailable", verified_block: null, covered_quotes: [], report_context: null, identities: null, coverage: null });
     expect((output as { gaps: Array<{ code: string }> }).gaps[0]?.code).toBe("rpc_not_configured");

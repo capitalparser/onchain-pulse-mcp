@@ -15,9 +15,9 @@ const UINT256_MAX = (2n ** 256n) - 1n;
 const WAD = 10n ** 18n;
 
 const PERMANENT_GAP_DETAILS: Record<(typeof EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES)[number], string> = {
-  lst_quote_coverage_partial: "Only eight of the twelve fixed legacy EigenLayer LST strategies have bounded ETH accounting quotes.",
+  lst_quote_coverage_partial: "Only nine of the twelve fixed legacy EigenLayer LST strategies have bounded ETH accounting quotes.",
   native_restaked_eth_not_measured: "No native-restaked ETH total is measured.",
-  lst_restaked_eth_equivalent_not_measured: "Eight covered quotes do not establish a full EigenLayer LST ETH-equivalent total.",
+  lst_restaked_eth_equivalent_not_measured: "Nine covered quotes do not establish a full EigenLayer LST ETH-equivalent total.",
   eigenlayer_eth_family_exposure_not_measured: "Native and full LST evidence are not combined into an ETH-family total.",
   unique_net_eth_locked_not_reconciled: "Issuer backing and downstream reuse are not deduplicated or netted.",
   combined_aave_spark_lido_sky_eigenlayer_demand_not_reconciled: "No cross-protocol demand total is reconciled.",
@@ -34,6 +34,10 @@ const PERMANENT_GAP_DETAILS: Record<(typeof EIGENLAYER_LST_ETH_QUOTES_PERMANENT_
   ethx_oracle_report_freshness_not_verified: "Stader's oracle reporting block is context, not an independently verified freshness proof.",
   ethx_proxy_upgradeability_not_verified: "The bounded ETHx proxy calls do not independently verify current implementation-source correspondence.",
   ethx_backing_not_reconciled: "Stader pool accounting is not an independent backing reconciliation.",
+  oeth_rebase_freshness_not_verified: "Origin's last rebase timestamp is context, not an independently verified freshness proof.",
+  oeth_proxy_upgradeability_not_verified: "The bounded OETH proxy calls do not independently verify current implementation-source correspondence.",
+  oeth_backing_not_reconciled: "OETH nominal unit accounting is not an independent backing or ETH spot-value reconciliation.",
+  oeth_async_withdrawal_liquidity_not_verified: "OETH withdrawal delay context does not prove async withdrawal, immediate redemption, or executable liquidity.",
   sweth_reprice_freshness_not_verified: "Swell's last reprice timestamp is context, not an independently verified freshness proof.",
   sweth_proxy_upgradeability_not_verified: "The bounded swETH proxy call does not independently verify current implementation-source correspondence.",
   sweth_backing_not_reconciled: "Swell reprice accounting is not an independent backing reconciliation.",
@@ -113,6 +117,16 @@ function normalizeQuote(input: EigenLayerCoveredLstQuoteInput, index: number): E
     custodyQuote = custodyAmount;
     quoteKind = "steth_token_wei_identity_quote";
     trustBasis = "lido_pooled_eth_accounting";
+  } else if (expected.label === "oETH") {
+    if (input.directShareAccountingEthQuote !== undefined || input.directTokenCustodyEthQuote !== undefined
+      || (input.cbethExchangeRate !== undefined && input.cbethExchangeRate !== null)
+      || (input.swethToEthRate !== undefined && input.swethToEthRate !== null)) {
+      fail("evidence_mismatch", "oETH accepts token amounts only and preserves nominal unit accounting.");
+    }
+    shareQuote = shareAmount;
+    custodyQuote = custodyAmount;
+    quoteKind = "origin_oeth_vault_unit_identity_quote";
+    trustBasis = "origin_vault_nominal_withdrawal_unit_accounting";
   } else if (expected.label === "rETH" || expected.label === "ETHx" || expected.label === "osETH" || expected.label === "lsETH" || expected.label === "mETH") {
     if ("rethExchangeRate" in input
       || "fabricatedConversionRate" in input
@@ -178,7 +192,7 @@ export function buildVerifiedEigenLayerLstEthQuotesSnapshot(
   input: BuildVerifiedEigenLayerLstEthQuotesInput,
 ): EigenLayerLstEthQuotesSnapshot {
   if (input.quotes.length !== EIGENLAYER_COVERED_LST_STRATEGIES.length) {
-    fail("evidence_mismatch", "Exactly eight ordered covered quote inputs are required.");
+    fail("evidence_mismatch", "Exactly nine ordered covered quote inputs are required.");
   }
   const coveredQuotes = input.quotes.map(normalizeQuote);
   let shareSum = 0n;
@@ -190,14 +204,17 @@ export function buildVerifiedEigenLayerLstEthQuotesSnapshot(
   const stale = input.stale === true;
   const snapshot = {
     status: "verified" as const,
-    summary: "Exact finalized stETH, rETH, cbETH, ETHx, osETH, swETH, lsETH, and mETH EigenLayer token amounts and bounded ETH accounting quotes cover eight of twelve fixed strategies.",
-    methodology: "eigenlayer-covered-lst-eth-quotes-v5" as const,
+    summary: "Finalized nine-of-twelve EigenLayer quote evidence includes nominal OETH unit accounting; it does not prove OETH backing, redeemability, or executable liquidity.",
+    methodology: "eigenlayer-covered-lst-eth-quotes-v6" as const,
     verified_block: input.block,
     covered_quotes: coveredQuotes,
     report_context: {
       lseth_last_completed_epoch_id: uint(input.lsethLastCompletedEpochId, "lsETH last completed epoch").toString(),
       ethx_oracle_reporting_block_number: uint(input.ethxOracleReportingBlockNumber, "ETHx oracle reporting block").toString(),
       sweth_last_reprice_unix: uint(input.swethLastRepriceUnix, "swETH last reprice timestamp").toString(),
+      oeth_last_rebase_unix: uint(input.oethLastRebaseUnix, "oETH last rebase timestamp").toString(),
+      oeth_rebase_paused: input.oethRebasePaused,
+      oeth_withdrawal_claim_delay_seconds: uint(input.oethWithdrawalClaimDelaySeconds, "oETH withdrawal claim delay").toString(),
     },
     metrics: {
       covered_share_accounting_eth_equivalent_wei: shareSum.toString(),
@@ -218,7 +235,7 @@ export function buildVerifiedEigenLayerLstEthQuotesSnapshot(
       partial_aggregates_only: true as const,
     },
     coverage: {
-      quoted_strategy_count: 8 as const,
+      quoted_strategy_count: 9 as const,
       fixed_strategy_count: 12 as const,
       unquoted_strategy_labels: [...EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS] as const,
     },
@@ -254,7 +271,7 @@ export function buildUnavailableEigenLayerLstEthQuotesSnapshot(input: {
   const snapshot = {
     status: "unavailable" as const,
     summary: input.summary,
-    methodology: "eigenlayer-covered-lst-eth-quotes-v5" as const,
+    methodology: "eigenlayer-covered-lst-eth-quotes-v6" as const,
     verified_block: null,
     covered_quotes: [],
     report_context: null,

@@ -163,24 +163,25 @@ rehypothecation ratio; all six broader metrics remain `null` with explicit
 gaps.
 
 **EigenLayer Covered LST ETH Quotes Snapshot**:
-A separate read-only direct protocol-accounting quote view for exactly 8 of the
+A separate read-only bounded accounting quote view for exactly 9 of the
 12 fixed legacy strategies, in this fixed order: stETH, rETH, cbETH, ETHx,
-osETH, swETH, lsETH, and mETH. The base authority is EigenLayer release `v1.12.0`, commit
+oETH, osETH, swETH, lsETH, and mETH. The base authority is EigenLayer release `v1.12.0`, commit
 `d302f65042164c8d8d0a983c1540d85a8710030b`. The 18-decimal token identities
 are stETH `0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84`, rETH
 `0xae78736Cd615f374D3085123A210448E74Fc6393`, cbETH
 `0xBe9895146f7AF43049ca1c1AE358B0541Ea49704`, ETHx
-`0xA35b1B31Ce002FBF2058D22F30f95D405200A15b`, osETH
+`0xA35b1B31Ce002FBF2058D22F30f95D405200A15b`, oETH
+`0x856c4Efb76C1D1AE02e20CEB03A2A6a08b0b8dC3`, osETH
 `0xf1C9acDc66974dFB6dEcB12aA385b9cD01190E38`, swETH
 `0xf951E335afb289353dc249e82926178EaC7DEd78`, lsETH
 `0x8c1BEd5b9a0928467c9B1341Da1D7BD5e10b6549`, and mETH
 `0xd5F7838F5C461fefF7FE49ea5ebaF7728bB0ADfa`. The exact unquoted list is
-ankrETH, oETH, wBETH, sfrxETH.
+ankrETH, wBETH, sfrxETH.
 
 **Covered partial metrics**:
 `covered_share_accounting_eth_equivalent_wei` and
 `covered_token_custody_eth_equivalent_wei` are distinct partial sums across
-only the eight covered strategy amounts. They are not full LST, native-restaked,
+only the nine covered strategy amounts. They are not full LST, native-restaked,
 or total EigenLayer exposure, independent backing, or downstream-reuse views.
 
 **Covered LST quote trust basis**:
@@ -215,6 +216,16 @@ base verifier binding. Both quotes are `floor(amount * rate / 1e18)` with a
 full-precision intermediate; `(rate=1e18,timestamp=0)` is valid, proves no
 activity, and has no freshness cutoff.
 
+OETH strategy authority is EigenLayer v1.12.0 commit
+`d302f65042164c8d8d0a983c1540d85a8710030b`; immutable Origin commit
+`07a7fcb052d715409014dd69e69e3c680ee8ae47` separately pins the OETH proxy,
+Vault proxy, and WETH addresses. It is historical source and does not prove
+live proxy/source correspondence. The OETH quote is nominal token-unit identity,
+not backing, ETH spot value, immediate redemption, liquidity, or executable
+exit. The three pointer bindings are verified; last rebase, rebase pause, and
+withdrawal delay are context only. Zero values and paused rebase are valid,
+delay zero means async withdrawals disabled, and there is no freshness cutoff.
+
 ETHx conversion/oracle semantics are pinned to Stader `ethx` v1.1.0 commit
 `1939e6c36087bf7cb437e4323f426219df6313b4`. Its deployed mainnet token
 `0xA35b1B31Ce002FBF2058D22F30f95D405200A15b`, StaderConfig
@@ -238,12 +249,13 @@ only, not freshness proof. The bounded target does not independently verify
 proxy implementation/source correspondence or backing.
 
 **Covered LST quote acquisition boundary**:
-One cold verification is exactly 5 JSON-RPC batches, 113 logical requests, 111
-`eth_call` requests, and contiguous IDs 1--113 at one numeric finalized block.
+One cold verification is exactly 5 JSON-RPC batches, 119 logical requests, 117
+`eth_call` requests, and contiguous IDs 1--119 at one numeric finalized block.
 IDs 92--103 preserve existing calls; IDs 104--111 verify ETHx configuration
 pointers, two conversions, and its Oracle tuple; IDs 112--113 read the swETH
-rate and reprice context. The sole v5 30-minute combined cache neither consumes the base public cache nor
-accepts a stale base; stale fallback requires prior complete eight-token verified
+rate and reprice context; IDs 114--119 verify OETH/Vault/WETH bindings and read
+OETH context. The sole v6 30-minute combined cache neither consumes the base public cache nor
+accepts a stale base; stale fallback requires prior complete nine-token verified
 evidence.
 
 The seven broader fields `lst_restaked_eth_equivalent_wei`,
@@ -253,7 +265,7 @@ The seven broader fields `lst_restaked_eth_equivalent_wei`,
 `null`. The snapshot does not establish full LST/native/EigenLayer totals,
 unique/net locked ETH, combined Aave/Spark/Lido/Sky/EigenLayer demand,
 rehypothecation, independent backing reconciliation, cbETH exchange-rate
-freshness, osETH virtual-reward-input freshness, swETH reprice freshness, mETH oracle-record freshness,
+freshness, OETH rebase freshness, osETH virtual-reward-input freshness, swETH reprice freshness, mETH oracle-record freshness,
 lsETH report freshness, proxy implementation/source correspondence, or backing;
 nor executable withdrawal/liquidity. ETHx's oracle reporting block is context
 only and must not exceed the verified block; it does not establish report
@@ -270,8 +282,10 @@ Permanent gaps are
 `meth_oracle_record_freshness_not_verified`, `meth_backing_not_reconciled`,
 `lseth_oracle_report_freshness_not_verified`,
 `lseth_proxy_upgradeability_not_verified`, and `lseth_backing_not_reconciled`.
-Additional v5 gaps are `ethx_oracle_report_freshness_not_verified`,
+Additional v6 gaps are `ethx_oracle_report_freshness_not_verified`,
 `ethx_proxy_upgradeability_not_verified`, `ethx_backing_not_reconciled`,
+`oeth_rebase_freshness_not_verified`, `oeth_proxy_upgradeability_not_verified`,
+`oeth_backing_not_reconciled`, `oeth_async_withdrawal_liquidity_not_verified`,
 `sweth_reprice_freshness_not_verified`, `sweth_proxy_upgradeability_not_verified`,
 and `sweth_backing_not_reconciled`.
 
