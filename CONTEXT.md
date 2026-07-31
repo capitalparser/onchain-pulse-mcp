@@ -146,6 +146,22 @@ collateral, actual user collateral, unique or net ETH locked, combined
 Aave/Spark/Lido/Sky demand, or rehypothecation; all five broader metrics remain
 `null` with explicit gaps.
 
+**EigenLayer ETH Restaking Exposure Snapshot**:
+A read-only measurement of fixed legacy EigenLayer ETH-family LST strategy
+token-unit exposure plus native-restaking diagnostics at one finalized
+Ethereum block. It preserves each of the twelve heterogeneous strategy tokens
+independently, including uint8 decimals, whitelist state, shares, custody, and
+the strategy share-accounting conversion. It does not sum token-native units
+or treat the share conversion as executable withdrawal capacity.
+
+**EigenLayer native-restaking diagnostics**:
+Exact core-manager coherence, virtual Beacon Chain ETH strategy identity,
+`numPods`, and burnable ETH shares. These diagnostics are not a native-restaked
+ETH total. The snapshot also does not establish an ETH-equivalent LST total,
+unique or net ETH locked, combined Aave/Spark/Lido/Sky/EigenLayer demand, or a
+rehypothecation ratio; all six broader metrics remain `null` with explicit
+gaps.
+
 ### Token forensics
 
 **Token Forensics Snapshot**:
