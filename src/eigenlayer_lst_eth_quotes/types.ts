@@ -1,0 +1,285 @@
+import { z } from "zod";
+import {
+  EigenLayerRestakingBlockSchema,
+  type EigenLayerRestakingBlock,
+} from "../eigenlayer_eth_restaking/types.js";
+
+export const EIGENLAYER_COVERED_LST_STRATEGIES = [
+  {
+    label: "stETH",
+    strategy: "0x93c4b944D05dfe6df7645A86cd2206016c51564D",
+    underlying_token: "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
+    decimals: 18,
+  },
+  {
+    label: "rETH",
+    strategy: "0x1BeE69b7dFFfA4E2d53C2a2Df135C388AD25dCD2",
+    underlying_token: "0xae78736Cd615f374D3085123A210448E74Fc6393",
+    decimals: 18,
+  },
+  {
+    label: "cbETH",
+    strategy: "0x54945180dB7943c0ed0FEE7EdaB2Bd24620256bc",
+    underlying_token: "0xBe9895146f7AF43049ca1c1AE358B0541Ea49704",
+    decimals: 18,
+  },
+] as const;
+
+export const EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS = [
+  "ETHx",
+  "ankrETH",
+  "oETH",
+  "osETH",
+  "swETH",
+  "wBETH",
+  "sfrxETH",
+  "lsETH",
+  "mETH",
+] as const;
+
+export const EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES = [
+  "lst_quote_coverage_partial",
+  "native_restaked_eth_not_measured",
+  "lst_restaked_eth_equivalent_not_measured",
+  "eigenlayer_eth_family_exposure_not_measured",
+  "unique_net_eth_locked_not_reconciled",
+  "combined_aave_spark_lido_sky_eigenlayer_demand_not_reconciled",
+  "rehypothecation_ratio_not_measured",
+  "executable_withdrawal_capacity_not_measured",
+  "cbeth_exchange_rate_freshness_not_verified",
+] as const;
+
+const SOURCE_FAILURE_GAP_CODES = new Set([
+  "rpc_not_configured",
+  "rpc_access_gap",
+  "rpc_chain_mismatch",
+  "rpc_finality_gap",
+  "rpc_schema_drift",
+  "rpc_evidence_mismatch",
+]);
+const UINT256_MAX = (2n ** 256n) - 1n;
+const WAD = 10n ** 18n;
+
+const DecimalStringSchema = z.string().max(78).regex(/^(0|[1-9]\d*)$/).refine((value) => {
+  try {
+    return BigInt(value) <= UINT256_MAX;
+  } catch {
+    return false;
+  }
+}, "must be a uint256");
+
+const QuoteSchema = z.object({
+  label: z.enum(["stETH", "rETH", "cbETH"]),
+  strategy: z.string(),
+  underlying_token: z.string(),
+  decimals: z.literal(18),
+  share_accounting_token_amount: DecimalStringSchema,
+  token_custody_token_amount: DecimalStringSchema,
+  quote_kind: z.enum([
+    "steth_token_wei_identity_quote",
+    "rocket_pool_direct_aggregate_quote",
+    "coinbase_oracle_accounting_quote",
+  ]),
+  trust_basis: z.enum([
+    "lido_pooled_eth_accounting",
+    "rocket_pool_network_accounting",
+    "coinbase_oracle_controlled_rate",
+  ]),
+  share_accounting_eth_quote_wei: DecimalStringSchema,
+  token_custody_eth_quote_wei: DecimalStringSchema,
+  cbeth_exchange_rate_wei: DecimalStringSchema.nullable(),
+}).strict();
+export type EigenLayerCoveredLstQuote = z.infer<typeof QuoteSchema>;
+
+const MetricsSchema = z.object({
+  covered_share_accounting_eth_equivalent_wei: DecimalStringSchema.nullable(),
+  covered_token_custody_eth_equivalent_wei: DecimalStringSchema.nullable(),
+  lst_restaked_eth_equivalent_wei: z.null(),
+  native_restaked_eth_wei: z.null(),
+  eigenlayer_eth_family_exposure_eth_wei: z.null(),
+  unique_net_eth_locked: z.null(),
+  combined_aave_spark_lido_sky_eigenlayer_demand: z.null(),
+  rehypothecation_ratio: z.null(),
+  executable_withdrawal_capacity_eth_wei: z.null(),
+}).strict();
+
+const IdentitiesSchema = z.object({
+  covered_strategy_order_verified: z.literal(true),
+  covered_token_identities_verified: z.literal(true),
+  covered_token_decimals_verified: z.literal(true),
+  token_amounts_and_quotes_independent: z.literal(true),
+  partial_aggregates_only: z.literal(true),
+}).strict();
+
+const CoverageSchema = z.object({
+  quoted_strategy_count: z.literal(3),
+  fixed_strategy_count: z.literal(12),
+  unquoted_strategy_labels: z.tuple([
+    z.literal("ETHx"),
+    z.literal("ankrETH"),
+    z.literal("oETH"),
+    z.literal("osETH"),
+    z.literal("swETH"),
+    z.literal("wBETH"),
+    z.literal("sfrxETH"),
+    z.literal("lsETH"),
+    z.literal("mETH"),
+  ]),
+}).strict();
+
+export const EigenLayerLstEthQuoteGapCodeSchema = z.enum([
+  ...EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES,
+  "rpc_not_configured",
+  "rpc_access_gap",
+  "rpc_chain_mismatch",
+  "rpc_finality_gap",
+  "rpc_schema_drift",
+  "rpc_evidence_mismatch",
+  "source_stale",
+]);
+export type EigenLayerLstEthQuoteGapCode = z.infer<typeof EigenLayerLstEthQuoteGapCodeSchema>;
+export const EigenLayerLstEthQuoteGapSchema = z.object({
+  code: EigenLayerLstEthQuoteGapCodeSchema,
+  detail: z.string().min(1).max(240),
+}).strict();
+export type EigenLayerLstEthQuoteGap = z.infer<typeof EigenLayerLstEthQuoteGapSchema>;
+
+export const EigenLayerLstEthQuoteSourceStatusSchema = z.object({
+  source: z.literal("ethereum_rpc"),
+  role: z.literal("eigenlayer_finalized_lst_eth_quote_evidence"),
+  stale: z.boolean(),
+}).strict();
+export type EigenLayerLstEthQuoteSourceStatus = z.infer<typeof EigenLayerLstEthQuoteSourceStatusSchema>;
+
+const SnapshotBaseSchema = z.object({
+  status: z.enum(["verified", "unavailable"]),
+  summary: z.string().min(1).max(500),
+  methodology: z.literal("eigenlayer-covered-lst-eth-quotes-v1"),
+  verified_block: EigenLayerRestakingBlockSchema.nullable(),
+  covered_quotes: z.array(QuoteSchema),
+  metrics: MetricsSchema,
+  identities: IdentitiesSchema.nullable(),
+  coverage: CoverageSchema.nullable(),
+  sources: z.array(z.literal("ethereum_rpc")),
+  source_status: z.array(EigenLayerLstEthQuoteSourceStatusSchema),
+  gaps: z.array(EigenLayerLstEthQuoteGapSchema),
+  capabilities: z.object({ ethereum_rpc_active: z.boolean() }).strict(),
+}).strict();
+
+function add(context: z.RefinementCtx, message: string): void {
+  context.addIssue({ code: z.ZodIssueCode.custom, message });
+}
+
+function uint(value: string): bigint {
+  return BigInt(value);
+}
+
+export const EigenLayerLstEthQuotesSnapshotSchema = SnapshotBaseSchema.superRefine((snapshot, context) => {
+  try {
+    if (snapshot.status === "unavailable") {
+      const sourceFailure = snapshot.gaps.length === 1 && SOURCE_FAILURE_GAP_CODES.has(snapshot.gaps[0]!.code);
+      const noEvidence = snapshot.verified_block === null && snapshot.covered_quotes.length === 0
+        && snapshot.metrics.covered_share_accounting_eth_equivalent_wei === null
+        && snapshot.metrics.covered_token_custody_eth_equivalent_wei === null
+        && snapshot.identities === null && snapshot.coverage === null;
+      const noRpc = snapshot.gaps[0]?.code === "rpc_not_configured";
+      const provenance = noRpc
+        ? snapshot.sources.length === 0 && snapshot.source_status.length === 0
+        : snapshot.sources.length === 1 && snapshot.source_status.length === 1 && !snapshot.source_status[0]!.stale;
+      if (!sourceFailure || !noEvidence || snapshot.capabilities.ethereum_rpc_active || !provenance) {
+        add(context, "unavailable quote snapshot contains partial or incoherent evidence");
+      }
+      return;
+    }
+
+    const staleGaps = snapshot.gaps.filter((gap) => gap.code === "source_stale").length;
+    const provenance = snapshot.sources.length === 1 && snapshot.source_status.length === 1
+      && snapshot.source_status[0]!.stale === (staleGaps === 1);
+    const permanentGaps = EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES.every(
+      (code) => snapshot.gaps.filter((gap) => gap.code === code).length === 1,
+    ) && snapshot.gaps.every(
+      (gap) => (EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES as readonly string[]).includes(gap.code)
+        || gap.code === "source_stale",
+    ) && staleGaps <= 1;
+    if (snapshot.verified_block === null || snapshot.identities === null || snapshot.coverage === null
+      || snapshot.metrics.covered_share_accounting_eth_equivalent_wei === null
+      || snapshot.metrics.covered_token_custody_eth_equivalent_wei === null
+      || !snapshot.capabilities.ethereum_rpc_active || !provenance || !permanentGaps
+      || snapshot.covered_quotes.length !== EIGENLAYER_COVERED_LST_STRATEGIES.length) {
+      add(context, "verified quote snapshot is incomplete or has incoherent provenance");
+      return;
+    }
+
+    let shareSum = 0n;
+    let custodySum = 0n;
+    for (let index = 0; index < EIGENLAYER_COVERED_LST_STRATEGIES.length; index += 1) {
+      const expected = EIGENLAYER_COVERED_LST_STRATEGIES[index]!;
+      const quote = snapshot.covered_quotes[index]!;
+      const shareAmount = uint(quote.share_accounting_token_amount);
+      const custodyAmount = uint(quote.token_custody_token_amount);
+      const shareQuote = uint(quote.share_accounting_eth_quote_wei);
+      const custodyQuote = uint(quote.token_custody_eth_quote_wei);
+      if (quote.label !== expected.label || quote.strategy !== expected.strategy
+        || quote.underlying_token !== expected.underlying_token || quote.decimals !== 18) {
+        add(context, "covered evidence does not match the exact ordered strategy-token universe");
+        return;
+      }
+      if (index === 0 && (quote.quote_kind !== "steth_token_wei_identity_quote"
+        || quote.trust_basis !== "lido_pooled_eth_accounting" || quote.cbeth_exchange_rate_wei !== null
+        || shareQuote !== shareAmount || custodyQuote !== custodyAmount)) {
+        add(context, "stETH token wei must use the identity quote");
+        return;
+      }
+      if (index === 1 && (quote.quote_kind !== "rocket_pool_direct_aggregate_quote"
+        || quote.trust_basis !== "rocket_pool_network_accounting" || quote.cbeth_exchange_rate_wei !== null)) {
+        add(context, "rETH must preserve two direct aggregate quote results");
+        return;
+      }
+      if (index === 2) {
+        const rate = quote.cbeth_exchange_rate_wei === null ? 0n : uint(quote.cbeth_exchange_rate_wei);
+        const shareProduct = shareAmount * rate;
+        const custodyProduct = custodyAmount * rate;
+        if (quote.quote_kind !== "coinbase_oracle_accounting_quote"
+          || quote.trust_basis !== "coinbase_oracle_controlled_rate" || rate === 0n
+          || shareProduct > UINT256_MAX || custodyProduct > UINT256_MAX
+          || shareQuote !== shareProduct / WAD || custodyQuote !== custodyProduct / WAD) {
+          add(context, "cbETH quotes must be exact floor conversions from one nonzero oracle rate");
+          return;
+        }
+      }
+      shareSum += shareQuote;
+      custodySum += custodyQuote;
+      if (shareSum > UINT256_MAX || custodySum > UINT256_MAX) {
+        add(context, "covered partial sum exceeds uint256");
+        return;
+      }
+    }
+    if (uint(snapshot.metrics.covered_share_accounting_eth_equivalent_wei) !== shareSum
+      || uint(snapshot.metrics.covered_token_custody_eth_equivalent_wei) !== custodySum) {
+      add(context, "covered partial sums do not match the ordered quotes");
+    }
+  } catch {
+    add(context, "quote evidence could not be safely reconciled");
+  }
+});
+export type EigenLayerLstEthQuotesSnapshot = z.infer<typeof EigenLayerLstEthQuotesSnapshotSchema>;
+
+export interface EigenLayerCoveredLstQuoteInput {
+  label: string;
+  strategy: string;
+  underlyingToken: string;
+  decimals: number;
+  shareAccountingTokenAmount: bigint;
+  tokenCustodyTokenAmount: bigint;
+  directShareAccountingEthQuote?: bigint;
+  directTokenCustodyEthQuote?: bigint;
+  cbethExchangeRate?: bigint | null;
+}
+
+export interface BuildVerifiedEigenLayerLstEthQuotesInput {
+  block: EigenLayerRestakingBlock;
+  quotes: readonly EigenLayerCoveredLstQuoteInput[];
+  sources: string[];
+  sourceStatus: EigenLayerLstEthQuoteSourceStatus[];
+  stale?: boolean;
+}
