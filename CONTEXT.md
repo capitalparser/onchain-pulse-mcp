@@ -100,6 +100,28 @@ day: current `[cutoff - window, cutoff)`, previous
 `[cutoff - 2 × window, cutoff - window)`. Missing components and missing
 boundaries remain `null`, not zero.
 
+### ETH collateral capacity
+
+**ETH Collateral Capacity Snapshot**:
+A read-only, protocol-specific measurement of ETH-family assets supplied to a
+lending market and the subset whose reserve configuration permits collateral
+use. It does not prove that individual users enabled the assets as collateral
+or that the underlying economic ETH is unique across protocols.
+
+**ETH-family supplied capacity**:
+The aToken or equivalent reserve supply for WETH and explicitly listed
+ETH-backed staking/restaking derivatives, converted to exact ETH-equivalent
+fractions at one finalized block.
+
+**Collateral-eligible supplied capacity**:
+The ETH-family supplied capacity for reserves whose market-level configuration
+permits collateral use. It is available capacity, not actual user collateral.
+
+**Cross-protocol overlap gap**:
+An explicit refusal to sum protocol capacities until derivative lineage,
+borrowing loops, and rehypothecation are reconciled. Missing reconciliation
+keeps combined, net, gross, and rehypothecation metrics `null`, never zero.
+
 ### Token forensics
 
 **Token Forensics Snapshot**:
