@@ -31,7 +31,7 @@ proxy implementation correspondence, redemption, or liquidity.
 Conversion/oracle semantics are pinned to official
 [`stader-labs/ethx` v1.1.0 commit
 `1939e6c36087bf7cb437e4323f426219df6313b4`](https://github.com/stader-labs/ethx/tree/1939e6c36087bf7cb437e4323f426219df6313b4):
-[`StakePoolsManager.convertToAssets`](https://github.com/stader-labs/ethx/blob/1939e6c36087bf7cb437e4323f426219df6313b4/contracts/StaderPoolManager.sol)
+[`StaderStakePoolsManager.convertToAssets`](https://github.com/stader-labs/ethx/blob/1939e6c36087bf7cb437e4323f426219df6313b4/contracts/StaderStakePoolsManager.sol)
 uses direct `Math.Rounding.Down` conversion and the
 [`StaderOracle.getExchangeRate` struct](https://github.com/stader-labs/ethx/blob/1939e6c36087bf7cb437e4323f426219df6313b4/contracts/StaderOracle.sol)
 supplies the reporting block, total ETH balance, and total ETHx supply. The deployed mainnet addresses
