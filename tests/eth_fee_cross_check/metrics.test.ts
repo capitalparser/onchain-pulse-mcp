@@ -288,4 +288,17 @@ describe("calculateEthFeeCrossCheck", () => {
       block.receipts[0]!.blobGasUsed = 1n;
     }, "schema");
   });
+
+  it("rejects zero-valued receipt blob fields when the containing block omits blob gas", () => {
+    const block = validBlock();
+    block.receipts[0]!.blobGasUsed = 0n;
+    block.receipts[0]!.blobGasPrice = 0n;
+
+    expect(() => calculateEthFeeCrossCheck([block])).toThrow(EthFeeCrossCheckDomainError);
+    try {
+      calculateEthFeeCrossCheck([block]);
+    } catch (error) {
+      expect((error as EthFeeCrossCheckDomainError).category).toBe("evidence_mismatch");
+    }
+  });
 });

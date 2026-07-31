@@ -21,6 +21,7 @@ const CACHE_SPEC = {
 };
 const QUANTITY_PATTERN = /^0x(?:0|[1-9a-f][0-9a-f]*)$/;
 const HASH_PATTERN = /^0x[0-9a-f]{64}$/;
+const providerByContext = new WeakMap<AdapterContext, string>();
 
 export interface EthFeeRpcInput {
   startBlock: number;
@@ -54,6 +55,9 @@ function cacheKey(input: EthFeeRpcInput): string {
 }
 
 function assertRange(input: EthFeeRpcInput): void {
+  if (typeof input.includeBlocks !== "boolean") {
+    throw new TypeError("includeBlocks must be a boolean.");
+  }
   if (
     !Number.isSafeInteger(input.startBlock)
     || !Number.isSafeInteger(input.endBlock)
@@ -65,8 +69,12 @@ function assertRange(input: EthFeeRpcInput): void {
   }
 }
 
+function configuredRpcUrl(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
 function unavailable(input: EthFeeRpcInput, code: Exclude<EthFeeCrossCheckGapCode, "source_stale">): EthFeeCrossCheckSnapshot {
-  const configured = input.rpcUrl !== undefined && input.rpcUrl !== "";
+  const configured = configuredRpcUrl(input.rpcUrl) !== null;
   const detail = {
     rpc_not_configured: "Ethereum RPC is not configured.",
     rpc_access_gap: "Ethereum RPC evidence could not be retrieved.",
@@ -109,6 +117,11 @@ function staleSnapshot(snapshot: EthFeeCrossCheckSnapshot): EthFeeCrossCheckSnap
 
 function record(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new RpcFailure("rpc_schema_drift");
+  return value as Record<string, unknown>;
+}
+
+function envelopeRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new RpcFailure("rpc_access_gap");
   return value as Record<string, unknown>;
 }
 
@@ -194,7 +207,7 @@ function parseResponse(value: unknown, expectedIds: ReadonlySet<number>): Map<nu
   if (!Array.isArray(value) || value.length !== expectedIds.size) throw new RpcFailure("rpc_access_gap");
   const responses = new Map<number, unknown>();
   for (const raw of value) {
-    const response = record(raw);
+    const response = envelopeRecord(raw);
     if (response.jsonrpc !== "2.0" || typeof response.id !== "number" || !Number.isSafeInteger(response.id)) {
       throw new RpcFailure("rpc_access_gap");
     }
@@ -210,11 +223,11 @@ function parseResponse(value: unknown, expectedIds: ReadonlySet<number>): Map<nu
 
 async function finalizedBlock(ctx: AdapterContext, rpcUrl: string): Promise<number> {
   const body = await postJson(ctx, rpcUrl, { jsonrpc: "2.0", id: 1, method: "eth_getBlockByNumber", params: ["finalized", false] });
-  const response = record(body);
+  const response = envelopeRecord(body);
   if (response.jsonrpc !== "2.0" || response.id !== 1 || Object.prototype.hasOwnProperty.call(response, "error")) {
     throw new RpcFailure("rpc_access_gap");
   }
-  if (!Object.prototype.hasOwnProperty.call(response, "result")) throw new RpcFailure("rpc_schema_drift");
+  if (!Object.prototype.hasOwnProperty.call(response, "result")) throw new RpcFailure("rpc_access_gap");
   if (response.result === null) throw new RpcFailure("rpc_finality_gap");
   return safeBlockNumber(record(response.result).number);
 }
@@ -301,12 +314,16 @@ async function fetchVerified(input: EthFeeRpcInput, ctx: AdapterContext, rpcUrl:
 
 export async function fetchEthFeeRpc(input: EthFeeRpcInput, ctx: AdapterContext): Promise<EthFeeCrossCheckSnapshot> {
   assertRange(input);
-  if (input.rpcUrl === undefined || input.rpcUrl === "") return unavailable(input, "rpc_not_configured");
+  const rpcUrl = configuredRpcUrl(input.rpcUrl);
+  if (rpcUrl === null) return unavailable(input, "rpc_not_configured");
+  const boundProvider = providerByContext.get(ctx);
+  if (boundProvider !== undefined && boundProvider !== rpcUrl) return unavailable(input, "rpc_access_gap");
+  if (boundProvider === undefined) providerByContext.set(ctx, rpcUrl);
 
   const cache = ctx.cacheFor<EthFeeCrossCheckSnapshot>(CACHE_SPEC);
   const key = cacheKey(input);
   try {
-    return await cache.getOrLoad(key, async () => fetchVerified(input, ctx, input.rpcUrl!));
+    return await cache.getOrLoad(key, async () => fetchVerified(input, ctx, rpcUrl));
   } catch (error) {
     const stale = cache.getStale(key);
     if (stale !== undefined) return staleSnapshot(stale);

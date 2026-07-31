@@ -133,6 +133,7 @@ function calculateBlock(block: NormalizedEthFeeBlock): EthFeeCrossCheckCalculati
 
   let receiptGasUsed = 0n;
   let receiptBlobGasUsed = 0n;
+  let hasReceiptBlobFields = false;
   let executionFee = 0n;
   let priorityFee = 0n;
   let blobFeeBurn = 0n;
@@ -150,6 +151,7 @@ function calculateBlock(block: NormalizedEthFeeBlock): EthFeeCrossCheckCalculati
     priorityFee += receipt.gasUsed * (receipt.effectiveGasPrice - block.baseFeePerGas);
 
     if (receipt.blobGasUsed !== undefined && receipt.blobGasPrice !== undefined) {
+      hasReceiptBlobFields = true;
       receiptBlobGasUsed += receipt.blobGasUsed;
       blobFeeBurn += receipt.blobGasUsed * receipt.blobGasPrice;
     }
@@ -157,7 +159,7 @@ function calculateBlock(block: NormalizedEthFeeBlock): EthFeeCrossCheckCalculati
 
   mismatch(receiptGasUsed === block.gasUsed, "Receipt gas totals must equal block gas used.");
   if (block.blobGasUsed === undefined) {
-    mismatch(receiptBlobGasUsed === 0n, "Blob receipts require block blob gas used.");
+    mismatch(!hasReceiptBlobFields, "Blob receipts require block blob gas used.");
   } else {
     mismatch(receiptBlobGasUsed === block.blobGasUsed, "Receipt blob gas totals must equal block blob gas used.");
   }

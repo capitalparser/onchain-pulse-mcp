@@ -38,6 +38,30 @@ describe("fetchEthFeeRpc", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("rejects a non-boolean includeBlocks before cache or fetch and leaves a valid false request clean", async () => {
+    const fetchImpl = oneBlockFetch(100);
+    const ctx = makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch });
+    const input = { startBlock: 100, endBlock: 100, includeBlocks: "false", rpcUrl: "https://provider.example/secret" };
+
+    await expect(fetchEthFeeRpc(input as unknown as Parameters<typeof fetchEthFeeRpc>[0], ctx)).rejects.toThrow("includeBlocks must be a boolean");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    await expect(fetchEthFeeRpc(
+      { startBlock: 100, endBlock: 100, includeBlocks: false, rpcUrl: "https://provider.example/secret" }, ctx,
+    )).resolves.toMatchObject({ status: "verified" });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([undefined, "", "   ", null, { url: "https://provider.example/secret" }])("does not fetch or bind malformed RPC configuration %#", async (rpcUrl) => {
+    const fetchImpl = vi.fn();
+    const result = await fetchEthFeeRpc(
+      { startBlock: 100, endBlock: 100, includeBlocks: false, rpcUrl } as unknown as Parameters<typeof fetchEthFeeRpc>[0],
+      makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }),
+    );
+
+    expect(result.gaps[0]?.code).toBe("rpc_not_configured");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("associates shuffled paired JSON-RPC responses by id and calculates exact blob and non-blob totals", async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(response({ jsonrpc: "2.0", id: 1, result: { number: "0x65" } }))
@@ -108,6 +132,19 @@ describe("fetchEthFeeRpc", () => {
   });
 
   it.each([
+    ["a primitive finalized envelope", 1],
+    ["a missing finalized result", { jsonrpc: "2.0", id: 1 }],
+  ])("returns rpc_access_gap for %s", async (_name, finalizedResponse) => {
+    const fetchImpl = vi.fn().mockResolvedValue(response(finalizedResponse));
+    const result = await fetchEthFeeRpc(
+      { startBlock: 100, endBlock: 100, includeBlocks: false, rpcUrl: "https://provider.example/secret" },
+      makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }),
+    );
+
+    expect(result.gaps[0]?.code).toBe("rpc_access_gap");
+  });
+
+  it.each([
     ["missing", (items: unknown[]) => items.slice(0, 1)],
     ["duplicate", (items: unknown[]) => [items[0], items[0]]],
     ["unexpected", (items: unknown[]) => [{ ...(items[0] as Record<string, unknown>), id: 99 }, items[1]]],
@@ -157,6 +194,18 @@ describe("fetchEthFeeRpc", () => {
     expect(result.gaps[0]?.code).toBe("rpc_schema_drift");
   });
 
+  it("returns rpc_access_gap for a primitive batch envelope entry", async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(response({ jsonrpc: "2.0", id: 1, result: { number: "0x64" } }))
+      .mockResolvedValueOnce(response([1, { jsonrpc: "2.0", id: 3, result: [] }]));
+    const result = await fetchEthFeeRpc(
+      { startBlock: 100, endBlock: 100, includeBlocks: false, rpcUrl: "https://provider.example/secret" },
+      makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }),
+    );
+
+    expect(result.gaps[0]?.code).toBe("rpc_access_gap");
+  });
+
   it("returns an evidence mismatch rather than a partial total when receipt identity does not reconcile", async () => {
     const fetchImpl = oneBlockFetch(100, (batch) => {
       ((batch[1] as { result: Record<string, unknown>[] }).result)[0]!.transactionHash = hash(99);
@@ -168,6 +217,24 @@ describe("fetchEthFeeRpc", () => {
 
     expect(result.gaps[0]?.code).toBe("rpc_evidence_mismatch");
     expect(result.metrics.execution_fee).toBeNull();
+  });
+
+  it("returns an evidence mismatch with no partial metrics when zero receipt blob fields accompany a non-blob block", async () => {
+    const fetchImpl = oneBlockFetch(100, (batch) => {
+      const receiptResult = (batch[1] as { result: Record<string, unknown>[] }).result[0]!;
+      receiptResult.blobGasUsed = "0x0";
+      receiptResult.blobGasPrice = "0x0";
+    });
+    const result = await fetchEthFeeRpc(
+      { startBlock: 100, endBlock: 100, includeBlocks: false, rpcUrl: "https://provider.example/secret" },
+      makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }),
+    );
+
+    expect(result.gaps[0]?.code).toBe("rpc_evidence_mismatch");
+    expect(result.metrics).toEqual({
+      execution_fee: null, base_fee_burn: null, priority_fee: null,
+      blob_fee_burn: null, gross_fee: null, total_burn: null,
+    });
   });
 
   it("chunks a 21-block range into paired batches of at most 20 blocks", async () => {
@@ -197,7 +264,7 @@ describe("fetchEthFeeRpc", () => {
     expect(included.blocks?.map((item) => item.block_number)).toEqual([100]);
   });
 
-  it("reuses a verified cache entry for an identical request without retaining the RPC URL", async () => {
+  it("fails closed before cache lookup when a context's configured provider changes", async () => {
     const fetchImpl = oneBlockFetch(100);
     const ctx = makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch });
     const first = await fetchEthFeeRpc(
@@ -208,9 +275,46 @@ describe("fetchEthFeeRpc", () => {
     );
 
     expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(second).toEqual(first);
+    expect(first.status).toBe("verified");
+    expect(second.status).toBe("unavailable");
+    expect(second.gaps[0]?.code).toBe("rpc_access_gap");
     expect(JSON.stringify(second)).not.toContain("private-one");
     expect(JSON.stringify(second)).not.toContain("private-two");
+  });
+
+  it("allows a newly created context to bind a different provider", async () => {
+    const first = await fetchEthFeeRpc(
+      { startBlock: 100, endBlock: 100, includeBlocks: false, rpcUrl: "https://one.example/private-one" },
+      makeContext({ env, fetchImpl: oneBlockFetch(100) as unknown as typeof fetch }),
+    );
+    const second = await fetchEthFeeRpc(
+      { startBlock: 100, endBlock: 100, includeBlocks: false, rpcUrl: "https://two.example/private-two" },
+      makeContext({ env, fetchImpl: oneBlockFetch(100) as unknown as typeof fetch }),
+    );
+
+    expect(first.status).toBe("verified");
+    expect(second.status).toBe("verified");
+  });
+
+  it("binds the first valid provider synchronously so concurrent different-provider calls fail closed", async () => {
+    let resolveFinal: ((value: Response) => void) | undefined;
+    const fetchImpl = vi.fn().mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveFinal = resolve; }))
+      .mockImplementationOnce(() => Promise.resolve(response([
+        { jsonrpc: "2.0", id: 2, result: block(100, [hash(1)], 10, 5) },
+        { jsonrpc: "2.0", id: 3, result: [receipt(100, 1, 5, 10)] },
+      ])));
+    const ctx = makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch });
+    const first = fetchEthFeeRpc(
+      { startBlock: 100, endBlock: 100, includeBlocks: false, rpcUrl: "https://one.example/private-one" }, ctx,
+    );
+    const second = fetchEthFeeRpc(
+      { startBlock: 100, endBlock: 100, includeBlocks: false, rpcUrl: "https://two.example/private-two" }, ctx,
+    );
+    resolveFinal!(response({ jsonrpc: "2.0", id: 1, result: { number: "0x64" } }));
+
+    await expect(first).resolves.toMatchObject({ status: "verified" });
+    await expect(second).resolves.toMatchObject({ status: "unavailable", gaps: [{ code: "rpc_access_gap" }] });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
   it("deduplicates concurrent identical work", async () => {

@@ -73,3 +73,44 @@ redaction.
 - All fee arithmetic is delegated to Task 1's bigint calculator.
 - Failed or partially validated evidence is never cached; only a verified,
   finalized snapshot can become stale fallback evidence.
+
+## QA hardening round: RED evidence
+
+QA regression tests were added before the boundary fixes and run with:
+
+```bash
+npx vitest run tests/adapters/eth_fee_rpc.test.ts tests/eth_fee_cross_check/metrics.test.ts
+```
+
+The pre-fix suite reported 10 expected failures out of 81 tests. The failures
+proved that a string `includeBlocks` value reached cached transport work,
+malformed RPC URL values were treated as configured, same-context provider
+changes reused cached evidence, primitive/missing JSON-RPC envelopes were
+misclassified as schema drift, and a zero-valued receipt blob pair was accepted
+when the block omitted `blobGasUsed`.
+
+## QA hardening round: GREEN and verification
+
+The narrowly scoped fix changed the Task 2 adapter and its tests, plus Task
+1's calculator and calculator regression test to preserve blob-field presence.
+The final focused verification was:
+
+```bash
+npx vitest run tests/adapters/eth_fee_rpc.test.ts tests/eth_fee_cross_check
+npm run typecheck
+git diff --check
+```
+
+Results:
+
+- Vitest passed: 3 files, 116 tests (37 adapter tests and 79 Task 1 tests).
+- `tsc --noEmit` passed.
+- `git diff --check` produced no whitespace errors.
+
+The adapter now rejects non-boolean `includeBlocks` before provider binding,
+cache lookup, or fetch; treats blank/non-string RPC configuration as absent;
+and binds each `AdapterContext` to its first valid provider in a module
+`WeakMap`. A different provider on that same context fails closed before cache
+access, including during concurrent first calls, while a new context may bind a
+new provider. The binding stores only the configured value in memory and does
+not put it in cache keys, snapshots, gaps, or logs.
