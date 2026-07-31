@@ -538,14 +538,15 @@ a stale base result, and may stale-fallback only from prior complete nine-token
 verified evidence after refresh failure.
 
 The v7 methodology mechanically fixes the accounting ceiling at 9/12. Coverage
-contains the exact ordered blockers `ankrETH`, `wBETH`, and `sfrxETH`: Ankr has
-mutable official docs but no immutable official source/deployment artifact,
-same-finalized proxy-to-source binding, or ratio freshness getter; wBETH's known
-official EigenLayer strategy and BNB Chain token address do not establish an
-issuer immutable source/release, same-finalized proxy binding, or timestamp/epoch
-freshness; and Frax `convertToAssets` returns frxETH wei, so sfrxETH terminates
+contains the exact ordered blockers `ankrETH`, `wBETH`, and `sfrxETH`: pinned
+mutable official Ankr docs do not verify an immutable official source/deployment
+artifact, same-finalized proxy-to-source binding, or ratio freshness getter;
+pinned wBETH evidence does not verify an issuer-owned immutable source/release,
+same-finalized proxy binding, or timestamp/epoch freshness getter; and Frax
+`convertToAssets` returns frxETH wei, so sfrxETH terminates
 in frxETH rather than ETH. These are fail-closed NO-GOs; offchain rate, backing,
-redemption, and market price remain distinct for wBETH.
+redemption, and market price remain distinct from known WAD-floor semantics for
+wBETH.
 
 The only non-null aggregates are explicitly partial:
 `covered_share_accounting_eth_equivalent_wei` and

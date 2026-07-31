@@ -209,7 +209,7 @@ export function buildVerifiedEigenLayerLstEthQuotesSnapshot(
   const stale = input.stale === true;
   const snapshot = {
     status: "verified" as const,
-    summary: "Finalized 9-of-12 ceiling: ankrETH lacks immutable source/proxy/freshness evidence; wBETH lacks issuer source, proxy, and freshness evidence; sfrxETH stops at frxETH, not ETH. ID119 remains final; no RPC calls added. Nominal OETH accounting is not backing, redeemability, or liquidity.",
+    summary: "Finalized 9-of-12 ceiling: pinned evidence does not verify ankrETH immutable source/proxy/freshness or wBETH issuer-source/proxy/freshness; sfrxETH stops at frxETH, not ETH. ID119 remains final; no RPC calls added. Nominal OETH accounting is not backing, redeemability, or liquidity.",
     methodology: "eigenlayer-covered-lst-eth-quotes-v7" as const,
     verified_block: input.block,
     covered_quotes: coveredQuotes,

@@ -7,7 +7,10 @@ import {
   EigenLayerLstEthQuotesSnapshotSchema,
 } from "../../src/eigenlayer_lst_eth_quotes/types.js";
 
-const permanentGaps = EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES.map((code) => ({ code, detail: "bounded" }));
+const permanentGaps = EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES.map((code) => ({
+  code,
+  detail: EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS.find((blocker) => blocker.code === code)?.detail ?? "bounded",
+}));
 
 function quote(index: number, amounts: readonly [string, string, string, string], quote_kind: string, trust_basis: string, rates = {}) {
   return {
@@ -77,6 +80,9 @@ describe("EigenLayer covered LST ETH quote domain", () => {
     expect(snapshot.report_context).toMatchObject({ oeth_last_rebase_unix: "0", oeth_rebase_paused: true, oeth_withdrawal_claim_delay_seconds: "0" });
     expect(snapshot.coverage?.unquoted_strategy_blockers).toEqual(EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS);
     expect(snapshot.coverage?.unquoted_strategy_blockers.every((blocker: { detail: string }) => blocker.detail.length <= 240)).toBe(true);
+    expect(snapshot.coverage?.unquoted_strategy_blockers.slice(0, 2).every(
+      (blocker: { detail: string }) => blocker.detail.startsWith("Pinned evidence does not verify"),
+    )).toBe(true);
     expect(snapshot.metrics).toMatchObject({ covered_share_accounting_eth_equivalent_wei: "4427", covered_token_custody_eth_equivalent_wei: "4125", executable_withdrawal_capacity_eth_wei: null });
     expect(snapshot.gaps.map((gap: any) => gap.code)).toEqual(EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES);
     expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(snapshot).success).toBe(true);
@@ -126,6 +132,13 @@ describe("EigenLayer covered LST ETH quote domain", () => {
     for (const mutate of [(value: any) => { value.gaps.pop(); }, (value: any) => { value.coverage.quoted_strategy_count = 8; }, (value: any) => { delete value.report_context.oeth_rebase_paused; }]) {
       const value = verified(); mutate(value); expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(value).success).toBe(false);
     }
+  });
+
+  it("rejects a ceiling permanent gap whose detail does not match its canonical blocker", () => {
+    const value = verified();
+    const gap = value.gaps.find(({ code }: { code: string }) => code === "ankreth_official_immutable_source_and_freshness_not_verified");
+    gap.detail = "bounded but mismatched";
+    expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(value).success).toBe(false);
   });
 
   it("accepts unavailable evidence atomically and rejects partial-evidence leaks", () => {
