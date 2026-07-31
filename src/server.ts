@@ -15,6 +15,7 @@ import { fetchGrowThePieRent } from "./adapters/eth_value_growthepie.js";
 import { fetchEthSupplyHistory } from "./adapters/eth_supply_coinmetrics.js";
 import { fetchEthFeeRpc } from "./adapters/eth_fee_rpc.js";
 import { fetchEthConsensusRewardsBeacon } from "./adapters/eth_consensus_rewards_beacon.js";
+import { fetchEthCollateralAaveV3 } from "./adapters/eth_collateral_aave_v3.js";
 import type { EnvConfig } from "./env.js";
 import { windowToDays } from "./eth_value_capture/metrics.js";
 import {
@@ -29,6 +30,7 @@ import {
   GetEthValueCaptureInputSchema,
   type EthValueCaptureSnapshot,
 } from "./eth_value_capture/types.js";
+import type { EthCollateralDemandSnapshot } from "./eth_collateral_demand/types.js";
 import { fanOutAdapters } from "./pipeline/fanout.js";
 import { toScoreInputs } from "./pipeline/score_inputs.js";
 import { loadPulseConfig } from "./pulse/config.js";
@@ -37,6 +39,7 @@ import { getEtfFlow } from "./tools/get_etf_flow.js";
 import { getEthValueCapture } from "./tools/get_eth_value_capture.js";
 import { getEthFeeCrossCheck } from "./tools/get_eth_fee_cross_check.js";
 import { getEthConsensusRewardsCrossCheck } from "./tools/get_eth_consensus_rewards_cross_check.js";
+import { getEthCollateralDemand } from "./tools/get_eth_collateral_demand.js";
 import { getFundingOi } from "./tools/get_funding_oi.js";
 import { getKrPremium } from "./tools/get_kr_premium.js";
 import { getMarketPulse } from "./tools/get_market_pulse.js";
@@ -62,6 +65,7 @@ interface JsonInputSchema {
   type: "object";
   properties: Record<string, unknown>;
   required?: string[];
+  additionalProperties?: boolean;
 }
 
 export interface HandlerContext {
@@ -76,7 +80,7 @@ interface ToolDef {
   handler: (
     raw: unknown,
     hc: HandlerContext,
-  ) => Promise<ToolResponse | ForensicsSnapshot | EthValueCaptureSnapshot | EthFeeCrossCheckSnapshot | EthConsensusRewardsCrossCheckSnapshot>;
+  ) => Promise<ToolResponse | ForensicsSnapshot | EthValueCaptureSnapshot | EthFeeCrossCheckSnapshot | EthConsensusRewardsCrossCheckSnapshot | EthCollateralDemandSnapshot>;
 }
 
 const TOOLS: ToolDef[] = [
@@ -143,6 +147,12 @@ const TOOLS: ToolDef[] = [
       required: ["epoch"],
     },
     handler: handleEthConsensusRewardsCrossCheck,
+  },
+  {
+    name: "get_eth_collateral_demand",
+    description: "Verified Aave V3 Core ETH-family supplied capacity at one finalized Ethereum block.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    handler: handleEthCollateralDemand,
   },
   {
     name: "get_stablecoin_pulse",
@@ -365,6 +375,18 @@ export async function handleEthConsensusRewardsCrossCheck(
     hc.ctx,
   );
   return getEthConsensusRewardsCrossCheck({ lang: hc.env.lang, adapterSnapshot });
+}
+
+export async function handleEthCollateralDemand(
+  raw: unknown,
+  hc: HandlerContext,
+): Promise<EthCollateralDemandSnapshot> {
+  NoArgs.parse(raw ?? {});
+  const adapterSnapshot = await fetchEthCollateralAaveV3(
+    { rpcUrl: hc.env.ethereumRpcUrl },
+    hc.ctx,
+  );
+  return getEthCollateralDemand({ lang: hc.env.lang, adapterSnapshot });
 }
 
 async function handleStablecoinPulse(raw: unknown, hc: HandlerContext): Promise<ToolResponse> {
