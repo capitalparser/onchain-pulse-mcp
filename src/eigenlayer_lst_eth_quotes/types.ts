@@ -30,6 +30,12 @@ export const EIGENLAYER_COVERED_LST_STRATEGIES = [
     decimals: 18,
   },
   {
+    label: "lsETH",
+    strategy: "0xAe60d8180437b5C34bB956822ac2710972584473",
+    underlying_token: "0x8c1BEd5b9a0928467c9B1341Da1D7BD5e10b6549",
+    decimals: 18,
+  },
+  {
     label: "mETH",
     strategy: "0x298aFB19A105D59E74658C4C334Ff360BadE6dd2",
     underlying_token: "0xd5F7838F5C461fefF7FE49ea5ebaF7728bB0ADfa",
@@ -44,7 +50,6 @@ export const EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS = [
   "swETH",
   "wBETH",
   "sfrxETH",
-  "lsETH",
 ] as const;
 
 export const EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES = [
@@ -61,6 +66,9 @@ export const EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES = [
   "oseth_backing_not_reconciled",
   "meth_oracle_record_freshness_not_verified",
   "meth_backing_not_reconciled",
+  "lseth_oracle_report_freshness_not_verified",
+  "lseth_proxy_upgradeability_not_verified",
+  "lseth_backing_not_reconciled",
 ] as const;
 
 const SOURCE_FAILURE_GAP_CODES = new Set([
@@ -83,7 +91,7 @@ const DecimalStringSchema = z.string().max(78).regex(/^(0|[1-9]\d*)$/).refine((v
 }, "must be a uint256");
 
 const QuoteSchema = z.object({
-  label: z.enum(["stETH", "rETH", "cbETH", "osETH", "mETH"]),
+  label: z.enum(["stETH", "rETH", "cbETH", "osETH", "lsETH", "mETH"]),
   strategy: z.string(),
   underlying_token: z.string(),
   decimals: z.literal(18),
@@ -94,6 +102,7 @@ const QuoteSchema = z.object({
     "rocket_pool_direct_aggregate_quote",
     "coinbase_oracle_accounting_quote",
     "stakewise_v3_direct_controller_quote",
+    "liquid_collective_river_direct_share_quote",
     "mantle_staking_direct_oracle_quote",
   ]),
   trust_basis: z.enum([
@@ -101,6 +110,7 @@ const QuoteSchema = z.object({
     "rocket_pool_network_accounting",
     "coinbase_oracle_controlled_rate",
     "stakewise_v3_keeper_reward_accounting",
+    "liquid_collective_oracle_reported_accounting",
     "mantle_oracle_reported_accounting",
   ]),
   share_accounting_eth_quote_wei: DecimalStringSchema,
@@ -130,7 +140,7 @@ const IdentitiesSchema = z.object({
 }).strict();
 
 const CoverageSchema = z.object({
-  quoted_strategy_count: z.literal(5),
+  quoted_strategy_count: z.literal(6),
   fixed_strategy_count: z.literal(12),
   unquoted_strategy_labels: z.tuple([
     z.literal("ETHx"),
@@ -139,8 +149,11 @@ const CoverageSchema = z.object({
     z.literal("swETH"),
     z.literal("wBETH"),
     z.literal("sfrxETH"),
-    z.literal("lsETH"),
   ]),
+}).strict();
+
+const ReportContextSchema = z.object({
+  lseth_last_completed_epoch_id: DecimalStringSchema,
 }).strict();
 
 export const EigenLayerLstEthQuoteGapCodeSchema = z.enum([
@@ -170,9 +183,10 @@ export type EigenLayerLstEthQuoteSourceStatus = z.infer<typeof EigenLayerLstEthQ
 const SnapshotBaseSchema = z.object({
   status: z.enum(["verified", "unavailable"]),
   summary: z.string().min(1).max(500),
-  methodology: z.literal("eigenlayer-covered-lst-eth-quotes-v2"),
+  methodology: z.literal("eigenlayer-covered-lst-eth-quotes-v3"),
   verified_block: EigenLayerRestakingBlockSchema.nullable(),
   covered_quotes: z.array(QuoteSchema),
+  report_context: ReportContextSchema.nullable(),
   metrics: MetricsSchema,
   identities: IdentitiesSchema.nullable(),
   coverage: CoverageSchema.nullable(),
@@ -197,7 +211,7 @@ export const EigenLayerLstEthQuotesSnapshotSchema = SnapshotBaseSchema.superRefi
       const noEvidence = snapshot.verified_block === null && snapshot.covered_quotes.length === 0
         && snapshot.metrics.covered_share_accounting_eth_equivalent_wei === null
         && snapshot.metrics.covered_token_custody_eth_equivalent_wei === null
-        && snapshot.identities === null && snapshot.coverage === null;
+        && snapshot.report_context === null && snapshot.identities === null && snapshot.coverage === null;
       const noRpc = snapshot.gaps[0]?.code === "rpc_not_configured";
       const provenance = noRpc
         ? snapshot.sources.length === 0 && snapshot.source_status.length === 0
@@ -217,7 +231,7 @@ export const EigenLayerLstEthQuotesSnapshotSchema = SnapshotBaseSchema.superRefi
       (gap) => (EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES as readonly string[]).includes(gap.code)
         || gap.code === "source_stale",
     ) && staleGaps <= 1;
-    if (snapshot.verified_block === null || snapshot.identities === null || snapshot.coverage === null
+    if (snapshot.verified_block === null || snapshot.report_context === null || snapshot.identities === null || snapshot.coverage === null
       || snapshot.metrics.covered_share_accounting_eth_equivalent_wei === null
       || snapshot.metrics.covered_token_custody_eth_equivalent_wei === null
       || !snapshot.capabilities.ethereum_rpc_active || !provenance || !permanentGaps
@@ -269,7 +283,13 @@ export const EigenLayerLstEthQuotesSnapshotSchema = SnapshotBaseSchema.superRefi
         add(context, "osETH must preserve two direct controller quote results");
         return;
       }
-      if (index === 4 && (quote.quote_kind !== "mantle_staking_direct_oracle_quote"
+      if (index === 4 && (quote.quote_kind !== "liquid_collective_river_direct_share_quote"
+        || quote.trust_basis !== "liquid_collective_oracle_reported_accounting"
+        || quote.cbeth_exchange_rate_wei !== null)) {
+        add(context, "lsETH must preserve two direct River share-accounting quote results");
+        return;
+      }
+      if (index === 5 && (quote.quote_kind !== "mantle_staking_direct_oracle_quote"
         || quote.trust_basis !== "mantle_oracle_reported_accounting"
         || quote.cbeth_exchange_rate_wei !== null)) {
         add(context, "mETH must preserve two direct oracle quote results");
@@ -307,6 +327,7 @@ export interface EigenLayerCoveredLstQuoteInput {
 export interface BuildVerifiedEigenLayerLstEthQuotesInput {
   block: EigenLayerRestakingBlock;
   quotes: readonly EigenLayerCoveredLstQuoteInput[];
+  lsethLastCompletedEpochId: bigint;
   sources: string[];
   sourceStatus: EigenLayerLstEthQuoteSourceStatus[];
   stale?: boolean;
