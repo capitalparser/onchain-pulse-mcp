@@ -52,7 +52,7 @@ asset-balance, or total-share call.
 
 `getLastCompletedEpochId()` is declared by `IOracleManagerV1` and implemented
 by `OracleManagerV1` as the stored consensus-layer report epoch. The selector
-is `0x08e09d36`. The finalized value is published only as
+is `0x89896aef`. The finalized value is published only as
 `report_context.lseth_last_completed_epoch_id`; it is not a timestamp,
 current-epoch comparison, freshness proof, or withdrawal entitlement.
 
