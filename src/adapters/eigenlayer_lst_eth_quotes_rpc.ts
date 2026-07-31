@@ -16,17 +16,18 @@ import {
 } from "../eigenlayer_lst_eth_quotes/types.js";
 
 const CACHE_SPEC: CacheSpec = { name: "eigenlayer_lst_eth_quotes", ttlMs: 30 * 60_000, max: 1 };
-const CACHE_KEY = "eigenlayer-lst-eth-quotes:mainnet-v4";
+const CACHE_KEY = "eigenlayer-lst-eth-quotes:mainnet-v5";
 const SOURCE = "ethereum_rpc" as const;
 const ROLE = "eigenlayer_finalized_lst_eth_quote_evidence" as const;
 const WORD = /^0x[0-9a-f]{64}$/;
 const ADDRESS_WORD = /^0x0{24}[0-9a-f]{40}$/;
-const COVERED_BASE_STRATEGY_INDICES = [0, 1, 2, 3, 6, 10, 11] as const;
+const COVERED_BASE_STRATEGY_INDICES = [0, 1, 2, 3, 6, 7, 10, 11] as const;
 const ETHX_TOKEN = "0xA35b1B31Ce002FBF2058D22F30f95D405200A15b";
 const ETHX_STADER_CONFIG = "0x4ABEF2263d5A5ED582FC9A9789a41D85b68d69DB";
 const ETHX_STAKE_POOLS_MANAGER = "0xcf5EA1b38380f6aF39068375516Daf40Ed70D299";
 const ETHX_STADER_ORACLE = "0xF64bAe65f6f2a5277571143A24FaaFDFC0C2a737";
 const OSETH_CONTROLLER = "0x2A261e60FB14586B474C208b1B7AC6D0f5000306";
+const SWETH_TOKEN = "0xf951E335afb289353dc249e82926178EaC7DEd78";
 const METH_STAKING = "0xe3cBd06D7dadB3F4e6557bAb7EdD924CD1489E8f";
 const METH_ORACLE = "0x8735049F496727f824Cc0f2B174d826f5c408192";
 const SELECTORS = {
@@ -44,6 +45,8 @@ const SELECTORS = {
   ethxGetStaderOracle: "0xdefd024d",
   ethxConvertToAssets: "0x07a2d13a",
   ethxGetExchangeRate: "0xe6aa216c",
+  swethToEthRate: "0xd68b2cb6",
+  swethLastRepriceUnix: "0xfbda759b",
 } as const;
 
 export interface EigenLayerLstEthQuotesRpcInput {
@@ -66,6 +69,7 @@ interface CombinedEvidence {
   quotes: readonly EigenLayerCoveredLstQuoteInput[];
   lsethLastCompletedEpochId: bigint;
   ethxOracleReportingBlockNumber: bigint;
+  swethLastRepriceUnix: bigint;
 }
 
 function configuredRpcUrl(value: unknown): string | null {
@@ -109,7 +113,7 @@ async function postQuoteBatch(
   rpcUrl: string,
   requests: readonly RpcRequest[],
 ): Promise<Map<number, unknown>> {
-  if (requests.length !== 20 || requests.some((request, index) => request.id !== 92 + index)
+  if (requests.length !== 22 || requests.some((request, index) => request.id !== 92 + index)
     || new Set(requests.map((request) => request.id)).size !== requests.length) {
     throw new QuoteRpcFailure("rpc_schema_drift");
   }
@@ -173,6 +177,7 @@ function freezeEvidence(evidence: CombinedEvidence): CombinedEvidence {
     quotes: Object.freeze(evidence.quotes.map((quote) => Object.freeze({ ...quote }))),
     lsethLastCompletedEpochId: evidence.lsethLastCompletedEpochId,
     ethxOracleReportingBlockNumber: evidence.ethxOracleReportingBlockNumber,
+    swethLastRepriceUnix: evidence.swethLastRepriceUnix,
   });
 }
 
@@ -182,6 +187,7 @@ function cloneEvidence(evidence: CombinedEvidence): CombinedEvidence {
     quotes: evidence.quotes.map((quote) => ({ ...quote })),
     lsethLastCompletedEpochId: evidence.lsethLastCompletedEpochId,
     ethxOracleReportingBlockNumber: evidence.ethxOracleReportingBlockNumber,
+    swethLastRepriceUnix: evidence.swethLastRepriceUnix,
   };
 }
 
@@ -233,14 +239,14 @@ async function loadCombinedEvidence(ctx: AdapterContext, rpcUrl: string): Promis
     ethCall(97, METH_STAKING, SELECTORS.meth, blockTag),
     ethCall(98, METH_STAKING, SELECTORS.oracle, blockTag),
     ethCall(99, METH_STAKING,
-      `${SELECTORS.methToEth}${uintArgument(BigInt(covered[6]!.share_accounting_underlying))}`, blockTag),
+      `${SELECTORS.methToEth}${uintArgument(BigInt(covered[7]!.share_accounting_underlying))}`, blockTag),
     ethCall(100, METH_STAKING,
-      `${SELECTORS.methToEth}${uintArgument(BigInt(covered[6]!.token_custody))}`, blockTag),
-    ethCall(101, EIGENLAYER_COVERED_LST_STRATEGIES[5].underlying_token,
-      `${SELECTORS.lsethUnderlyingBalanceFromShares}${uintArgument(BigInt(covered[5]!.share_accounting_underlying))}`, blockTag),
-    ethCall(102, EIGENLAYER_COVERED_LST_STRATEGIES[5].underlying_token,
-      `${SELECTORS.lsethUnderlyingBalanceFromShares}${uintArgument(BigInt(covered[5]!.token_custody))}`, blockTag),
-    ethCall(103, EIGENLAYER_COVERED_LST_STRATEGIES[5].underlying_token, SELECTORS.lsethLastCompletedEpochId, blockTag),
+      `${SELECTORS.methToEth}${uintArgument(BigInt(covered[7]!.token_custody))}`, blockTag),
+    ethCall(101, EIGENLAYER_COVERED_LST_STRATEGIES[6].underlying_token,
+      `${SELECTORS.lsethUnderlyingBalanceFromShares}${uintArgument(BigInt(covered[6]!.share_accounting_underlying))}`, blockTag),
+    ethCall(102, EIGENLAYER_COVERED_LST_STRATEGIES[6].underlying_token,
+      `${SELECTORS.lsethUnderlyingBalanceFromShares}${uintArgument(BigInt(covered[6]!.token_custody))}`, blockTag),
+    ethCall(103, EIGENLAYER_COVERED_LST_STRATEGIES[6].underlying_token, SELECTORS.lsethLastCompletedEpochId, blockTag),
     ethCall(104, ETHX_TOKEN, SELECTORS.ethxStaderConfig, blockTag),
     ethCall(105, ETHX_STAKE_POOLS_MANAGER, SELECTORS.ethxStaderConfig, blockTag),
     ethCall(106, ETHX_STADER_CONFIG, SELECTORS.ethxGetToken, blockTag),
@@ -251,9 +257,11 @@ async function loadCombinedEvidence(ctx: AdapterContext, rpcUrl: string): Promis
     ethCall(110, ETHX_STAKE_POOLS_MANAGER,
       `${SELECTORS.ethxConvertToAssets}${uintArgument(BigInt(covered[3]!.token_custody))}`, blockTag),
     ethCall(111, ETHX_STADER_ORACLE, SELECTORS.ethxGetExchangeRate, blockTag),
+    ethCall(112, SWETH_TOKEN, SELECTORS.swethToEthRate, blockTag),
+    ethCall(113, SWETH_TOKEN, SELECTORS.swethLastRepriceUnix, blockTag),
   ];
   const results = await postQuoteBatch(ctx, rpcUrl, requests);
-  expectedAddress(decodeAddress(results.get(97)), EIGENLAYER_COVERED_LST_STRATEGIES[6].underlying_token);
+  expectedAddress(decodeAddress(results.get(97)), EIGENLAYER_COVERED_LST_STRATEGIES[7].underlying_token);
   expectedAddress(decodeAddress(results.get(98)), METH_ORACLE);
   expectedAddress(decodeAddress(results.get(104)), ETHX_STADER_CONFIG);
   expectedAddress(decodeAddress(results.get(105)), ETHX_STADER_CONFIG);
@@ -266,6 +274,12 @@ async function loadCombinedEvidence(ctx: AdapterContext, rpcUrl: string): Promis
   const ethxCustodyQuote = decodeUint(results.get(110));
   if (ethxShareQuote !== ethxExpectedQuote(BigInt(covered[3]!.share_accounting_underlying), ethxTotalEthBalance, ethxTotalEthxSupply)
     || ethxCustodyQuote !== ethxExpectedQuote(BigInt(covered[3]!.token_custody), ethxTotalEthBalance, ethxTotalEthxSupply)) {
+    throw new QuoteRpcFailure("rpc_evidence_mismatch");
+  }
+  const swethRate = decodeUint(results.get(112));
+  const swethLastRepriceUnix = decodeUint(results.get(113));
+  if (swethRate === 0n || swethLastRepriceUnix > BigInt(base.verified_block.timestamp)
+    || (swethLastRepriceUnix === 0n && swethRate !== 10n ** 18n)) {
     throw new QuoteRpcFailure("rpc_evidence_mismatch");
   }
   const quotes: EigenLayerCoveredLstQuoteInput[] = [
@@ -311,14 +325,21 @@ async function loadCombinedEvidence(ctx: AdapterContext, rpcUrl: string): Promis
       underlyingToken: EIGENLAYER_COVERED_LST_STRATEGIES[5].underlying_token,
       shareAccountingTokenAmount: BigInt(covered[5]!.share_accounting_underlying),
       tokenCustodyTokenAmount: BigInt(covered[5]!.token_custody),
-      directShareAccountingEthQuote: decodeUint(results.get(101)),
-      directTokenCustodyEthQuote: decodeUint(results.get(102)),
+      swethToEthRate: swethRate,
     },
     {
       ...EIGENLAYER_COVERED_LST_STRATEGIES[6],
       underlyingToken: EIGENLAYER_COVERED_LST_STRATEGIES[6].underlying_token,
       shareAccountingTokenAmount: BigInt(covered[6]!.share_accounting_underlying),
       tokenCustodyTokenAmount: BigInt(covered[6]!.token_custody),
+      directShareAccountingEthQuote: decodeUint(results.get(101)),
+      directTokenCustodyEthQuote: decodeUint(results.get(102)),
+    },
+    {
+      ...EIGENLAYER_COVERED_LST_STRATEGIES[7],
+      underlyingToken: EIGENLAYER_COVERED_LST_STRATEGIES[7].underlying_token,
+      shareAccountingTokenAmount: BigInt(covered[7]!.share_accounting_underlying),
+      tokenCustodyTokenAmount: BigInt(covered[7]!.token_custody),
       directShareAccountingEthQuote: decodeUint(results.get(99)),
       directTokenCustodyEthQuote: decodeUint(results.get(100)),
     },
@@ -328,6 +349,7 @@ async function loadCombinedEvidence(ctx: AdapterContext, rpcUrl: string): Promis
     quotes,
     lsethLastCompletedEpochId: decodeUint(results.get(103)),
     ethxOracleReportingBlockNumber: ethxReportingBlockNumber,
+    swethLastRepriceUnix,
   };
   verified(evidence, false);
   return evidence;
