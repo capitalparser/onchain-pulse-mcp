@@ -16,13 +16,22 @@ import {
 } from "../eigenlayer_lst_eth_quotes/types.js";
 
 const CACHE_SPEC: CacheSpec = { name: "eigenlayer_lst_eth_quotes", ttlMs: 30 * 60_000, max: 1 };
-const CACHE_KEY = "eigenlayer-lst-eth-quotes:mainnet-v1";
+const CACHE_KEY = "eigenlayer-lst-eth-quotes:mainnet-v2";
 const SOURCE = "ethereum_rpc" as const;
 const ROLE = "eigenlayer_finalized_lst_eth_quote_evidence" as const;
 const WORD = /^0x[0-9a-f]{64}$/;
+const ADDRESS_WORD = /^0x0{24}[0-9a-f]{40}$/;
+const COVERED_BASE_STRATEGY_INDICES = [0, 1, 2, 6, 11] as const;
+const OSETH_CONTROLLER = "0x2A261e60FB14586B474C208b1B7AC6D0f5000306";
+const METH_STAKING = "0xe3cBd06D7dadB3F4e6557bAb7EdD924CD1489E8f";
+const METH_ORACLE = "0x8735049F496727f824Cc0f2B174d826f5c408192";
 const SELECTORS = {
   rethGetEthValue: "0x8b32fa23",
   cbethExchangeRate: "0x3ba0b9a9",
+  osethConvertToAssets: "0x07a2d13a",
+  meth: "0x29e84867",
+  oracle: "0x7dc0d1d0",
+  methToEth: "0x5890c11c",
 } as const;
 
 export interface EigenLayerLstEthQuotesRpcInput {
@@ -64,6 +73,15 @@ function decodeUint(value: unknown): bigint {
   return BigInt(value);
 }
 
+function decodeAddress(value: unknown): string {
+  if (typeof value !== "string" || !ADDRESS_WORD.test(value)) throw new QuoteRpcFailure("rpc_schema_drift");
+  return `0x${value.slice(-40)}`;
+}
+
+function expectedAddress(value: string, expected: string): void {
+  if (value.toLowerCase() !== expected.toLowerCase()) throw new QuoteRpcFailure("rpc_evidence_mismatch");
+}
+
 function uintArgument(value: bigint): string {
   return value.toString(16).padStart(64, "0");
 }
@@ -77,7 +95,8 @@ async function postQuoteBatch(
   rpcUrl: string,
   requests: readonly RpcRequest[],
 ): Promise<Map<number, unknown>> {
-  if (requests.length !== 3 || new Set(requests.map((request) => request.id)).size !== requests.length) {
+  if (requests.length !== 9 || requests.some((request, index) => request.id !== 92 + index)
+    || new Set(requests.map((request) => request.id)).size !== requests.length) {
     throw new QuoteRpcFailure("rpc_schema_drift");
   }
   let response: Response;
@@ -166,7 +185,7 @@ async function loadCombinedEvidence(ctx: AdapterContext, rpcUrl: string): Promis
   }
   if (base.strategies.length !== 12) throw new QuoteRpcFailure("rpc_evidence_mismatch");
   const covered = EIGENLAYER_COVERED_LST_STRATEGIES.map((expected, index) => {
-    const actual = base.strategies[index];
+    const actual = base.strategies[COVERED_BASE_STRATEGY_INDICES[index]!];
     if (actual === undefined || actual.label !== expected.label || actual.strategy !== expected.strategy
       || actual.underlying_token.toLowerCase() !== expected.underlying_token.toLowerCase() || actual.decimals !== 18) {
       throw new QuoteRpcFailure("rpc_evidence_mismatch");
@@ -180,8 +199,20 @@ async function loadCombinedEvidence(ctx: AdapterContext, rpcUrl: string): Promis
     ethCall(93, EIGENLAYER_COVERED_LST_STRATEGIES[1].underlying_token,
       `${SELECTORS.rethGetEthValue}${uintArgument(BigInt(covered[1]!.token_custody))}`, blockTag),
     ethCall(94, EIGENLAYER_COVERED_LST_STRATEGIES[2].underlying_token, SELECTORS.cbethExchangeRate, blockTag),
+    ethCall(95, OSETH_CONTROLLER,
+      `${SELECTORS.osethConvertToAssets}${uintArgument(BigInt(covered[3]!.share_accounting_underlying))}`, blockTag),
+    ethCall(96, OSETH_CONTROLLER,
+      `${SELECTORS.osethConvertToAssets}${uintArgument(BigInt(covered[3]!.token_custody))}`, blockTag),
+    ethCall(97, METH_STAKING, SELECTORS.meth, blockTag),
+    ethCall(98, METH_STAKING, SELECTORS.oracle, blockTag),
+    ethCall(99, METH_STAKING,
+      `${SELECTORS.methToEth}${uintArgument(BigInt(covered[4]!.share_accounting_underlying))}`, blockTag),
+    ethCall(100, METH_STAKING,
+      `${SELECTORS.methToEth}${uintArgument(BigInt(covered[4]!.token_custody))}`, blockTag),
   ];
   const results = await postQuoteBatch(ctx, rpcUrl, requests);
+  expectedAddress(decodeAddress(results.get(97)), EIGENLAYER_COVERED_LST_STRATEGIES[4].underlying_token);
+  expectedAddress(decodeAddress(results.get(98)), METH_ORACLE);
   const quotes: EigenLayerCoveredLstQuoteInput[] = [
     {
       ...EIGENLAYER_COVERED_LST_STRATEGIES[0],
@@ -203,6 +234,22 @@ async function loadCombinedEvidence(ctx: AdapterContext, rpcUrl: string): Promis
       shareAccountingTokenAmount: BigInt(covered[2]!.share_accounting_underlying),
       tokenCustodyTokenAmount: BigInt(covered[2]!.token_custody),
       cbethExchangeRate: decodeUint(results.get(94)),
+    },
+    {
+      ...EIGENLAYER_COVERED_LST_STRATEGIES[3],
+      underlyingToken: EIGENLAYER_COVERED_LST_STRATEGIES[3].underlying_token,
+      shareAccountingTokenAmount: BigInt(covered[3]!.share_accounting_underlying),
+      tokenCustodyTokenAmount: BigInt(covered[3]!.token_custody),
+      directShareAccountingEthQuote: decodeUint(results.get(95)),
+      directTokenCustodyEthQuote: decodeUint(results.get(96)),
+    },
+    {
+      ...EIGENLAYER_COVERED_LST_STRATEGIES[4],
+      underlyingToken: EIGENLAYER_COVERED_LST_STRATEGIES[4].underlying_token,
+      shareAccountingTokenAmount: BigInt(covered[4]!.share_accounting_underlying),
+      tokenCustodyTokenAmount: BigInt(covered[4]!.token_custody),
+      directShareAccountingEthQuote: decodeUint(results.get(99)),
+      directTokenCustodyEthQuote: decodeUint(results.get(100)),
     },
   ];
   const evidence: CombinedEvidence = { block: { ...base.verified_block }, quotes };
