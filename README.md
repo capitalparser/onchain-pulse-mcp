@@ -14,7 +14,7 @@ Existing onchain intelligence tools (Nansen, Arkham, Coinglass) are dashboards b
 
 - **Read-only · snapshot-oriented**: idempotent MCP responses, no write actions, local-only history materialisation for composite z-scores.
 - **Source adapters**: free and BYOK-backed market, Ethereum, RWA, derivatives, and Korea data paths.
-- **13 MCP tools**: the six original macro tools, token forensics, ETH value capture, bounded Ethereum execution-fee and consensus-reward cross-checks, finalized Aave V3 Core and SparkLend supplied-capacity views, and Lido pooled ETH backing.
+- **14 MCP tools**: the six original macro tools, token forensics, ETH value capture, bounded Ethereum execution-fee and consensus-reward cross-checks, finalized Aave V3 Core and SparkLend supplied-capacity views, Lido pooled ETH backing, and legacy Maker/Sky ETH-family adapter-held token custody.
 - **BYOK enrichment**: free defaults work out of the box; paid keys (Nansen/Glassnode/Arkham/Coinglass/CryptoQuant/Laevitas) are auto-detected via env vars.
 - **Composite pulse score**: 7-input weighted z-score with weights externalized to `config/pulse.yaml` — tweak to your thesis.
 - **Graceful degradation**: partial source failures yield reduced-confidence answers, never silent failure.
@@ -58,7 +58,7 @@ Set any of these env vars to enrich responses with paid data sources. The server
 | `CRYPTOQUANT_API_KEY` | CryptoQuant | Reserved for v0.2 |
 | `LAEVITAS_API_KEY` | Laevitas | Reserved for v0.2 |
 | `DUNE_API_KEY` | Dune | ETH fee burn and labelled L2 rent through direct SQL execution |
-| `ETHEREUM_RPC_URL` | Ethereum Execution API | Optional finalized-block fee, Aave V3 Core/SparkLend supplied-capacity, and Lido pooled-ETH-backing transport; internal only and never returned |
+| `ETHEREUM_RPC_URL` | Ethereum Execution API | Optional finalized-block fee, Aave V3 Core/SparkLend supplied-capacity, Lido pooled-ETH-backing, and legacy Maker/Sky adapter-custody transport; internal only and never returned |
 | `ETHEREUM_BEACON_API_URL` | Ethereum Beacon API | Optional finalized-epoch reward-component cross-check transport; internal only and never returned |
 
 `DUNE_API_KEY` is used only when a caller explicitly selects
@@ -86,6 +86,7 @@ Set `OPM_LANG=ko` for Korean `summary` strings. Default is `en`.
 | `get_eth_collateral_demand` | none | Exact finalized Aave V3 Core ETH-family supplied capacity; broader collateral and lock metrics stay null |
 | `get_spark_eth_collateral_capacity` | none | Exact finalized SparkLend ETH-family supplied capacity; Aave/Spark overlap and broader collateral metrics stay null |
 | `get_lido_pooled_eth_backing` | none | Exact finalized Lido pooled ETH backing; all-native-stake, net-locked, DeFi-collateral, and combined-demand metrics stay null |
+| `get_sky_eth_collateral_custody` | none | Exact finalized legacy Maker/Sky ETH-family adapter-held token custody; active Vault/user/net-locked/combined-demand/rehypothecation metrics stay null |
 | `get_eth_consensus_rewards_cross_check` | `epoch`, `include_blocks?` | Exact finalized Ethereum consensus reward-component verification for one epoch |
 
 `get_token_forensics` is Phase 1. It discovers the best pool through DexScreener
@@ -338,6 +339,38 @@ npm run test:live:lido-backing
 ```
 
 It remains skipped unless both `RUN_LIVE_LIDO_BACKING=1` and a nonblank
+`ETHEREUM_RPC_URL` are set.
+
+### Legacy Maker/Sky ETH-family adapter-held token custody
+
+`get_sky_eth_collateral_custody` has no arguments. It is a read-only verifier
+for legacy Maker/Sky ETH-family tokens held by six adapter contracts at one
+finalized Ethereum block: ETH-A, ETH-B, ETH-C, WSTETH-A, WSTETH-B, and RETH-A.
+It is adapter-held token custody only: it never represents active Vault
+collateral, actual user collateral, unique or net ETH locked, combined
+Aave/Spark/Lido/Sky demand, or rehypothecation. Those five metrics remain
+`null` with explicit gaps.
+
+The verifier starts from the official fixed mainnet Maker/Sky Chainlog
+`0xdA0Ab1e0017DEbCd72Be8599041a2aa3bA7e740F`, then resolves its runtime
+contracts at the same finalized block: `MCD_VAT`, `ETH`, `WSTETH`, `RETH`, and
+the six fixed join keys. It checks each join's Vat, ilk, token, decimals,
+live flag, and token balance; wstETH and rETH are quoted from the aggregate
+adapter-held amounts. Each uncached verification has exactly four JSON-RPC
+batch rounds and **50 logical requests**: chain/finalized-block evidence (2),
+Chainlog resolution (10), six join evidence groups (36), and two aggregate
+quotes. Every contract call uses the same finalized block tag.
+
+Set `ETHEREUM_RPC_URL` only in the server environment. It may contain provider
+credentials and is never returned, logged, persisted, or used as a cache key.
+Without it, the tool returns `rpc_not_configured` without a network request.
+The read-only live verifier is explicitly opt-in:
+
+```bash
+npm run test:live:sky-eth-custody
+```
+
+It remains skipped unless both `RUN_LIVE_SKY_ETH_CUSTODY=1` and a nonblank
 `ETHEREUM_RPC_URL` are set.
 
 ### Ethereum consensus reward-component cross-check
