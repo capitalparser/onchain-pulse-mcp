@@ -7,12 +7,14 @@ import { EthCollateralDemandSnapshotSchema } from "../src/eth_collateral_demand/
 import { SparkCollateralCapacitySnapshotSchema } from "../src/spark_collateral_capacity/types.js";
 import { LidoPooledEthBackingSnapshotSchema } from "../src/lido_pooled_eth_backing/types.js";
 import { SkyEthCollateralCustodySnapshotSchema } from "../src/sky_eth_collateral_custody/types.js";
+import { EigenLayerEthRestakingExposureSnapshotSchema } from "../src/eigenlayer_eth_restaking/types.js";
 import {
   createServer,
   handleEthCollateralDemand,
   handleSparkEthCollateralCapacity,
   handleLidoPooledEthBacking,
   handleSkyEthCollateralCustody,
+  handleEigenLayerEthRestakingExposure,
   handleEthFeeCrossCheck,
   handleEthConsensusRewardsCrossCheck,
   handleEthValueCapture,
@@ -23,12 +25,13 @@ import type { EnvConfig } from "../src/env.js";
 const env: EnvConfig = { byok: {}, lang: "en", historyPath: "/tmp/onchain-pulse-mcp-test-history.json", ethereumRpcUrl: undefined, ethereumBeaconApiUrl: undefined };
 
 describe("server", () => {
-  it("registers all fourteen expected tools including Sky adapter-held custody", () => {
+  it("registers all fifteen expected tools including EigenLayer restaking exposure", () => {
     const names = listTools()
       .map((t) => t.name)
       .sort();
 
     expect(names).toEqual([
+      "get_eigenlayer_eth_restaking_exposure",
       "get_etf_flow",
       "get_eth_collateral_demand",
       "get_eth_consensus_rewards_cross_check",
@@ -134,6 +137,20 @@ describe("server", () => {
     expect(SkyEthCollateralCustodySnapshotSchema.parse(output)).toEqual(output);
     await expect(handleSkyEthCollateralCustody({ rpcUrl: "https://forbidden" }, hc)).rejects.toThrow();
     await expect(handleSkyEthCollateralCustody(null, hc)).rejects.toThrow();
+  });
+
+  it("registers and dispatches EigenLayer exposure through internal RPC configuration only", async () => {
+    const tool = listTools().find((item) => item.name === "get_eigenlayer_eth_restaking_exposure");
+    const fetchImpl = vi.fn();
+    const hc = { env, ctx: makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }) };
+    expect(tool?.inputSchema).toEqual({ type: "object", properties: {}, additionalProperties: false });
+    const output = await tool?.handler({}, hc);
+    expect(output).toMatchObject({ status: "unavailable", verified_block: null, core_contracts: null, strategies: [], native_diagnostics: null });
+    expect((output as { gaps: Array<{ code: string }> }).gaps[0]?.code).toBe("rpc_not_configured");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(EigenLayerEthRestakingExposureSnapshotSchema.parse(output)).toEqual(output);
+    await expect(handleEigenLayerEthRestakingExposure({ rpcUrl: "https://forbidden" }, hc)).rejects.toThrow();
+    await expect(handleEigenLayerEthRestakingExposure(null, hc)).rejects.toThrow();
   });
 
   it("createServer returns a connectable Server instance plus adapter context", () => {
