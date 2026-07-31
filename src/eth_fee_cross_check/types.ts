@@ -99,6 +99,15 @@ type CompleteEthFeeCrossCheckMetrics = {
   [Metric in keyof EthFeeCrossCheckMetrics]: ExactEthAmount;
 };
 
+const MetricNames = [
+  "execution_fee",
+  "base_fee_burn",
+  "priority_fee",
+  "blob_fee_burn",
+  "gross_fee",
+  "total_burn",
+] as const satisfies ReadonlyArray<keyof EthFeeCrossCheckMetrics>;
+
 const VerifiedEthFeeCrossCheckMetricsSchema = EthFeeCrossCheckMetricsSchema.refine(
   (metrics) => Object.values(metrics).every((metric) => metric !== null),
   "Verified snapshots require every fee metric.",
@@ -166,19 +175,21 @@ function addSnapshotIssue(context: z.RefinementCtx, message: string, path: Array
   context.addIssue({ code: z.ZodIssueCode.custom, message, path });
 }
 
-function hasCompleteMetrics(metrics: EthFeeCrossCheckMetrics): metrics is CompleteEthFeeCrossCheckMetrics {
-  return Object.values(metrics).every((metric) => metric !== null);
+function hasCompleteMetrics(metrics: unknown): metrics is CompleteEthFeeCrossCheckMetrics {
+  if (typeof metrics !== "object" || metrics === null || Array.isArray(metrics)) return false;
+  return MetricNames.every((name) => ExactEthAmountSchema.safeParse((metrics as Record<string, unknown>)[name]).success);
 }
 
-function hasNoMetrics(metrics: EthFeeCrossCheckMetrics): boolean {
-  return Object.values(metrics).every((metric) => metric === null);
+function hasNoMetrics(metrics: unknown): boolean {
+  if (typeof metrics !== "object" || metrics === null || Array.isArray(metrics)) return false;
+  return MetricNames.every((name) => (metrics as Record<string, unknown>)[name] === null);
 }
 
 function wei(amount: ExactEthAmount): bigint {
   return BigInt(amount.wei);
 }
 
-function metricsSatisfyIdentities(metrics: EthFeeCrossCheckMetrics): boolean {
+function metricsSatisfyIdentities(metrics: unknown): boolean {
   if (!hasCompleteMetrics(metrics)) return false;
   return (
     wei(metrics.execution_fee) === wei(metrics.base_fee_burn) + wei(metrics.priority_fee)
@@ -198,12 +209,10 @@ function metricsEqual(left: CompleteEthFeeCrossCheckMetrics, right: CompleteEthF
   );
 }
 
-function sumBlockMetrics(blocks: EthFeeCrossCheckBlock[]): CompleteEthFeeCrossCheckMetrics {
+function sumBlockMetrics(blocks: EthFeeCrossCheckBlock[]): CompleteEthFeeCrossCheckMetrics | null {
+  if (blocks.some((block) => !hasCompleteMetrics(block.metrics))) return null;
   const sum = (name: keyof CompleteEthFeeCrossCheckMetrics): ExactEthAmount => {
-    const total = blocks.reduce((value, block) => {
-      if (!hasCompleteMetrics(block.metrics)) throw new Error("Block metrics must be complete.");
-      return value + wei(block.metrics[name]);
-    }, 0n);
+    const total = blocks.reduce((value, block) => value + wei((block.metrics as CompleteEthFeeCrossCheckMetrics)[name]), 0n);
     const whole = total / 1_000_000_000_000_000_000n;
     const fraction = (total % 1_000_000_000_000_000_000n).toString().padStart(18, "0").replace(/0+$/, "");
     return { wei: total.toString(), eth: fraction === "" ? whole.toString() : `${whole}.${fraction}` };
@@ -228,8 +237,8 @@ export const EthFeeCrossCheckSnapshotSchema = SnapshotBaseSchema.superRefine((sn
     if (snapshot.verified_range !== null || snapshot.identities !== null || !hasNoMetrics(snapshot.metrics) || snapshot.blocks !== undefined) {
       addSnapshotIssue(context, "Unavailable snapshots must not contain verified evidence.");
     }
-    if (snapshot.gaps.length === 0 || snapshot.sources.length !== 0 || snapshot.source_status.length !== 0) {
-      addSnapshotIssue(context, "Unavailable snapshots require a gap and no source provenance.");
+    if (snapshot.gaps.length === 0) {
+      addSnapshotIssue(context, "Unavailable snapshots require at least one bounded gap.");
     }
     return;
   }
@@ -257,10 +266,17 @@ export const EthFeeCrossCheckSnapshotSchema = SnapshotBaseSchema.superRefine((sn
     if (blocks.length !== verifiedRange.block_count) {
       addSnapshotIssue(context, "Block rows must cover every verified block exactly once.", ["blocks"]);
     }
+    const validBlocks: EthFeeCrossCheckBlock[] = [];
     const hashes = new Set<string>();
     let transactionCount = 0;
     for (let index = 0; index < blocks.length; index += 1) {
-      const block = blocks[index]!;
+      const blockParse = EthFeeCrossCheckBlockSchema.safeParse(blocks[index]);
+      if (!blockParse.success) {
+        addSnapshotIssue(context, "Every block row must contain complete valid metrics.", ["blocks", index]);
+        continue;
+      }
+      const block = blockParse.data;
+      validBlocks.push(block);
       if (block.block_number !== verifiedRange.start_block + index || hashes.has(block.block_hash)) {
         addSnapshotIssue(context, "Block rows must be ordered, consecutive, and hash-unique.", ["blocks", index]);
       }
@@ -273,8 +289,11 @@ export const EthFeeCrossCheckSnapshotSchema = SnapshotBaseSchema.superRefine((sn
     if (transactionCount !== verifiedRange.transaction_count) {
       addSnapshotIssue(context, "Block-row transaction counts must equal the verified range.", ["blocks"]);
     }
-    if (blocks.length > 0 && !metricsEqual(sumBlockMetrics(blocks), metrics)) {
-      addSnapshotIssue(context, "Block-row metrics must equal aggregate metrics.", ["blocks"]);
+    if (blocks.length > 0) {
+      const summedMetrics = sumBlockMetrics(validBlocks);
+      if (summedMetrics === null || !metricsEqual(summedMetrics, metrics)) {
+        addSnapshotIssue(context, "Block-row metrics must equal aggregate metrics.", ["blocks"]);
+      }
     }
   }
 });

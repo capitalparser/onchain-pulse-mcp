@@ -232,11 +232,44 @@ describe("EthFeeCrossCheckSnapshotSchema", () => {
     expect(EthFeeCrossCheckSnapshotSchema.parse(candidate)).toEqual(candidate);
   });
 
+  it("accepts an rpc access gap with provider provenance and no verified evidence", () => {
+    const candidate = validSnapshot() as unknown as Record<string, unknown>;
+    candidate.status = "unavailable";
+    candidate.verified_range = null;
+    candidate.identities = null;
+    candidate.metrics = {
+      execution_fee: null,
+      base_fee_burn: null,
+      priority_fee: null,
+      blob_fee_burn: null,
+      gross_fee: null,
+      total_burn: null,
+    };
+    candidate.gaps = [{ code: "rpc_access_gap", detail: "Provider returned an unsupported method." }];
+    expect(EthFeeCrossCheckSnapshotSchema.parse(candidate)).toEqual(candidate);
+  });
+
+  it("accepts a no-config gap without source provenance", () => {
+    const candidate = validSnapshot() as unknown as Record<string, unknown>;
+    candidate.status = "unavailable";
+    candidate.verified_range = null;
+    candidate.identities = null;
+    candidate.metrics = {
+      execution_fee: null,
+      base_fee_burn: null,
+      priority_fee: null,
+      blob_fee_burn: null,
+      gross_fee: null,
+      total_burn: null,
+    };
+    candidate.gaps = [{ code: "rpc_not_configured", detail: "Ethereum RPC is not configured." }];
+    candidate.sources = [];
+    candidate.source_status = [];
+    expect(EthFeeCrossCheckSnapshotSchema.parse(candidate)).toEqual(candidate);
+  });
+
   it.each([
     ["no bounded gap", (candidate: Record<string, unknown>) => { candidate.gaps = []; }],
-    ["source provenance", (candidate: Record<string, unknown>) => {
-      candidate.gaps = [{ code: "rpc_access_gap", detail: "Provider is unavailable." }];
-    }],
   ])("rejects unavailable output with %s", (_name, mutate) => {
     const candidate = validSnapshot() as unknown as Record<string, unknown>;
     candidate.status = "unavailable";
@@ -251,6 +284,27 @@ describe("EthFeeCrossCheckSnapshotSchema", () => {
       total_burn: null,
     };
     mutate(candidate);
+    expect(EthFeeCrossCheckSnapshotSchema.safeParse(candidate).success).toBe(false);
+  });
+
+  it.each([
+    ["invalid aggregate wei text", (candidate: Record<string, unknown>) => {
+      (candidate.metrics as Record<string, unknown>).execution_fee = exact("not-wei", "0");
+    }],
+    ["a null block metric", (candidate: Record<string, unknown>) => {
+      const rows = validBlockRows();
+      rows[0]!.metrics.execution_fee = null as unknown as { wei: string; eth: string };
+      candidate.blocks = rows;
+    }],
+    ["a malformed nested block ETH amount", (candidate: Record<string, unknown>) => {
+      const rows = validBlockRows();
+      rows[1]!.metrics.gross_fee = { wei: "105", eth: { malformed: true } } as unknown as { wei: string; eth: string };
+      candidate.blocks = rows;
+    }],
+  ])("returns safeParse=false without throwing for %s", (_name, mutate) => {
+    const candidate = validSnapshot() as unknown as Record<string, unknown>;
+    mutate(candidate);
+    expect(() => EthFeeCrossCheckSnapshotSchema.safeParse(candidate)).not.toThrow();
     expect(EthFeeCrossCheckSnapshotSchema.safeParse(candidate).success).toBe(false);
   });
 });

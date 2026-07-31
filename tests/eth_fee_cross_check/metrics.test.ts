@@ -155,6 +155,16 @@ describe("calculateEthFeeCrossCheck", () => {
     }, "schema");
   });
 
+  it.each([
+    ["a malformed transaction hash", (block: NormalizedEthFeeBlock) => { block.transactions[0] = "0x1234"; }],
+    ["a malformed receipt block hash", (block: NormalizedEthFeeBlock) => { block.receipts[0]!.blockHash = "0x1234"; }],
+    ["a malformed receipt transaction hash", (block: NormalizedEthFeeBlock) => { block.receipts[0]!.transactionHash = "0x1234"; }],
+  ])("rejects %s as schema-shaped evidence", (_name, mutate) => {
+    const block = validBlock();
+    mutate(block);
+    expectSchemaError([block]);
+  });
+
   it("rejects empty normalized evidence as a schema-shaped failure", () => {
     expectSchemaError([]);
   });
@@ -235,6 +245,16 @@ describe("calculateEthFeeCrossCheck", () => {
     ["receipt effective gas price", (block: NormalizedEthFeeBlock) => { block.receipts[0]!.effectiveGasPrice = -1n; }],
   ])("rejects negative %s as schema-shaped evidence", (_name, mutate) => {
     const block = validBlock();
+    mutate(block);
+    expectSchemaError([block]);
+  });
+
+  it.each([
+    ["block blob gas used", (block: NormalizedEthFeeBlock) => { block.blobGasUsed = -1n; }],
+    ["receipt blob gas used", (block: NormalizedEthFeeBlock) => { block.receipts[0]!.blobGasUsed = -1n; }],
+    ["receipt blob gas price", (block: NormalizedEthFeeBlock) => { block.receipts[0]!.blobGasPrice = -1n; }],
+  ])("rejects negative %s on blob evidence as schema-shaped", (_name, mutate) => {
+    const block = validBlobBlock();
     mutate(block);
     expectSchemaError([block]);
   });
