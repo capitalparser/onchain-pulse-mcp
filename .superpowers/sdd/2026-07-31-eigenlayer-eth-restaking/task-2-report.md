@@ -13,7 +13,7 @@ and accounting semantics remain pinned to EigenLayer's official
 - [official StrategyManager interface](https://github.com/Layr-Labs/eigenlayer-contracts/blob/d302f65042164c8d8d0a983c1540d85a8710030b/src/contracts/interfaces/IStrategyManager.sol)
 - [official strategy interface](https://github.com/Layr-Labs/eigenlayer-contracts/blob/d302f65042164c8d8d0a983c1540d85a8710030b/src/contracts/interfaces/IStrategy.sol)
 - [official EigenPodManager interface](https://github.com/Layr-Labs/eigenlayer-contracts/blob/d302f65042164c8d8d0a983c1540d85a8710030b/src/contracts/interfaces/IEigenPodManager.sol)
-- [official StrategyBase share conversion](https://github.com/Layr-Labs/eigenlayer-contracts/blob/d302f65042164c8d8d0a983c1540d85a8710030b/src/contracts/strategies/StrategyBase.sol#L274-L287)
+- [official StrategyBase share conversion](https://github.com/Layr-Labs/eigenlayer-contracts/blob/d302f65042164c8d8d0a983c1540d85a8710030b/src/contracts/strategies/StrategyBase.sol#L218-L226)
 
 The adapter preserves token custody and the strategy share-accounting quote as
 independent token-native observations. A quote above custody is valid evidence
