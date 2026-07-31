@@ -87,12 +87,21 @@ describe("EthConsensusRewardsCrossCheckSnapshotSchema", () => {
     expect(EthConsensusRewardsCrossCheckSnapshotSchema.safeParse(candidate).success).toBe(false);
   });
 
-  it.each([
-    ["aggregate proposer reward", (candidate: Record<string, unknown>) => { (candidate.metrics as Record<string, unknown>).block_proposer_reward = exact("-1", "-0.000000001"); (candidate.metrics as Record<string, unknown>).observed_consensus_reward = exact("16", "0.000000016"); }],
-    ["block-row proposer reward", (candidate: Record<string, unknown>) => { candidate.blocks = [{ slot: 320, block_root: root(1), proposer_index: 7, block_proposer_reward: exact("-1", "-0.000000001"), sync_committee_net_reward: exact("5", "0.000000005") }]; (candidate.metrics as Record<string, unknown>).block_proposer_reward = exact("-1", "-0.000000001"); (candidate.metrics as Record<string, unknown>).observed_consensus_reward = exact("16", "0.000000016"); }],
-  ] as const)("rejects a negative public %s", (_name, mutate) => {
+  it("rejects a negative aggregate proposer reward", () => {
     const candidate = verifiedSnapshot() as unknown as Record<string, unknown>;
-    mutate(candidate);
+    (candidate.metrics as Record<string, unknown>).block_proposer_reward = exact("-1", "-0.000000001");
+    (candidate.metrics as Record<string, unknown>).observed_consensus_reward = exact("16", "0.000000016");
+    expect(EthConsensusRewardsCrossCheckSnapshotSchema.safeParse(candidate).success).toBe(false);
+  });
+
+  it("rejects a negative block-row proposer reward while all aggregate evidence reconciles", () => {
+    const candidate = verifiedSnapshot() as unknown as Record<string, unknown>;
+    (candidate.verified_epoch as Record<string, unknown>).proposed_block_count = 2;
+    (candidate.verified_epoch as Record<string, unknown>).missed_slot_count = 30;
+    candidate.blocks = [
+      { slot: 320, block_root: root(1), proposer_index: 7, block_proposer_reward: exact("-1", "-0.000000001"), sync_committee_net_reward: exact("2", "0.000000002") },
+      { slot: 321, block_root: root(2), proposer_index: 8, block_proposer_reward: exact("11", "0.000000011"), sync_committee_net_reward: exact("3", "0.000000003") },
+    ];
     expect(EthConsensusRewardsCrossCheckSnapshotSchema.safeParse(candidate).success).toBe(false);
   });
 
