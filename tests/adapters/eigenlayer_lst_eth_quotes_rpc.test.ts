@@ -165,6 +165,20 @@ function expectAtomicUnavailable(result: Awaited<ReturnType<typeof fetchEigenLay
 }
 
 describe("fetchEigenLayerLstEthQuotes", () => {
+  it("uses only the v7 cache contract and leaves the ID119 acquisition ceiling unchanged", async () => {
+    const fetchImpl = finalizedCombinedFetch();
+    const ctx = makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch });
+    const cache = ctx.cacheFor({ name: "eigenlayer_lst_eth_quotes", ttlMs: 30 * 60_000, max: 1 });
+    const getOrLoad = vi.spyOn(cache, "getOrLoad");
+    const result = await fetchEigenLayerLstEthQuotes({ rpcUrl: RPC_URL }, ctx);
+    expect(result.methodology).toBe("eigenlayer-covered-lst-eth-quotes-v7");
+    expect(getOrLoad).toHaveBeenCalledWith("eigenlayer-lst-eth-quotes:mainnet-v7", expect.any(Function));
+    expect(getOrLoad).not.toHaveBeenCalledWith("eigenlayer-lst-eth-quotes:mainnet-v6", expect.any(Function));
+    const rounds = fetchImpl.mock.calls.map(([, init]) => JSON.parse((init as RequestInit).body as string) as RequestShape[]);
+    expect(rounds.map((round) => round.length)).toEqual([2, 5, 48, 36, 28]);
+    expect(rounds.flat().map((request) => request.id)).toEqual(Array.from({ length: 119 }, (_, index) => index + 1));
+  });
+
   it("verifies the noncontiguous nine-strategy base subset and exact finalized quote batch", async () => {
     const fetchImpl = finalizedCombinedFetch();
     const result = await fetchEigenLayerLstEthQuotes({ rpcUrl: RPC_URL }, makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }));
@@ -434,7 +448,7 @@ describe("fetchEigenLayerLstEthQuotes", () => {
     expectAtomicUnavailable(first); expectAtomicUnavailable(second); expect(fetchImpl).toHaveBeenCalledTimes(10);
   });
 
-  it("coalesces, v6-caches verified evidence, returns clones, and only uses complete v6 stale evidence", async () => {
+  it("coalesces, v7-caches verified evidence, returns clones, and only uses complete v7 stale evidence", async () => {
     vi.useFakeTimers();
     try {
       const fetchImpl = finalizedCombinedFetch(); const ctx = makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch });
@@ -456,7 +470,7 @@ describe("fetchEigenLayerLstEthQuotes", () => {
     expect((await fetchEigenLayerLstEthQuotes({ rpcUrl: RPC_URL }, ctx)).status).toBe("verified"); expect(fetchImpl).toHaveBeenCalledTimes(9);
   });
 
-  it("vetoes a concurrent provider mismatch without poisoning a verified v6 load", async () => {
+  it("vetoes a concurrent provider mismatch without poisoning a verified v7 load", async () => {
     const fetchImpl = finalizedCombinedFetch(); const ctx = makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch });
     const [accepted, rejected] = await Promise.all([
       fetchEigenLayerLstEthQuotes({ rpcUrl: RPC_URL }, ctx),

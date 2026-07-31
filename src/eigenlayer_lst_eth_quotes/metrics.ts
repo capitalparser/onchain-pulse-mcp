@@ -1,6 +1,7 @@
 import {
   EIGENLAYER_COVERED_LST_STRATEGIES,
   EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES,
+  EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS,
   EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS,
   EigenLayerLstEthQuotesSnapshotSchema,
   type BuildVerifiedEigenLayerLstEthQuotesInput,
@@ -13,6 +14,9 @@ import {
 
 const UINT256_MAX = (2n ** 256n) - 1n;
 const WAD = 10n ** 18n;
+const UNQUOTED_BLOCKER_GAP_DETAILS = Object.fromEntries(
+  EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS.map((blocker) => [blocker.code, blocker.detail]),
+) as Record<(typeof EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS)[number]["code"], string>;
 
 const PERMANENT_GAP_DETAILS: Record<(typeof EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES)[number], string> = {
   lst_quote_coverage_partial: "Only nine of the twelve fixed legacy EigenLayer LST strategies have bounded ETH accounting quotes.",
@@ -41,6 +45,7 @@ const PERMANENT_GAP_DETAILS: Record<(typeof EIGENLAYER_LST_ETH_QUOTES_PERMANENT_
   sweth_reprice_freshness_not_verified: "Swell's last reprice timestamp is context, not an independently verified freshness proof.",
   sweth_proxy_upgradeability_not_verified: "The bounded swETH proxy call does not independently verify current implementation-source correspondence.",
   sweth_backing_not_reconciled: "Swell reprice accounting is not an independent backing reconciliation.",
+  ...UNQUOTED_BLOCKER_GAP_DETAILS,
 };
 const PERMANENT_GAPS: readonly EigenLayerLstEthQuoteGap[] = EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES.map(
   (code) => ({ code, detail: PERMANENT_GAP_DETAILS[code] }),
@@ -204,8 +209,8 @@ export function buildVerifiedEigenLayerLstEthQuotesSnapshot(
   const stale = input.stale === true;
   const snapshot = {
     status: "verified" as const,
-    summary: "Finalized nine-of-twelve EigenLayer quote evidence includes nominal OETH unit accounting; it does not prove OETH backing, redeemability, or executable liquidity.",
-    methodology: "eigenlayer-covered-lst-eth-quotes-v6" as const,
+    summary: "Finalized 9-of-12 ceiling: ankrETH lacks immutable source/proxy/freshness evidence; wBETH lacks issuer source, proxy, and freshness evidence; sfrxETH stops at frxETH, not ETH. ID119 remains final; no RPC calls added. Nominal OETH accounting is not backing, redeemability, or liquidity.",
+    methodology: "eigenlayer-covered-lst-eth-quotes-v7" as const,
     verified_block: input.block,
     covered_quotes: coveredQuotes,
     report_context: {
@@ -238,6 +243,7 @@ export function buildVerifiedEigenLayerLstEthQuotesSnapshot(
       quoted_strategy_count: 9 as const,
       fixed_strategy_count: 12 as const,
       unquoted_strategy_labels: [...EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS] as const,
+      unquoted_strategy_blockers: EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS,
     },
     sources: input.sources,
     source_status: input.sourceStatus.map((status) => ({ ...status, stale })),
@@ -271,7 +277,7 @@ export function buildUnavailableEigenLayerLstEthQuotesSnapshot(input: {
   const snapshot = {
     status: "unavailable" as const,
     summary: input.summary,
-    methodology: "eigenlayer-covered-lst-eth-quotes-v6" as const,
+    methodology: "eigenlayer-covered-lst-eth-quotes-v7" as const,
     verified_block: null,
     covered_quotes: [],
     report_context: null,

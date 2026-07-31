@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   EIGENLAYER_COVERED_LST_STRATEGIES,
   EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES,
+  EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS,
   EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS,
   EigenLayerLstEthQuotesSnapshotSchema,
 } from "../../src/eigenlayer_lst_eth_quotes/types.js";
@@ -19,7 +20,7 @@ function quote(index: number, amounts: readonly [string, string, string, string]
 
 function verified(): any {
   return {
-    status: "verified", summary: "verified", methodology: "eigenlayer-covered-lst-eth-quotes-v6",
+    status: "verified", summary: "verified", methodology: "eigenlayer-covered-lst-eth-quotes-v7",
     verified_block: { number: 1, hash: `0x${"ab".repeat(32)}`, timestamp: 2 },
     covered_quotes: [
       quote(0, ["100", "90", "100", "90"], "steth_token_wei_identity_quote", "lido_pooled_eth_accounting"),
@@ -43,7 +44,12 @@ function verified(): any {
       executable_withdrawal_capacity_eth_wei: null,
     },
     identities: { covered_strategy_order_verified: true, covered_token_identities_verified: true, covered_token_decimals_verified: true, token_amounts_and_quotes_independent: true, partial_aggregates_only: true },
-    coverage: { quoted_strategy_count: 9, fixed_strategy_count: 12, unquoted_strategy_labels: [...EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS] },
+    coverage: {
+      quoted_strategy_count: 9,
+      fixed_strategy_count: 12,
+      unquoted_strategy_labels: [...EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS],
+      unquoted_strategy_blockers: EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS.map((blocker) => ({ ...blocker })),
+    },
     sources: ["ethereum_rpc"], source_status: [{ source: "ethereum_rpc", role: "eigenlayer_finalized_lst_eth_quote_evidence", stale: false }],
     gaps: permanentGaps.map((gap) => ({ ...gap })), capabilities: { ethereum_rpc_active: true },
   };
@@ -65,14 +71,16 @@ describe("EigenLayer covered LST ETH quote domain", () => {
     expect(EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS).toEqual(["ankrETH", "wBETH", "sfrxETH"]);
   });
 
-  it("accepts one exact v6 verified 9-of-12 snapshot with nominal OETH unit accounting", () => {
+  it("accepts one exact v7 verified 9-of-12 snapshot with immutable ordered unquoted blockers", () => {
     const snapshot = verified();
     expect(snapshot.covered_quotes[4]).toMatchObject({ label: "oETH", quote_kind: "origin_oeth_vault_unit_identity_quote", trust_basis: "origin_vault_nominal_withdrawal_unit_accounting", share_accounting_eth_quote_wei: "800", token_custody_eth_quote_wei: "750" });
     expect(snapshot.report_context).toMatchObject({ oeth_last_rebase_unix: "0", oeth_rebase_paused: true, oeth_withdrawal_claim_delay_seconds: "0" });
-    expect(snapshot.coverage).toEqual({ quoted_strategy_count: 9, fixed_strategy_count: 12, unquoted_strategy_labels: [...EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS] });
+    expect(snapshot.coverage?.unquoted_strategy_blockers).toEqual(EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS);
+    expect(snapshot.coverage?.unquoted_strategy_blockers.every((blocker: { detail: string }) => blocker.detail.length <= 240)).toBe(true);
     expect(snapshot.metrics).toMatchObject({ covered_share_accounting_eth_equivalent_wei: "4427", covered_token_custody_eth_equivalent_wei: "4125", executable_withdrawal_capacity_eth_wei: null });
     expect(snapshot.gaps.map((gap: any) => gap.code)).toEqual(EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES);
     expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse({ ...snapshot, methodology: "eigenlayer-covered-lst-eth-quotes-v6" }).success).toBe(false);
   });
 
   it("accepts zero OETH context, paused true, and delay zero without implying redeemability", () => {
@@ -83,7 +91,7 @@ describe("EigenLayer covered LST ETH quote domain", () => {
     expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(value).success).toBe(true);
   });
 
-  it("rejects future OETH rebase, non-identity quotes, rate material, reorder, or substitution", () => {
+  it("rejects future OETH rebase, non-identity quotes, rate material, reordered evidence, or blocker mutation", () => {
     const mutations: Array<(value: any) => void> = [
       (value) => { value.report_context.oeth_last_rebase_unix = "3"; },
       (value) => { value.covered_quotes[4].share_accounting_eth_quote_wei = "801"; },
@@ -91,6 +99,10 @@ describe("EigenLayer covered LST ETH quote domain", () => {
       (value) => { value.covered_quotes[4].quote_kind = "steth_token_wei_identity_quote"; },
       (value) => { value.covered_quotes.reverse(); },
       (value) => { value.covered_quotes[4].strategy = value.covered_quotes[5].strategy; },
+      (value) => { value.coverage.unquoted_strategy_blockers[0].code = "sfrxeth_quote_terminates_in_frxeth_not_eth"; },
+      (value) => { value.coverage.unquoted_strategy_blockers.reverse(); },
+      (value) => { value.coverage.unquoted_strategy_blockers[1].detail = "mutated"; },
+      (value) => { value.coverage.unquoted_strategy_blockers[2].detail = "x".repeat(241); },
     ];
     for (const mutate of mutations) { const value = verified(); mutate(value); expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(value).success).toBe(false); }
   });
@@ -104,8 +116,13 @@ describe("EigenLayer covered LST ETH quote domain", () => {
     expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(value).success).toBe(true);
   });
 
-  it("requires all 26 permanent gaps and rejects partial evidence", () => {
-    expect(EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES).toHaveLength(26);
+  it("requires all 29 permanent gaps including the exact three quote ceilings and rejects partial evidence", () => {
+    expect(EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES).toHaveLength(29);
+    expect(EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES.slice(-3)).toEqual([
+      "ankreth_official_immutable_source_and_freshness_not_verified",
+      "wbeth_official_immutable_source_proxy_and_freshness_not_verified",
+      "sfrxeth_quote_terminates_in_frxeth_not_eth",
+    ]);
     for (const mutate of [(value: any) => { value.gaps.pop(); }, (value: any) => { value.coverage.quoted_strategy_count = 8; }, (value: any) => { delete value.report_context.oeth_rebase_paused; }]) {
       const value = verified(); mutate(value); expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(value).success).toBe(false);
     }
