@@ -128,9 +128,10 @@ cbETH quoted ETH wei = floor(cbETH token amount * exchangeRate / 10**18)
 The adapter recomputes each quote with exact `bigint` arithmetic and rejects a
 zero rate or any result outside uint256. Coinbase controls the oracle and the
 token is upgradeable. The contract exposes no rate timestamp, so the result is
-an `oracle_accounting_quote`, not independently reconciled backing. A permanent
-`cbeth_exchange_rate_timestamp_unavailable` gap records that rate freshness
-cannot be verified from this bounded call.
+a `coinbase_oracle_accounting_quote`, not independently reconciled backing. A
+permanent `cbeth_exchange_rate_freshness_not_verified` gap records that the
+contract exposes no timestamp with which this bounded call could verify rate
+freshness.
 
 ## Finalized Read Plan
 
@@ -176,8 +177,8 @@ Verified output contains:
 - exact share-accounting and custody ETH quotes;
 - cbETH exchange rate when applicable;
 - exact sums:
-  - `covered_share_accounting_exposure_eth_wei`; and
-  - `covered_token_custody_eth_wei`;
+  - `covered_share_accounting_eth_equivalent_wei`; and
+  - `covered_token_custody_eth_equivalent_wei`;
 - coverage count `3` of `12`; and
 - the exact nine unquoted strategy labels.
 

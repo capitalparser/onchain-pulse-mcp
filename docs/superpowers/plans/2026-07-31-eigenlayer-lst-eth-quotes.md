@@ -33,8 +33,9 @@ bounded result. Existing tools and schemas remain unchanged.
 - Prove the missing module failure first.
 - Add failing contract tracers for exact three-token order and identities,
   18-decimal enforcement, canonical uint256 strings, exact partial sums,
-  permanent nulls/gaps, unavailable no-evidence semantics, and stale
-  provenance.
+  permanent nulls/gaps including
+  `cbeth_exchange_rate_freshness_not_verified`, unavailable no-evidence
+  semantics, and stale provenance.
 - Add failing arithmetic tracers for stETH identity conversion, two independent
   rETH direct results, cbETH floor arithmetic, zero rate, overflow, duplicate
   evidence, fabricated sums, reordered entries, and the exact nine unquoted
