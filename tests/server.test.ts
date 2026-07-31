@@ -6,11 +6,13 @@ import { EthConsensusRewardsCrossCheckSnapshotSchema } from "../src/eth_consensu
 import { EthCollateralDemandSnapshotSchema } from "../src/eth_collateral_demand/types.js";
 import { SparkCollateralCapacitySnapshotSchema } from "../src/spark_collateral_capacity/types.js";
 import { LidoPooledEthBackingSnapshotSchema } from "../src/lido_pooled_eth_backing/types.js";
+import { SkyEthCollateralCustodySnapshotSchema } from "../src/sky_eth_collateral_custody/types.js";
 import {
   createServer,
   handleEthCollateralDemand,
   handleSparkEthCollateralCapacity,
   handleLidoPooledEthBacking,
+  handleSkyEthCollateralCustody,
   handleEthFeeCrossCheck,
   handleEthConsensusRewardsCrossCheck,
   handleEthValueCapture,
@@ -21,7 +23,7 @@ import type { EnvConfig } from "../src/env.js";
 const env: EnvConfig = { byok: {}, lang: "en", historyPath: "/tmp/onchain-pulse-mcp-test-history.json", ethereumRpcUrl: undefined, ethereumBeaconApiUrl: undefined };
 
 describe("server", () => {
-  it("registers all thirteen expected tools including Lido pooled ETH backing", () => {
+  it("registers all fourteen expected tools including Sky adapter-held custody", () => {
     const names = listTools()
       .map((t) => t.name)
       .sort();
@@ -37,6 +39,7 @@ describe("server", () => {
       "get_lido_pooled_eth_backing",
       "get_market_pulse",
       "get_rwa_pulse",
+      "get_sky_eth_collateral_custody",
       "get_spark_eth_collateral_capacity",
       "get_stablecoin_pulse",
       "get_token_forensics",
@@ -117,6 +120,20 @@ describe("server", () => {
     expect(LidoPooledEthBackingSnapshotSchema.parse(output)).toEqual(output);
     await expect(handleLidoPooledEthBacking({ rpcUrl: "https://forbidden" }, hc)).rejects.toThrow();
     await expect(handleLidoPooledEthBacking(null, hc)).rejects.toThrow();
+  });
+
+  it("registers and dispatches Sky adapter custody through internal RPC configuration only", async () => {
+    const tool = listTools().find((item) => item.name === "get_sky_eth_collateral_custody");
+    const fetchImpl = vi.fn();
+    const hc = { env, ctx: makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }) };
+    expect(tool?.inputSchema).toEqual({ type: "object", properties: {}, additionalProperties: false });
+    const output = await tool?.handler({}, hc);
+    expect(output).toMatchObject({ status: "unavailable", resolved_contracts: null, ilks: [], buckets: [] });
+    expect((output as { gaps: Array<{ code: string }> }).gaps[0]?.code).toBe("rpc_not_configured");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(SkyEthCollateralCustodySnapshotSchema.parse(output)).toEqual(output);
+    await expect(handleSkyEthCollateralCustody({ rpcUrl: "https://forbidden" }, hc)).rejects.toThrow();
+    await expect(handleSkyEthCollateralCustody(null, hc)).rejects.toThrow();
   });
 
   it("createServer returns a connectable Server instance plus adapter context", () => {

@@ -18,6 +18,7 @@ import { fetchEthConsensusRewardsBeacon } from "./adapters/eth_consensus_rewards
 import { fetchEthCollateralAaveV3 } from "./adapters/eth_collateral_aave_v3.js";
 import { fetchEthCollateralSpark } from "./adapters/eth_collateral_spark.js";
 import { fetchLidoPooledEthBacking } from "./adapters/lido_pooled_eth_rpc.js";
+import { fetchSkyEthCollateralCustody } from "./adapters/sky_eth_collateral_rpc.js";
 import type { EnvConfig } from "./env.js";
 import { windowToDays } from "./eth_value_capture/metrics.js";
 import {
@@ -35,6 +36,7 @@ import {
 import type { EthCollateralDemandSnapshot } from "./eth_collateral_demand/types.js";
 import type { SparkCollateralCapacitySnapshot } from "./spark_collateral_capacity/types.js";
 import type { LidoPooledEthBackingSnapshot } from "./lido_pooled_eth_backing/types.js";
+import type { SkyEthCollateralCustodySnapshot } from "./sky_eth_collateral_custody/types.js";
 import { fanOutAdapters } from "./pipeline/fanout.js";
 import { toScoreInputs } from "./pipeline/score_inputs.js";
 import { loadPulseConfig } from "./pulse/config.js";
@@ -46,6 +48,7 @@ import { getEthConsensusRewardsCrossCheck } from "./tools/get_eth_consensus_rewa
 import { getEthCollateralDemand } from "./tools/get_eth_collateral_demand.js";
 import { getSparkEthCollateralCapacity } from "./tools/get_spark_eth_collateral_capacity.js";
 import { getLidoPooledEthBacking } from "./tools/get_lido_pooled_eth_backing.js";
+import { getSkyEthCollateralCustody } from "./tools/get_sky_eth_collateral_custody.js";
 import { getFundingOi } from "./tools/get_funding_oi.js";
 import { getKrPremium } from "./tools/get_kr_premium.js";
 import { getMarketPulse } from "./tools/get_market_pulse.js";
@@ -86,7 +89,7 @@ interface ToolDef {
   handler: (
     raw: unknown,
     hc: HandlerContext,
-  ) => Promise<ToolResponse | ForensicsSnapshot | EthValueCaptureSnapshot | EthFeeCrossCheckSnapshot | EthConsensusRewardsCrossCheckSnapshot | EthCollateralDemandSnapshot | SparkCollateralCapacitySnapshot | LidoPooledEthBackingSnapshot>;
+  ) => Promise<ToolResponse | ForensicsSnapshot | EthValueCaptureSnapshot | EthFeeCrossCheckSnapshot | EthConsensusRewardsCrossCheckSnapshot | EthCollateralDemandSnapshot | SparkCollateralCapacitySnapshot | LidoPooledEthBackingSnapshot | SkyEthCollateralCustodySnapshot>;
 }
 
 const TOOLS: ToolDef[] = [
@@ -171,6 +174,12 @@ const TOOLS: ToolDef[] = [
     description: "Verified Lido pooled ETH backing at one finalized Ethereum block.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     handler: handleLidoPooledEthBacking,
+  },
+  {
+    name: "get_sky_eth_collateral_custody",
+    description: "Verified legacy Maker/Sky ETH-family adapter-held token custody at one finalized Ethereum block; broader collateral and demand metrics stay null.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    handler: handleSkyEthCollateralCustody,
   },
   {
     name: "get_stablecoin_pulse",
@@ -423,6 +432,15 @@ export async function handleLidoPooledEthBacking(
   NoArgs.parse(raw);
   const adapterSnapshot = await fetchLidoPooledEthBacking({ rpcUrl: hc.env.ethereumRpcUrl }, hc.ctx);
   return getLidoPooledEthBacking({ lang: hc.env.lang, adapterSnapshot });
+}
+
+export async function handleSkyEthCollateralCustody(
+  raw: unknown,
+  hc: HandlerContext,
+): Promise<SkyEthCollateralCustodySnapshot> {
+  NoArgs.parse(raw);
+  const adapterSnapshot = await fetchSkyEthCollateralCustody({ rpcUrl: hc.env.ethereumRpcUrl }, hc.ctx);
+  return getSkyEthCollateralCustody({ lang: hc.env.lang, adapterSnapshot });
 }
 
 async function handleStablecoinPulse(raw: unknown, hc: HandlerContext): Promise<ToolResponse> {

@@ -137,6 +137,15 @@ stake, unique net ETH locked, downstream DeFi collateral, a combined
 Aave/Spark/Lido demand total, or a rehypothecation ratio; those five broader
 metrics remain `null` with explicit gaps.
 
+**Sky ETH Adapter Custody Snapshot**:
+A read-only measurement of legacy Maker/Sky ETH-family tokens held by the six
+fixed ETH-A/B/C, WSTETH-A/B, and RETH-A adapter contracts at one finalized
+Ethereum block. It resolves the official fixed Chainlog and runtime contracts,
+then reports adapter-held token custody only. It is never active Vault
+collateral, actual user collateral, unique or net ETH locked, combined
+Aave/Spark/Lido/Sky demand, or rehypothecation; all five broader metrics remain
+`null` with explicit gaps.
+
 ### Token forensics
 
 **Token Forensics Snapshot**:
