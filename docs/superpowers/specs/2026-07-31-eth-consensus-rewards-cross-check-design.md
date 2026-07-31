@@ -80,6 +80,17 @@ References:
 all validators covered by the endpoint. The adapter never substitutes an empty
 array because an empty filter can be interpreted as no requested validators.
 
+Altair permits one validator to occupy more than one protocol sync-committee
+position. That does not imply duplicate API rows. Standard Beacon reward
+implementations aggregate those positions into one response row per validator:
+[Lighthouse computes balances in a `HashMap` keyed by validator index and emits
+one row per key](https://github.com/sigp/lighthouse/blob/b263df596671a2bd42bf1034e1cdc8188ba8a9b0/beacon_node/beacon_chain/src/sync_committee_rewards.rs),
+while [Prysm's omitted-body path builds the unique full validator-index range,
+filters it to sync-committee membership, and emits one row per selected
+index](https://github.com/OffchainLabs/prysm/blob/e86f42871e69c20f08f9721e041217bfaac88e2a/beacon-chain/rpc/eth/rewards/handlers.go).
+The verifier therefore treats duplicate `validator_index` rows within a single
+sync-committee reward response as malformed provider evidence.
+
 ## Public MCP Contract
 
 Register:
@@ -210,8 +221,9 @@ with an exact `slot` filter:
 
 The block reward proposer index must match the canonical header proposer
 index. Block reward components must sum to the reported total. Duplicate
-attestation validator indices and malformed signed or unsigned 64-bit decimal
-strings invalidate the epoch.
+attestation validator indices, duplicate sync-reward response validator
+indices, and malformed signed or unsigned 64-bit decimal strings invalidate
+the epoch.
 
 ## Transport and Bounds
 

@@ -137,10 +137,13 @@ describe("calculateEthConsensusRewards", () => {
     expectDomainError(mutate, "evidence_mismatch");
   });
 
-  it("accepts duplicate Altair sync committee validator entries and sums both signed rewards", () => {
-    const evidence = validEvidence();
-    evidence.syncCommitteeRewards[0]!.rewards = [{ validatorIndex: 3, reward: -2n }, { validatorIndex: 3, reward: 7n }];
-    expect(calculateEthConsensusRewards(evidence)).toMatchObject({ syncRewardEntryCount: 2, syncCommitteeNetReward: 5n, observedConsensusReward: 27n });
+  it("rejects duplicate validator indices within one provider-aggregated sync reward response", () => {
+    expectDomainError((evidence) => {
+      evidence.syncCommitteeRewards[0]!.rewards = [
+        { validatorIndex: 3, reward: -2n },
+        { validatorIndex: 3, reward: 7n },
+      ];
+    }, "evidence_mismatch");
   });
 
   it("rejects a negative phase0 inclusion delay as schema-shaped evidence", () => {

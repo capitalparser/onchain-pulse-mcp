@@ -78,6 +78,30 @@ describe("fetchEthConsensusRewardsBeacon", () => {
     ]);
   });
 
+  it("rejects duplicate validator indices in an official-shaped sync reward response", async () => {
+    const fetchImpl = finalizedEpochFetch(10, (url, response) => {
+      if (url.pathname.includes("/rewards/sync_committee/")) {
+        return {
+          ...response,
+          data: [
+            response.data[0],
+            { ...response.data[0], reward: "7" },
+          ],
+        };
+      }
+      return response;
+    });
+
+    const result = await fetchEthConsensusRewardsBeacon(
+      { epoch: 10, includeBlocks: false, beaconUrl: "https://beacon.example/credential" },
+      makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }),
+    );
+
+    expect(result.status).toBe("unavailable");
+    expect(result.gaps.map((gap) => gap.code)).toEqual(["beacon_evidence_mismatch"]);
+    expect(result.metrics.observed_consensus_reward).toBeNull();
+  });
+
   it("uses the official URL, method, omitted validator bodies, and at most eight concurrent requests", async () => {
     const active = { value: 0, max: 0 };
     const fetchImpl = allProposedEpochFetch(10, active);

@@ -132,9 +132,12 @@ function validateSync(entry: unknown): asserts entry is NormalizedSyncCommitteeR
   schema(plainObject(entry), "Sync committee evidence must be a non-null plain object.");
   schema(root(entry.blockRoot) && Array.isArray(entry.rewards), "Sync committee evidence must bind a root to an array.");
   mismatch(entry.rewards.length > 0, "Every canonical block requires non-empty sync committee reward evidence.");
+  const validatorIndices = new Set<number>();
   for (const reward of entry.rewards) {
     schema(plainObject(reward), "Sync committee reward entries must be non-null plain objects.");
     schema(safeNonNegativeInteger(reward.validatorIndex) && signed(reward.reward), "Sync committee rewards must have a safe validator index and signed bigint reward.");
+    mismatch(!validatorIndices.has(reward.validatorIndex), "Sync committee reward response validator indices must be unique.");
+    validatorIndices.add(reward.validatorIndex);
   }
 }
 
