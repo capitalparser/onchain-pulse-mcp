@@ -45,8 +45,9 @@ batch transport, bigint uint256 arithmetic.
   `PriceFeed.osTokenVaultController()` / `0xabed451d` is documentary
   corroboration and is not a runtime RPC call. The exact quote batch has IDs
   92–100: rETH twice, cbETH once, osETH controller twice, Mantle Staking
-  `mETH()` and `oracle()` once each, and Mantle Oracle twice. Cold total is
-  exactly 5 batches / 100 logical requests / 98 `eth_call` / IDs 1–100.
+  `mETH()` and `oracle()` once each, and Mantle Staking `mETHToETH()` twice.
+  Cold total is exactly 5 batches / 100 logical requests / 98 `eth_call` /
+  IDs 1–100.
 
 ---
 
@@ -107,7 +108,7 @@ five-token partial sums, exposes coverage `5/12`, and fails closed otherwise.
   ```ts
   "stakewise_v3_direct_controller_quote"
   "stakewise_v3_keeper_reward_accounting"
-  "mantle_direct_oracle_quote"
+  "mantle_staking_direct_oracle_quote"
   "mantle_oracle_reported_accounting"
   ```
 
@@ -170,7 +171,6 @@ every transport/domain failure to atomic bounded unavailable output.
   Staking 0xe3cBd06D7dadB3F4e6557bAb7EdD924CD1489E8f
     mETH() = 0x29e84867 -> 0xd5F7838F5C461fefF7FE49ea5ebaF7728bB0ADfa
     oracle() = 0x7dc0d1d0 -> 0x8735049F496727f824Cc0f2B174d826f5c408192
-  Oracle 0x8735049F496727f824Cc0f2B174d826f5c408192
     mETHToETH(uint256) = 0x5890c11c, twice
   ```
 
@@ -211,10 +211,11 @@ every transport/domain failure to atomic bounded unavailable output.
   v5.0.1-pinned non-proxy StakeWise controller directly; do not issue the
   optional PriceFeed binding call. Verify both mutable Mantle Staking pointer
   results before accepting either mETH direct quote. Send each
-  `convertToAssets` and `mETHToETH` call separately for share-accounting and
-  custody, then pass their direct return values to the Task 1 builder. Never
-  issue a rate-derived substitute, call a public cached base adapter, or retain
-  any partly acquired data.
+  `convertToAssets` call to the StakeWise controller and each `mETHToETH` call
+  to Mantle Staking separately for share-accounting and custody, then pass
+  their direct return values to the Task 1 builder. Never issue a rate-derived
+  substitute, call a public cached base adapter, or retain any partly acquired
+  data.
 
 - [ ] **Step 4: Observe GREEN and commit Task 2**
 

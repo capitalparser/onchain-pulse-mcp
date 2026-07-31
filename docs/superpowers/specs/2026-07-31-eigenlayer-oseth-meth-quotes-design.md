@@ -97,7 +97,7 @@ path.
 - Staking binding calls, each at the same finalized block:
   - `mETH()` / `0x29e84867`, which must return the pinned mETH token; and
   - `oracle()` / `0x7dc0d1d0`, which must return the pinned Oracle.
-- Direct amount calls to the verified Oracle:
+- Direct amount calls to the verified Staking proxy:
   `mETHToETH(uint256)` / `0x5890c11c`, separately for the aggregate
   share-accounting amount and the aggregate token-custody amount.
 
@@ -125,20 +125,20 @@ One uncached v2 acquisition has exactly five HTTP JSON-RPC batches:
      the share-accounting and custody amounts;
    - ID 97: Mantle Staking `mETH()` binding;
    - ID 98: Mantle Staking `oracle()` binding; and
-   - IDs 99–100: verified Oracle `mETHToETH(uint256)` for the share-accounting
-     and custody amounts.
+   - IDs 99–100: verified Mantle Staking `mETHToETH(uint256)` for the
+     share-accounting and custody amounts.
 
 Thus the cold path is exactly five batches, 100 logical requests, 98
 `eth_call` requests, and IDs 1–100. The 98 contract calls all use the same
 numeric finalized block tag. The PriceFeed selector remains documented source
 authority but is intentionally absent from this runtime request map.
 
-## Intended v2 Public Contract After Count Resolution
+## Intended v2 Public Contract
 
-Once the count authority is reconciled, all contract calls must use the same
-numeric finalized block tag, every batch must use exact canonical JSON-RPC
-envelopes, and all request IDs must be unique and contiguous. The domain must
-use `bigint` and canonical uint256 decimal strings only. It must preserve:
+All contract calls must use the same numeric finalized block tag, every batch
+must use exact canonical JSON-RPC envelopes, and all request IDs must be unique
+and contiguous. The domain must use `bigint` and canonical uint256 decimal
+strings only. It must preserve:
 
 - independent share-accounting and custody token amounts and ETH quotes;
 - the exact five covered identities and 18-decimal verification;
@@ -158,7 +158,7 @@ explicit:
 | rETH | `rocket_pool_direct_aggregate_quote` | `rocket_pool_network_accounting` |
 | cbETH | `coinbase_oracle_accounting_quote` | `coinbase_oracle_controlled_rate` |
 | osETH | `stakewise_v3_direct_controller_quote` | `stakewise_v3_keeper_reward_accounting` |
-| mETH | `mantle_direct_oracle_quote` | `mantle_oracle_reported_accounting` |
+| mETH | `mantle_staking_direct_oracle_quote` | `mantle_oracle_reported_accounting` |
 
 ## Cache, Availability, and Public Boundary
 
