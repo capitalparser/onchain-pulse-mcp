@@ -47,7 +47,7 @@ describe("EigenLayer covered LST ETH quote metrics", () => {
     zero[2]!.cbethExchangeRate = 1n;
     const snapshot = build(zero, 0n);
     expect(snapshot.metrics.covered_share_accounting_eth_equivalent_wei).toBe("0");
-    expect(snapshot.report_context.lseth_last_completed_epoch_id).toBe("0");
+    expect(snapshot.report_context?.lseth_last_completed_epoch_id).toBe("0");
   });
 
   it("fails closed for reordered, substituted, incomplete, invalid direct lsETH, invalid epoch, or overflow inputs", () => {
@@ -56,6 +56,16 @@ describe("EigenLayer covered LST ETH quote metrics", () => {
       () => build([...quotes()].reverse()), () => { const x = quotes(); delete x[4]!.directShareAccountingEthQuote; return build(x); },
       () => { const x = quotes(); x[4]!.cbethExchangeRate = 1n; return build(x); }, () => { const x = quotes(); x[4]!.directTokenCustodyEthQuote = -1n; return build(x); },
       () => build(quotes(), -1n), () => build(quotes(), 2n ** 256n), () => { const x = quotes(); x[2]!.shareAccountingTokenAmount = max; x[2]!.cbethExchangeRate = 2n; return build(x); },
+    ];
+    for (const attempt of cases) expect(attempt).toThrow(EigenLayerLstEthQuotesDomainError);
+  });
+
+  it("requires direct lsETH results without rate material and keeps other quote kinds isolated", () => {
+    const cases: Array<() => unknown> = [
+      () => { const x = quotes(); x[4]!.cbethExchangeRate = 1n; return build(x); },
+      () => { const x = quotes(); x[4]!.fabricatedConversionRate = 1n; return build(x); },
+      () => { const x = quotes(); x[0]!.directShareAccountingEthQuote = 101n; return build(x); },
+      () => { const x = quotes(); x[2]!.directTokenCustodyEthQuote = 999n; return build(x); },
     ];
     for (const attempt of cases) expect(attempt).toThrow(EigenLayerLstEthQuotesDomainError);
   });

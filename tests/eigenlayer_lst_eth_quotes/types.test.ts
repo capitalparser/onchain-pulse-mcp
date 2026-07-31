@@ -103,6 +103,23 @@ describe("EigenLayer covered LST ETH quote domain", () => {
     }
   });
 
+  it("rejects negative, missing, malformed, noncanonical, or overflowing public uint256 values", () => {
+    const mutations: Array<(value: ReturnType<typeof verified>) => void> = [
+      (value) => { value.covered_quotes[4]!.share_accounting_eth_quote_wei = "-1"; },
+      (value) => { delete value.covered_quotes[4]!.token_custody_eth_quote_wei; },
+      (value) => { value.covered_quotes[4]!.share_accounting_token_amount = "not-a-number"; },
+      (value) => { value.covered_quotes[5]!.token_custody_token_amount = "01"; },
+      (value) => { value.covered_quotes[4]!.direct_share_accounting_eth_quote = "650"; },
+      (value) => { value.covered_quotes[4]!.share_accounting_eth_quote_wei = (2n ** 256n).toString(); },
+      (value) => { value.covered_quotes[2]!.cbeth_exchange_rate_wei = "0"; },
+      (value) => { value.report_context.lseth_last_completed_epoch_id = (2n ** 256n).toString(); },
+    ];
+    for (const mutate of mutations) {
+      const value = verified(); mutate(value);
+      expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(value).success).toBe(false);
+    }
+  });
+
   it("requires every v3 permanent gap and a coherent stale marker", () => {
     const stale = verified(); stale.source_status[0]!.stale = true; stale.gaps.push({ code: "source_stale", detail: "cached" });
     expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(stale).success).toBe(true);
