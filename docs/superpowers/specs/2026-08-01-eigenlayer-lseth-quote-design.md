@@ -44,6 +44,13 @@ zero; otherwise it returns the exact Solidity integer floor:
 shares * assetBalance / totalShares
 ```
 
+Official source references:
+
+- [v1.3.0 mainnet River deployment](https://github.com/liquid-collective/liquid-collective-protocol/blob/964f0e363fbaec8955af430888838a1666a1c6ba/README.md)
+- [ISharesManagerV1 conversion interface](https://github.com/liquid-collective/liquid-collective-protocol/blob/964f0e363fbaec8955af430888838a1666a1c6ba/contracts/src/interfaces/components/ISharesManager.1.sol)
+- [SharesManagerV1 floor conversion implementation](https://github.com/liquid-collective/liquid-collective-protocol/blob/964f0e363fbaec8955af430888838a1666a1c6ba/contracts/src/components/SharesManager.1.sol)
+- [OracleManagerV1 completed-epoch implementation](https://github.com/liquid-collective/liquid-collective-protocol/blob/964f0e363fbaec8955af430888838a1666a1c6ba/contracts/src/components/OracleManager.1.sol)
+
 The selector is `0xf79c3f02`. The adapter must call it independently for the
 base verifier's share-accounting token amount and token-custody token amount,
 at the same numeric finalized block. It accepts the direct results as the two

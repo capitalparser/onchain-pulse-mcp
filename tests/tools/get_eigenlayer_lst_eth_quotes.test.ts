@@ -51,12 +51,21 @@ function verified(stale = false) {
       {
         ...EIGENLAYER_COVERED_LST_STRATEGIES[4],
         underlyingToken: EIGENLAYER_COVERED_LST_STRATEGIES[4].underlying_token,
+        shareAccountingTokenAmount: 85n,
+        tokenCustodyTokenAmount: 95n,
+        directShareAccountingEthQuote: 86n,
+        directTokenCustodyEthQuote: 96n,
+      },
+      {
+        ...EIGENLAYER_COVERED_LST_STRATEGIES[5],
+        underlyingToken: EIGENLAYER_COVERED_LST_STRATEGIES[5].underlying_token,
         shareAccountingTokenAmount: 90n,
         tokenCustodyTokenAmount: 100n,
         directShareAccountingEthQuote: 91n,
         directTokenCustodyEthQuote: 101n,
       },
     ],
+    lsethLastCompletedEpochId: 123n,
     sources: ["ethereum_rpc"],
     sourceStatus,
     stale,
@@ -70,8 +79,8 @@ describe("getEigenLayerLstEthQuotes", () => {
       adapterSnapshot: { ...verified(), summary: "https://rpc.example/credential-secret" },
     });
 
-    expect(result.summary).toContain("Finalized direct protocol-accounting quotes for stETH/rETH/cbETH/osETH/mETH cover only 5 of 12");
-    expect(result.summary).toContain("share-accounting/custody sums are distinct partials");
+    expect(result.summary).toContain("Finalized stETH/rETH/cbETH/osETH/lsETH/mETH direct accounting quotes cover 6 of 12");
+    expect(result.summary).toContain("share/custody are distinct partials");
     expect(result.summary.length).toBeLessThanOrEqual(500);
     expect(JSON.stringify(result)).not.toContain("credential-secret");
   });
@@ -93,9 +102,9 @@ describe("getEigenLayerLstEthQuotes", () => {
     ];
 
     for (const result of cases) {
-      expect(result.summary).toMatch(/stETH\/rETH\/cbETH\/osETH\/mETH/);
-      expect(result.summary).toMatch(/5 of 12|고정 전략 12개 중 5개/);
-      expect(result.summary).toMatch(/share-accounting\/custody sums are distinct partials|지분 회계와 토큰 보관 합계는 서로 다른 부분 합계/);
+      expect(result.summary).toMatch(/stETH\/rETH\/cbETH\/osETH\/lsETH\/mETH/);
+      expect(result.summary).toMatch(/6 of 12|고정 전략 12개 중 6개/);
+      expect(result.summary).toMatch(/share\/custody are distinct partials|지분 회계와 토큰 보관 합계는 서로 다른 부분 합계/);
       expect(result.summary.length).toBeLessThanOrEqual(500);
       expect(JSON.stringify(result)).not.toContain("credential-secret");
     }
@@ -110,10 +119,10 @@ describe("getEigenLayerLstEthQuotes", () => {
     for (const result of cases.slice(0, 3)) {
       expect(result.summary).toMatch(/full LST\/native\/EigenLayer totals/);
       expect(result.summary).toMatch(/unique\/net locked ETH/);
-      expect(result.summary).toMatch(/combined Aave\/Spark\/Lido\/Sky\/EigenLayer demand/);
+      expect(result.summary).toMatch(/Aave\/Spark\/Lido\/Sky\/EigenLayer demand/);
       expect(result.summary).toMatch(/rehypothecation/);
-      expect(result.summary).toMatch(/independent backing reconciliation/);
-      expect(result.summary).toMatch(/cbETH exchange-rate freshness, osETH virtual-reward-input freshness, or mETH oracle-record freshness/);
+      expect(result.summary).toMatch(/independent backing/);
+      expect(result.summary).toMatch(/cbETH exchange-rate freshness; osETH virtual-reward-input freshness; lsETH oracle-report freshness or proxy implementation correspondence; mETH oracle-record freshness/);
       expect(result.summary).toMatch(/executable withdrawal\/liquidity/);
     }
     for (const result of cases.slice(3)) {
@@ -122,7 +131,7 @@ describe("getEigenLayerLstEthQuotes", () => {
       expect(result.summary).toMatch(/Aave\/Spark\/Lido\/Sky\/EigenLayer 통합 수요/);
       expect(result.summary).toMatch(/재담보화/);
       expect(result.summary).toMatch(/독립적인 담보 대사/);
-      expect(result.summary).toMatch(/cbETH 환율 최신성, osETH 가상 보상 입력 최신성, mETH 오라클 기록 최신성/);
+      expect(result.summary).toMatch(/cbETH 환율 최신성, osETH 가상 보상 입력 최신성, lsETH 오라클 보고 최신성 또는 프록시 구현 일치성, mETH 오라클 기록 최신성/);
       expect(result.summary).toMatch(/실행 가능한 출금\/유동성/);
     }
   });

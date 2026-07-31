@@ -163,21 +163,22 @@ rehypothecation ratio; all six broader metrics remain `null` with explicit
 gaps.
 
 **EigenLayer Covered LST ETH Quotes Snapshot**:
-A separate read-only direct protocol-accounting quote view for exactly 5 of the
+A separate read-only direct protocol-accounting quote view for exactly 6 of the
 12 fixed legacy strategies, in this fixed order: stETH, rETH, cbETH, osETH,
-and mETH. The base authority is EigenLayer release `v1.12.0`, commit
+lsETH, and mETH. The base authority is EigenLayer release `v1.12.0`, commit
 `d302f65042164c8d8d0a983c1540d85a8710030b`. The 18-decimal token identities
 are stETH `0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84`, rETH
 `0xae78736Cd615f374D3085123A210448E74Fc6393`, cbETH
 `0xBe9895146f7AF43049ca1c1AE358B0541Ea49704`, osETH
-`0xf1C9acDc66974dFB6dEcB12aA385b9cD01190E38`, and mETH
+`0xf1C9acDc66974dFB6dEcB12aA385b9cD01190E38`, lsETH
+`0x8c1BEd5b9a0928467c9B1341Da1D7BD5e10b6549`, and mETH
 `0xd5F7838F5C461fefF7FE49ea5ebaF7728bB0ADfa`. The exact unquoted list is
-ETHx, ankrETH, oETH, swETH, wBETH, sfrxETH, lsETH.
+ETHx, ankrETH, oETH, swETH, wBETH, sfrxETH.
 
 **Covered partial metrics**:
 `covered_share_accounting_eth_equivalent_wei` and
 `covered_token_custody_eth_equivalent_wei` are distinct partial sums across
-only the five covered strategy amounts. They are not full LST, native-restaked,
+only the six covered strategy amounts. They are not full LST, native-restaked,
 or total EigenLayer exposure, independent backing, or downstream-reuse views.
 
 **Covered LST quote trust basis**:
@@ -201,13 +202,23 @@ calls. mETH is pinned to Mantle mantle-lsp/contracts release `v1.4.1`, commit
 `0x8735049F496727f824Cc0f2B174d826f5c408192`; Staking—not Oracle—receives
 both `mETHToETH(uint256)` (`0x5890c11c`) calls.
 
+lsETH is pinned to Liquid Collective `liquid-collective-protocol` release
+`v1.3.0`, commit `964f0e363fbaec8955af430888838a1666a1c6ba`: the mainnet
+River/LsETH proxy `0x8c1BEd5b9a0928467c9B1341Da1D7BD5e10b6549` receives two
+`underlyingBalanceFromShares(uint256)` calls (`0xf79c3f02`) and one
+`getLastCompletedEpochId()` call (`0x89896aef`). The direct conversion is the
+protocol's exact zero-or-floor share accounting; the epoch is report context
+only, not freshness proof. The bounded target does not independently verify
+proxy implementation/source correspondence or backing.
+
 **Covered LST quote acquisition boundary**:
-One cold verification is exactly 5 JSON-RPC batches, 100 logical requests, 98
-`eth_call` requests, and contiguous IDs 1--100 at one numeric finalized block.
-IDs 92--100 are rETH twice, cbETH once, osETH controller twice, Mantle Staking
-`mETH()` and `oracle()` once each, and Staking `mETHToETH()` twice. The sole v2
-30-minute combined cache neither consumes the base public cache nor accepts a
-stale base; stale fallback requires prior complete five-token verified evidence.
+One cold verification is exactly 5 JSON-RPC batches, 103 logical requests, 101
+`eth_call` requests, and contiguous IDs 1--103 at one numeric finalized block.
+IDs 92--100 preserve rETH/cbETH/osETH/Mantle calls; IDs 101--102 are River
+share/custody conversions and ID 103 is its completed-epoch report context.
+The sole v3 30-minute combined cache neither consumes the base public cache nor
+accepts a stale base; stale fallback requires prior complete six-token verified
+evidence.
 
 The seven broader fields `lst_restaked_eth_equivalent_wei`,
 `native_restaked_eth_wei`, `eigenlayer_eth_family_exposure_eth_wei`,
@@ -216,8 +227,9 @@ The seven broader fields `lst_restaked_eth_equivalent_wei`,
 `null`. The snapshot does not establish full LST/native/EigenLayer totals,
 unique/net locked ETH, combined Aave/Spark/Lido/Sky/EigenLayer demand,
 rehypothecation, independent backing reconciliation, cbETH exchange-rate
-freshness, osETH virtual-reward-input freshness, or mETH oracle-record
-freshness; nor executable withdrawal/liquidity. Permanent gaps are
+freshness, osETH virtual-reward-input freshness, mETH oracle-record freshness,
+lsETH report freshness, proxy implementation/source correspondence, or backing;
+nor executable withdrawal/liquidity. Permanent gaps are
 `lst_quote_coverage_partial`, `native_restaked_eth_not_measured`,
 `lst_restaked_eth_equivalent_not_measured`,
 `eigenlayer_eth_family_exposure_not_measured`,
@@ -226,7 +238,9 @@ freshness; nor executable withdrawal/liquidity. Permanent gaps are
 `rehypothecation_ratio_not_measured`, `executable_withdrawal_capacity_not_measured`,
 `cbeth_exchange_rate_freshness_not_verified`,
 `oseth_virtual_rewards_freshness_not_verified`, `oseth_backing_not_reconciled`,
-`meth_oracle_record_freshness_not_verified`, and `meth_backing_not_reconciled`.
+`meth_oracle_record_freshness_not_verified`, `meth_backing_not_reconciled`,
+`lseth_oracle_report_freshness_not_verified`,
+`lseth_proxy_upgradeability_not_verified`, and `lseth_backing_not_reconciled`.
 
 ### Token forensics
 
