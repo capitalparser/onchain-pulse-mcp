@@ -58,7 +58,7 @@ Set any of these env vars to enrich responses with paid data sources. The server
 | `CRYPTOQUANT_API_KEY` | CryptoQuant | Reserved for v0.2 |
 | `LAEVITAS_API_KEY` | Laevitas | Reserved for v0.2 |
 | `DUNE_API_KEY` | Dune | ETH fee burn and labelled L2 rent through direct SQL execution |
-| `ETHEREUM_RPC_URL` | Ethereum Execution API | Optional finalized-block fee cross-check transport; internal only and never returned |
+| `ETHEREUM_RPC_URL` | Ethereum Execution API | Optional finalized-block fee and Aave V3 Core supplied-capacity transport; internal only and never returned |
 | `ETHEREUM_BEACON_API_URL` | Ethereum Beacon API | Optional finalized-epoch reward-component cross-check transport; internal only and never returned |
 
 `DUNE_API_KEY` is used only when a caller explicitly selects
@@ -83,6 +83,7 @@ Set `OPM_LANG=ko` for Korean `summary` strings. Default is `en`.
 | `get_token_forensics` | `chain`, `token_address`, `pool_address?`, `max_wallets?`, `paid_mode?` | Phase 1 token-level forensic snapshot with pool discovery, non-prescriptive flow reading, confidence, and explicit gaps |
 | `get_eth_value_capture` | `window?`, `paid_mode?`, `include_rollups?` | ETH fee burn, execution tips, L2 rent, supply change, and aligned issuance |
 | `get_eth_fee_cross_check` | `start_block`, `end_block`, `include_blocks?` | Exact finalized Ethereum execution-fee and burn verification for a bounded block range |
+| `get_eth_collateral_demand` | none | Exact finalized Aave V3 Core ETH-family supplied capacity; broader collateral and lock metrics stay null |
 | `get_eth_consensus_rewards_cross_check` | `epoch`, `include_blocks?` | Exact finalized Ethereum consensus reward-component verification for one epoch |
 
 `get_token_forensics` is Phase 1. It discovers the best pool through DexScreener
@@ -190,9 +191,9 @@ npm run test:live:eth-value
 
 The live Coin Metrics and GrowThePie checks are free. The Dune check consumes
 Dune credits and runs only when both `DUNE_API_KEY` is present and
-`RUN_LIVE_DUNE_ETH_VALUE=1` explicitly authorizes it. ETH collateral demand,
-price/ETH-BTC comparison, ETF or treasury-company flows, and Beacon reward
-indexing remain deferred.
+`RUN_LIVE_DUNE_ETH_VALUE=1` explicitly authorizes it. Price/ETH-BTC comparison,
+ETF or treasury-company flows, and deeper user-position or cross-protocol
+collateral indexing remain deferred.
 
 ### Ethereum execution fee cross-check
 
@@ -245,6 +246,42 @@ npm run test:live:eth-rpc
 It remains skipped unless both `RUN_LIVE_ETH_RPC=1` and `ETHEREUM_RPC_URL` are
 set. When enabled, it resolves a finalized head and verifies no more than two
 finalized blocks.
+
+### Aave V3 Core ETH-family supplied capacity
+
+`get_eth_collateral_demand` has no arguments. It is a read-only verifier for
+the fixed Aave V3 **Ethereum Core** ETH-family reserve set: WETH, wstETH,
+cbETH, rETH, weETH, osETH, ETHx, rsETH, tETH, and ezETH. It is not a user
+position index and does not claim actual user collateral, unique ETH locked,
+net ETH locked, gross collateral, or rehypothecation.
+
+For each uncached request the verifier uses exactly four JSON-RPC batch rounds
+and at most **35 logical calls**: mainnet chain/finalized block, provider
+resolution, ten reserve configurations plus ten aToken supplies, then ten
+asset prices plus a duplicate WETH reference price. Every contract read is
+bound to the same exact finalized hexadecimal block tag, and `eth_chainId`
+must be canonical Ethereum mainnet `0x1`.
+
+Values use bigint-only rational ETH equivalents. Each result exposes
+`wei_floor`, exact base-10 `eth_floor`, `remainder`, and `denominator`; no
+value-carrying arithmetic uses JavaScript floating point. A verified response
+has Aave reserve supply coverage only. `actual_user_collateral`,
+`net_eth_locked`, `gross_eth_collateral`, and `rehypothecation_ratio` are
+always `null` with explicit coverage gaps.
+
+Set `ETHEREUM_RPC_URL` only in the server environment. It may contain provider
+credentials and is never returned, logged, persisted, or included in cache
+keys. Without it, the tool returns `rpc_not_configured` without making a
+network request. The default test suite never calls the endpoint.
+
+The single-snapshot live verifier is explicitly opt-in and read-only:
+
+```bash
+npm run test:live:eth-collateral
+```
+
+It remains skipped unless both `RUN_LIVE_ETH_COLLATERAL=1` and
+`ETHEREUM_RPC_URL` are set.
 
 ### Ethereum consensus reward-component cross-check
 

@@ -3,8 +3,10 @@ import { makeContext } from "../src/adapters/base.js";
 import { EthValueCaptureSnapshotSchema } from "../src/eth_value_capture/types.js";
 import { EthFeeCrossCheckSnapshotSchema } from "../src/eth_fee_cross_check/types.js";
 import { EthConsensusRewardsCrossCheckSnapshotSchema } from "../src/eth_consensus_rewards/types.js";
+import { EthCollateralDemandSnapshotSchema } from "../src/eth_collateral_demand/types.js";
 import {
   createServer,
+  handleEthCollateralDemand,
   handleEthFeeCrossCheck,
   handleEthConsensusRewardsCrossCheck,
   handleEthValueCapture,
@@ -15,13 +17,14 @@ import type { EnvConfig } from "../src/env.js";
 const env: EnvConfig = { byok: {}, lang: "en", historyPath: "/tmp/onchain-pulse-mcp-test-history.json", ethereumRpcUrl: undefined, ethereumBeaconApiUrl: undefined };
 
 describe("server", () => {
-  it("registers all ten expected tools", () => {
+  it("registers all eleven expected tools", () => {
     const names = listTools()
       .map((t) => t.name)
       .sort();
 
     expect(names).toEqual([
       "get_etf_flow",
+      "get_eth_collateral_demand",
       "get_eth_consensus_rewards_cross_check",
       "get_eth_fee_cross_check",
       "get_eth_value_capture",
@@ -85,6 +88,15 @@ describe("server", () => {
       end_block: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
       include_blocks: { type: "boolean", default: false },
     });
+  });
+
+  it("get_eth_collateral_demand advertises and enforces a strict empty object", async () => {
+    const tool = listTools().find((item) => item.name === "get_eth_collateral_demand");
+    expect(tool?.inputSchema).toEqual({ type: "object", properties: {}, additionalProperties: false });
+    await expect(tool?.handler({ asset: "WETH" }, {
+      env,
+      ctx: makeContext({ env, fetchImpl: vi.fn() as unknown as typeof fetch }),
+    })).rejects.toThrow();
   });
 
   it("createServer returns a connectable Server instance plus adapter context", () => {
@@ -195,6 +207,39 @@ describe("handleEthFeeCrossCheck", () => {
       env,
       ctx: makeContext({ env, fetchImpl: vi.fn() as unknown as typeof fetch }),
     })).rejects.toThrow();
+  });
+});
+
+describe("handleEthCollateralDemand", () => {
+  it("returns a localized bounded no-config snapshot without calling fetch", async () => {
+    const fetchImpl = vi.fn();
+    const output = await handleEthCollateralDemand(
+      {},
+      { env, ctx: makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }) },
+    );
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(output.status).toBe("unavailable");
+    expect(output.summary).toBe("Aave V3 Core ETH-family supplied capacity evidence is unavailable.");
+    expect(output.gaps.map((gap) => gap.code)).toEqual(["rpc_not_configured"]);
+    expect(EthCollateralDemandSnapshotSchema.parse(output)).toEqual(output);
+  });
+
+  it("does not expose the internal RPC URL when the collateral adapter fails", async () => {
+    const secret = "https://rpc.example/credential-never-returned";
+    const localEnv: EnvConfig = { ...env, ethereumRpcUrl: secret };
+    const output = await handleEthCollateralDemand(
+      {},
+      {
+        env: localEnv,
+        ctx: makeContext({
+          env: localEnv,
+          fetchImpl: vi.fn().mockRejectedValue(new Error(`provider failed: ${secret}`)) as unknown as typeof fetch,
+        }),
+      },
+    );
+    expect(output.status).toBe("unavailable");
+    expect(output.summary).toBe("Aave V3 Core ETH-family supplied capacity evidence is unavailable.");
+    expect(JSON.stringify(output)).not.toContain(secret);
   });
 });
 
