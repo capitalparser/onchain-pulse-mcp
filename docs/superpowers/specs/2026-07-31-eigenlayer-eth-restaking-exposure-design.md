@@ -1,7 +1,7 @@
 # EigenLayer ETH Restaking Exposure Design
 
-**Date:** 2026-07-31  
-**Base:** `90bd96353afee9af952c165c41fe66c2c4682c32`  
+**Date:** 2026-07-31
+**Base:** `90bd96353afee9af952c165c41fe66c2c4682c32`
 **Branch:** `feat/eigenlayer-eth-restaking-exposure`
 
 ## Goal
