@@ -36,6 +36,11 @@ export const ExactSignedGweiAmountSchema = z.object({
 });
 export type ExactSignedGweiAmount = z.infer<typeof ExactSignedGweiAmountSchema>;
 
+const ExactUnsignedGweiAmountSchema = ExactSignedGweiAmountSchema.refine(
+  (amount) => BigInt(amount.gwei) >= 0n,
+  "Proposer rewards must be non-negative.",
+);
+
 export const EthConsensusRewardsGapCodeSchema = z.enum([
   "beacon_not_configured",
   "beacon_access_gap",
@@ -65,7 +70,7 @@ export type EthConsensusRewardsSourceStatus = z.infer<typeof EthConsensusRewards
 export const EthConsensusRewardsMetricsSchema = z.object({
   attestation_net_reward: ExactSignedGweiAmountSchema.nullable(),
   sync_committee_net_reward: ExactSignedGweiAmountSchema.nullable(),
-  block_proposer_reward: ExactSignedGweiAmountSchema.nullable(),
+  block_proposer_reward: ExactUnsignedGweiAmountSchema.nullable(),
   observed_consensus_reward: ExactSignedGweiAmountSchema.nullable(),
   consensus_issuance: z.null(),
   net_issuance: z.null(),
@@ -84,7 +89,7 @@ export const EthConsensusRewardBlockSchema = z.object({
   slot: z.number().int().nonnegative().safe(),
   block_root: z.string().regex(/^0x[0-9a-f]{64}$/),
   proposer_index: z.number().int().nonnegative().safe(),
-  block_proposer_reward: ExactSignedGweiAmountSchema,
+  block_proposer_reward: ExactUnsignedGweiAmountSchema,
   sync_committee_net_reward: ExactSignedGweiAmountSchema,
 }).strict();
 export type EthConsensusRewardBlock = z.infer<typeof EthConsensusRewardBlockSchema>;
@@ -167,6 +172,9 @@ function observedIdentityHolds(metrics: EthConsensusRewardsMetrics): boolean {
 const UnavailableGapCodes = new Set<EthConsensusRewardsGapCode>([
   "beacon_not_configured", "beacon_access_gap", "beacon_finality_gap", "beacon_schema_drift", "beacon_evidence_mismatch",
 ]);
+const VerifiedGapCodes = new Set<EthConsensusRewardsGapCode>([
+  "consensus_issuance_incomplete", "net_issuance_requires_burn_alignment", "source_stale",
+]);
 
 export const EthConsensusRewardsCrossCheckSnapshotSchema = SnapshotBaseSchema.superRefine((snapshot, context) => {
   const slots = calculateEpochSlots(snapshot.requested_epoch.epoch);
@@ -202,7 +210,8 @@ export const EthConsensusRewardsCrossCheckSnapshotSchema = SnapshotBaseSchema.su
   if (!snapshot.coverage.attestation_rewards_complete || !snapshot.coverage.sync_committee_rewards_complete || !snapshot.coverage.block_proposer_rewards_complete) {
     snapshotIssue(context, "Verified snapshots require every exposed reward coverage flag.", ["coverage"]);
   }
-  if (!snapshot.gaps.some((gap) => gap.code === "consensus_issuance_incomplete") || !snapshot.gaps.some((gap) => gap.code === "net_issuance_requires_burn_alignment")) {
+  const permanentGapCount = (code: EthConsensusRewardsGapCode): number => snapshot.gaps.filter((gap) => gap.code === code).length;
+  if (permanentGapCount("consensus_issuance_incomplete") !== 1 || permanentGapCount("net_issuance_requires_burn_alignment") !== 1 || permanentGapCount("source_stale") > 1 || snapshot.gaps.some((gap) => !VerifiedGapCodes.has(gap.code))) {
     snapshotIssue(context, "Verified snapshots require permanent issuance coverage gaps.", ["gaps"]);
   }
   if (!observedIdentityHolds(snapshot.metrics)) snapshotIssue(context, "Observed consensus reward identity must hold.", ["metrics"]);

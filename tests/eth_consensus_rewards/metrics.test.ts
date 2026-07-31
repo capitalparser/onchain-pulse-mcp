@@ -129,4 +129,49 @@ describe("calculateEthConsensusRewards", () => {
   it("rejects malformed normalized root evidence as a schema error", () => {
     expectDomainError((evidence) => { evidence.headers[0]!.blockRoot = "0x1234"; }, "schema");
   });
+
+  it.each([
+    ["all attestation rewards", (evidence: NormalizedEthConsensusRewardsEvidence) => { evidence.attestationRewards = []; }],
+    ["all sync rewards for a canonical block", (evidence: NormalizedEthConsensusRewardsEvidence) => { evidence.syncCommitteeRewards[0]!.rewards = []; }],
+  ] as const)("rejects missing %s instead of synthesizing observed zero", (_name, mutate) => {
+    expectDomainError(mutate, "evidence_mismatch");
+  });
+
+  it("accepts duplicate Altair sync committee validator entries and sums both signed rewards", () => {
+    const evidence = validEvidence();
+    evidence.syncCommitteeRewards[0]!.rewards = [{ validatorIndex: 3, reward: -2n }, { validatorIndex: 3, reward: 7n }];
+    expect(calculateEthConsensusRewards(evidence)).toMatchObject({ syncRewardEntryCount: 2, syncCommitteeNetReward: 5n, observedConsensusReward: 27n });
+  });
+
+  it("rejects a negative phase0 inclusion delay as schema-shaped evidence", () => {
+    expectDomainError((evidence) => { evidence.attestationRewards[0]!.inclusionDelay = -1n; }, "schema");
+  });
+
+  it.each([
+    ["a missing proposer response", (evidence: NormalizedEthConsensusRewardsEvidence) => { evidence.blockProposerRewards = []; }],
+    ["a duplicate proposer response", (evidence: NormalizedEthConsensusRewardsEvidence) => { evidence.blockProposerRewards.push({ ...evidence.blockProposerRewards[0]! }); }],
+    ["a missing sync response", (evidence: NormalizedEthConsensusRewardsEvidence) => { evidence.syncCommitteeRewards = []; }],
+    ["a duplicate sync response", (evidence: NormalizedEthConsensusRewardsEvidence) => { evidence.syncCommitteeRewards.push({ blockRoot: root(1), rewards: [{ validatorIndex: 9, reward: 0n }] }); }],
+    ["an overlapping proposed and missed slot", (evidence: NormalizedEthConsensusRewardsEvidence) => { evidence.missedSlots[0] = 320; }],
+    ["unordered missed slots", (evidence: NormalizedEthConsensusRewardsEvidence) => { [evidence.missedSlots[0], evidence.missedSlots[1]] = [evidence.missedSlots[1]!, evidence.missedSlots[0]!]; }],
+  ] as const)("rejects %s as evidence mismatch", (_name, mutate) => {
+    expectDomainError(mutate, "evidence_mismatch");
+  });
+
+  it.each([
+    ["an attestation row", (evidence: NormalizedEthConsensusRewardsEvidence) => { evidence.attestationRewards[0] = null as unknown as (typeof evidence.attestationRewards)[number]; }],
+    ["a canonical header row", (evidence: NormalizedEthConsensusRewardsEvidence) => { evidence.headers[0] = null as unknown as (typeof evidence.headers)[number]; }],
+    ["a proposer response row", (evidence: NormalizedEthConsensusRewardsEvidence) => { evidence.blockProposerRewards[0] = null as unknown as (typeof evidence.blockProposerRewards)[number]; }],
+    ["a sync response row", (evidence: NormalizedEthConsensusRewardsEvidence) => { evidence.syncCommitteeRewards[0] = null as unknown as (typeof evidence.syncCommitteeRewards)[number]; }],
+    ["a nested sync reward row", (evidence: NormalizedEthConsensusRewardsEvidence) => { evidence.syncCommitteeRewards[0]!.rewards[0] = null as unknown as (typeof evidence.syncCommitteeRewards)[number]["rewards"][number]; }],
+  ] as const)("turns malformed %s into a typed schema error instead of TypeError", (_name, mutate) => {
+    expectDomainError(mutate, "schema");
+  });
+
+  it("rejects a class-instance normalized row even when its fields otherwise look valid", () => {
+    const evidence = validEvidence();
+    const classInstance = Object.assign(new (class {})(), evidence.attestationRewards[0]!);
+    evidence.attestationRewards[0] = classInstance as (typeof evidence.attestationRewards)[number];
+    expectDomainError((candidate) => { candidate.attestationRewards[0] = classInstance as (typeof candidate.attestationRewards)[number]; }, "schema");
+  });
 });

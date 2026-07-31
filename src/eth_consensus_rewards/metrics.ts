@@ -89,6 +89,9 @@ function safeNonNegativeInteger(value: unknown): value is number { return typeof
 function signed(value: unknown): value is bigint { return typeof value === "bigint"; }
 function unsigned(value: unknown): value is bigint { return typeof value === "bigint" && value >= 0n; }
 function root(value: unknown): value is string { return typeof value === "string" && ROOT_PATTERN.test(value); }
+function plainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
+}
 
 export function epochSlots(epoch: number): { startSlot: number; endSlot: number } {
   schema(safeNonNegativeInteger(epoch), "Epoch must be a non-negative safe integer.");
@@ -107,33 +110,36 @@ export function formatExactSignedGweiAmount(gwei: bigint): ExactSignedGweiAmount
   return { gwei: gwei.toString(), eth: negative && magnitude !== 0n ? `-${eth}` : eth };
 }
 
-function validateAttestation(row: NormalizedAttestationTotalReward): void {
+function validateAttestation(row: unknown): asserts row is NormalizedAttestationTotalReward {
+  schema(plainObject(row), "Attestation reward evidence must be a non-null plain object.");
   schema(safeNonNegativeInteger(row.validatorIndex), "Attestation validator index must be a non-negative safe integer.");
   schema(signed(row.head) && signed(row.target) && signed(row.source) && signed(row.inactivity), "Attestation reward fields must be signed bigint.");
-  schema(row.inclusionDelay === undefined || signed(row.inclusionDelay), "Attestation inclusion delay must be signed bigint.");
+  schema(row.inclusionDelay === undefined || unsigned(row.inclusionDelay), "Attestation inclusion delay must be an unsigned bigint.");
 }
-function validateHeader(header: NormalizedCanonicalHeaderIdentity): void {
+function validateHeader(header: unknown): asserts header is NormalizedCanonicalHeaderIdentity {
+  schema(plainObject(header), "Canonical header evidence must be a non-null plain object.");
   schema(safeNonNegativeInteger(header.slot), "Canonical header slot must be a non-negative safe integer.");
   schema(root(header.blockRoot), "Canonical block root must be lower-case 32-byte hex.");
   schema(safeNonNegativeInteger(header.proposerIndex), "Header proposer index must be a non-negative safe integer.");
 }
-function validateProposer(reward: NormalizedBlockProposerRewardComponents): void {
+function validateProposer(reward: unknown): asserts reward is NormalizedBlockProposerRewardComponents {
+  schema(plainObject(reward), "Proposer reward evidence must be a non-null plain object.");
   schema(root(reward.blockRoot), "Proposer reward root must be lower-case 32-byte hex.");
   schema(safeNonNegativeInteger(reward.proposerIndex), "Proposer index must be a non-negative safe integer.");
   schema(unsigned(reward.total) && unsigned(reward.attestations) && unsigned(reward.syncAggregate) && unsigned(reward.proposerSlashings) && unsigned(reward.attesterSlashings), "Block proposer reward components must be unsigned bigint.");
 }
-function validateSync(entry: NormalizedSyncCommitteeRewards): void {
+function validateSync(entry: unknown): asserts entry is NormalizedSyncCommitteeRewards {
+  schema(plainObject(entry), "Sync committee evidence must be a non-null plain object.");
   schema(root(entry.blockRoot) && Array.isArray(entry.rewards), "Sync committee evidence must bind a root to an array.");
-  const indices = new Set<number>();
+  mismatch(entry.rewards.length > 0, "Every canonical block requires non-empty sync committee reward evidence.");
   for (const reward of entry.rewards) {
+    schema(plainObject(reward), "Sync committee reward entries must be non-null plain objects.");
     schema(safeNonNegativeInteger(reward.validatorIndex) && signed(reward.reward), "Sync committee rewards must have a safe validator index and signed bigint reward.");
-    mismatch(!indices.has(reward.validatorIndex), "Sync committee validator indices must be unique per block.");
-    indices.add(reward.validatorIndex);
   }
 }
 
 export function calculateEthConsensusRewards(evidence: NormalizedEthConsensusRewardsEvidence, includeBlocks = false): EthConsensusRewardsCalculation {
-  schema(typeof evidence === "object" && evidence !== null && !Array.isArray(evidence), "Normalized evidence must be an object.");
+  schema(plainObject(evidence), "Normalized evidence must be a non-null plain object.");
   schema(typeof includeBlocks === "boolean", "includeBlocks must be boolean.");
   const { startSlot, endSlot } = epochSlots(evidence.epoch);
   schema(safeNonNegativeInteger(evidence.finalizedEpoch), "Finalized epoch must be a non-negative safe integer.");
@@ -142,6 +148,7 @@ export function calculateEthConsensusRewards(evidence: NormalizedEthConsensusRew
 
   let attestationNetReward = 0n;
   const attestationValidators = new Set<number>();
+  mismatch(evidence.attestationRewards.length > 0, "Attestation reward evidence must not be empty.");
   for (const row of evidence.attestationRewards) {
     validateAttestation(row);
     mismatch(!attestationValidators.has(row.validatorIndex), "Attestation validator indices must be unique.");

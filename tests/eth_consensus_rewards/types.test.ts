@@ -75,11 +75,46 @@ describe("EthConsensusRewardsCrossCheckSnapshotSchema", () => {
     expect(EthConsensusRewardsCrossCheckSnapshotSchema.safeParse(candidate).success).toBe(false);
   });
 
+  it.each([
+    "beacon_not_configured",
+    "beacon_access_gap",
+    "beacon_finality_gap",
+    "beacon_schema_drift",
+    "beacon_evidence_mismatch",
+  ] as const)("rejects a verified snapshot with contradictory %s", (code) => {
+    const candidate = verifiedSnapshot() as unknown as Record<string, unknown>;
+    (candidate.gaps as Array<Record<string, unknown>>).push({ code, detail: "A verified result cannot retain a transport or evidence failure." });
+    expect(EthConsensusRewardsCrossCheckSnapshotSchema.safeParse(candidate).success).toBe(false);
+  });
+
+  it.each([
+    ["aggregate proposer reward", (candidate: Record<string, unknown>) => { (candidate.metrics as Record<string, unknown>).block_proposer_reward = exact("-1", "-0.000000001"); (candidate.metrics as Record<string, unknown>).observed_consensus_reward = exact("16", "0.000000016"); }],
+    ["block-row proposer reward", (candidate: Record<string, unknown>) => { candidate.blocks = [{ slot: 320, block_root: root(1), proposer_index: 7, block_proposer_reward: exact("-1", "-0.000000001"), sync_committee_net_reward: exact("5", "0.000000005") }]; (candidate.metrics as Record<string, unknown>).block_proposer_reward = exact("-1", "-0.000000001"); (candidate.metrics as Record<string, unknown>).observed_consensus_reward = exact("16", "0.000000016"); }],
+  ] as const)("rejects a negative public %s", (_name, mutate) => {
+    const candidate = verifiedSnapshot() as unknown as Record<string, unknown>;
+    mutate(candidate);
+    expect(EthConsensusRewardsCrossCheckSnapshotSchema.safeParse(candidate).success).toBe(false);
+  });
+
+  it("permits exactly one stale fallback gap on a verified snapshot", () => {
+    const candidate = verifiedSnapshot() as unknown as Record<string, unknown>;
+    (candidate.gaps as Array<Record<string, unknown>>).push({ code: "source_stale", detail: "A previously verified finalized epoch is stale." });
+    expect(EthConsensusRewardsCrossCheckSnapshotSchema.parse(candidate)).toEqual(candidate);
+  });
+
   it("accepts an unavailable snapshot only with null observed metrics, no evidence, and a bounded source gap", () => {
     const candidate = verifiedSnapshot() as unknown as Record<string, unknown>;
     candidate.status = "unavailable"; candidate.verified_epoch = null; candidate.identities = null; candidate.metrics = { attestation_net_reward: null, sync_committee_net_reward: null, block_proposer_reward: null, observed_consensus_reward: null, consensus_issuance: null, net_issuance: null };
     candidate.coverage = { attestation_rewards_complete: false, sync_committee_rewards_complete: false, block_proposer_rewards_complete: false, slashing_penalties_complete: false, deposit_withdrawal_reconciliation_complete: false, consensus_issuance_complete: false, net_issuance_complete: false };
     candidate.gaps = [{ code: "beacon_access_gap", detail: "Provider is unavailable." }]; candidate.sources = []; candidate.source_status = [];
+    expect(EthConsensusRewardsCrossCheckSnapshotSchema.parse(candidate)).toEqual(candidate);
+  });
+
+  it("preserves beacon_not_configured as a valid unavailable no-config result", () => {
+    const candidate = verifiedSnapshot() as unknown as Record<string, unknown>;
+    candidate.status = "unavailable"; candidate.verified_epoch = null; candidate.identities = null; candidate.metrics = { attestation_net_reward: null, sync_committee_net_reward: null, block_proposer_reward: null, observed_consensus_reward: null, consensus_issuance: null, net_issuance: null };
+    candidate.coverage = { attestation_rewards_complete: false, sync_committee_rewards_complete: false, block_proposer_rewards_complete: false, slashing_penalties_complete: false, deposit_withdrawal_reconciliation_complete: false, consensus_issuance_complete: false, net_issuance_complete: false };
+    candidate.gaps = [{ code: "beacon_not_configured", detail: "Ethereum Beacon API is not configured." }]; candidate.sources = []; candidate.source_status = [];
     expect(EthConsensusRewardsCrossCheckSnapshotSchema.parse(candidate)).toEqual(candidate);
   });
 
