@@ -79,11 +79,13 @@ For each fixed legacy strategy:
 - underlying-token balance held by the strategy; and
 - `sharesToUnderlyingView(totalShares)`.
 
-The last value is the token-native amount attributable to extant strategy
-shares under the strategy's current accounting. It is not ETH-equivalent.
-Underlying-token custody is also retained because direct transfers, rebases,
-and virtual-share accounting can make custody differ from the amount
-attributable to extant shares.
+The last value is the strategy's token-native accounting conversion for all
+extant shares. It is not guaranteed executable withdrawal capacity and is not
+ETH-equivalent. Underlying-token custody is retained separately because direct
+transfers, rebases, loss, and virtual-share accounting can make custody differ
+from the share conversion. Each strategy includes a
+`share_quote_exceeds_custody` diagnostic boolean; that condition is observable
+evidence, not grounds to discard the snapshot.
 
 For native restaking, the snapshot verifies only:
 
@@ -142,10 +144,15 @@ strict booleans.
   strategy.
 - Every strategy points to the fixed StrategyManager.
 - Runtime underlying tokens are nonzero and pairwise distinct.
-- Every underlying token reports 18 decimals.
+- Every underlying token returns a canonical ABI `uint8` decimals value. The
+  value is preserved per strategy; the protocol interface does not guarantee
+  18 decimals.
 - All integers are bounded uint256 decimal strings.
 - Finalized block number and timestamp are JavaScript-safe integers.
-- `sharesToUnderlyingView(totalShares)` cannot exceed token custody.
+- Token custody and `sharesToUnderlyingView(totalShares)` are preserved as
+  separate observations. No ordering or equality is asserted: direct
+  transfers, rebases, virtual-share offsets, and strategy-specific accounting
+  can make them differ.
 - No token-native amounts are summed across heterogeneous LSTs.
 - Verified cache insertion happens only after the complete public-domain
   builder accepts the evidence.
@@ -178,4 +185,3 @@ The live test is default-skipped and requires both:
 - a nonblank `ETHEREUM_RPC_URL`.
 
 No implementation or QA task runs that live test.
-

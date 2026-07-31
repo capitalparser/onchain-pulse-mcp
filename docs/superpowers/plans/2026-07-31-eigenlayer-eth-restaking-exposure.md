@@ -47,7 +47,8 @@ tsup 8, MCP SDK 1.x.
 - Define the exact ordered twelve-strategy universe and fixed core contracts.
 - Define strict verified/unavailable schemas with bounded strings and details.
 - Preserve strategy whitelist state, manager/token identities, token custody,
-  shares, and withdrawable token-native underlying.
+  shares, the token-native strategy accounting quote, and an explicit
+  quote-above-custody diagnostic.
 - Verify native diagnostic identities without calling them native exposure.
 - Require exactly six permanent gaps and literal null broader metrics.
 - Reject malformed, overflowed, duplicate, fabricated, partial, mismatched,
@@ -74,7 +75,8 @@ tsup 8, MCP SDK 1.x.
 - Verify fixed core manager links and virtual Beacon strategy.
 - Verify all twelve strategy manager links, runtime underlying tokens,
   decimals, whitelist flags, total shares, custody, and share quotes.
-- Reject duplicate tokens and withdrawable-underlying amounts above custody.
+- Reject duplicate tokens and malformed share/custody/quote amounts while
+  preserving custody and the strategy quote as separate observations.
 - Assert the Task 1 domain before freezing or caching evidence.
 - Bind provider per context, cache only verified evidence, coalesce concurrent
   calls, and return controlled stale fallback after expiry.
@@ -131,4 +133,3 @@ tsup 8, MCP SDK 1.x.
 - Push, create PR, verify head SHA and both CI runs, merge only when clean.
 - Verify merge commit CI and post-merge main locally.
 - Remove the clean local feature worktree/branch and preserve the remote branch.
-
