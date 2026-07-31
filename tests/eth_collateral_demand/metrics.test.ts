@@ -71,7 +71,7 @@ describe("verified collateral capacity", () => {
     const snapshot = buildVerifiedEthCollateralSnapshot({
       block: { number: 123, hash: `0x${"a".repeat(64)}`, timestamp: 1_700_000_000 },
       reserves: inputReserves,
-      sources: ["Aave V3 Ethereum Core"],
+      sources: ["ethereum_rpc"],
       sourceStatus: [{ source: "ethereum_rpc", role: "finalized reserve evidence", stale: false }],
     });
 
@@ -102,9 +102,76 @@ describe("verified collateral capacity", () => {
     expect(() => buildVerifiedEthCollateralSnapshot({
       block: { number: 123, hash: `0x${"a".repeat(64)}`, timestamp: 1_700_000_000 },
       reserves: mutate(reserves()),
-      sources: ["Aave V3 Ethereum Core"],
+      sources: ["ethereum_rpc"],
       sourceStatus: [{ source: "ethereum_rpc", role: "finalized reserve evidence", stale: false }],
     })).toThrow(EthCollateralDomainError);
+  });
+
+  it("builds a controlled stale verified fallback with matching provenance", () => {
+    const snapshot = buildVerifiedEthCollateralSnapshot({
+      block: { number: 123, hash: `0x${"a".repeat(64)}`, timestamp: 1_700_000_000 },
+      reserves: reserves(),
+      sources: ["ethereum_rpc"],
+      sourceStatus: [{ source: "ethereum_rpc", role: "finalized reserve evidence", stale: false }],
+      stale: true,
+    });
+    expect(snapshot.gaps.filter((gap) => gap.code === "source_stale")).toHaveLength(1);
+    expect(snapshot.source_status.every((status) => status.stale)).toBe(true);
+  });
+
+  it("maps malformed exported helper inputs to schema-drift errors", () => {
+    try {
+      exactEthEquivalent("5" as unknown as bigint, 3n, 2n);
+      throw new Error("expected exactEthEquivalent to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(EthCollateralDomainError);
+      expect((error as EthCollateralDomainError).kind).toBe("schema_drift");
+    }
+    try {
+      sumExactEthEquivalents([{ wei_floor: "0", eth_floor: "0", remainder: "0", denominator: "bad" } as unknown as ReturnType<typeof exactEthEquivalent>]);
+      throw new Error("expected sumExactEthEquivalents to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(EthCollateralDomainError);
+      expect((error as EthCollateralDomainError).kind).toBe("schema_drift");
+    }
+  });
+
+  it("distinguishes malformed reserve shape from a mismatched official reserve", () => {
+    const malformed = reserves();
+    malformed[0] = { ...malformed[0]!, underlying: "not-an-address" as never };
+    const mismatched = reserves();
+    mismatched[0] = { ...mismatched[0]!, underlying: ASSETS[1][1] };
+    for (const [items, kind] of [[malformed, "schema_drift"], [mismatched, "evidence_mismatch"]] as const) {
+      try {
+        buildVerifiedEthCollateralSnapshot({
+          block: { number: 123, hash: `0x${"a".repeat(64)}`, timestamp: 1_700_000_000 },
+          reserves: items,
+          sources: ["ethereum_rpc"],
+          sourceStatus: [{ source: "ethereum_rpc", role: "finalized reserve evidence", stale: false }],
+        });
+        throw new Error("expected invalid reserve evidence to throw");
+      } catch (error) {
+        expect(error).toBeInstanceOf(EthCollateralDomainError);
+        expect((error as EthCollateralDomainError).kind).toBe(kind);
+      }
+    }
+  });
+
+  it("maps malformed exported builder numeric evidence to schema drift", () => {
+    const malformed = reserves();
+    malformed[0] = { ...malformed[0]!, suppliedRaw: "bad" as never };
+    try {
+      buildVerifiedEthCollateralSnapshot({
+        block: { number: 123, hash: `0x${"a".repeat(64)}`, timestamp: 1_700_000_000 },
+        reserves: malformed,
+        sources: ["ethereum_rpc"],
+        sourceStatus: [{ source: "ethereum_rpc", role: "finalized reserve evidence", stale: false }],
+      });
+      throw new Error("expected malformed builder evidence to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(EthCollateralDomainError);
+      expect((error as EthCollateralDomainError).kind).toBe("schema_drift");
+    }
   });
 });
 

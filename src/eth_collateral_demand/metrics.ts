@@ -1,6 +1,7 @@
 import {
   ETH_COLLATERAL_ASSETS,
   EthCollateralDemandSnapshotSchema,
+  ExactEthEquivalentSchema,
   type AaveReserveEvidenceInput,
   type EthCollateralBlock,
   type EthCollateralDemandSnapshot,
@@ -29,6 +30,11 @@ export class EthCollateralDomainError extends Error {
 
 function fail(kind: EthCollateralDomainError["kind"], message: string): never {
   throw new EthCollateralDomainError(kind, message);
+}
+
+function requireBigint(value: unknown, name: string): bigint {
+  if (typeof value !== "bigint") fail("schema_drift", `${name} must be a bigint.`);
+  return value;
 }
 
 function gcd(left: bigint, right: bigint): bigint {
@@ -74,6 +80,9 @@ function fractionFromExact(value: ExactEthEquivalent): { numerator: bigint; deno
 }
 
 export function exactEthEquivalent(suppliedRaw: bigint, assetOraclePrice: bigint, wethOraclePrice: bigint): ExactEthEquivalent {
+  requireBigint(suppliedRaw, "suppliedRaw");
+  requireBigint(assetOraclePrice, "assetOraclePrice");
+  requireBigint(wethOraclePrice, "wethOraclePrice");
   if (suppliedRaw < 0n || assetOraclePrice <= 0n || wethOraclePrice <= 0n) {
     fail("evidence_mismatch", "Supply must be non-negative and oracle prices must be positive.");
   }
@@ -81,10 +90,13 @@ export function exactEthEquivalent(suppliedRaw: bigint, assetOraclePrice: bigint
 }
 
 export function sumExactEthEquivalents(values: readonly ExactEthEquivalent[]): ExactEthEquivalent {
+  if (!Array.isArray(values)) fail("schema_drift", "Exact ETH values must be an array.");
   let numerator = 0n;
   let denominator = 1n;
   for (const value of values) {
-    const fraction = fractionFromExact(value);
+    const parsed = ExactEthEquivalentSchema.safeParse(value);
+    if (!parsed.success) fail("schema_drift", "Exact ETH value violates its public contract.");
+    const fraction = fractionFromExact(parsed.data);
     const commonDenominator = lcm(denominator, fraction.denominator);
     numerator = numerator * (commonDenominator / denominator)
       + fraction.numerator * (commonDenominator / fraction.denominator);
@@ -102,12 +114,14 @@ function validateReserveSet(reserves: readonly AaveReserveEvidenceInput[]): void
   const seenSymbols = new Set<string>();
   const seenAddresses = new Set<string>();
   for (const reserve of reserves) {
+    if (typeof reserve.underlying !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(reserve.underlying)) {
+      fail("schema_drift", "Reserve address is malformed.");
+    }
     const expectedAddress = expectedBySymbol.get(reserve.symbol);
     const normalizedAddress = reserve.underlying.toLowerCase();
     if (!expectedAddress || expectedAddress !== normalizedAddress || seenSymbols.has(reserve.symbol) || seenAddresses.has(normalizedAddress)) {
       fail("evidence_mismatch", "Aave evidence does not match the fixed ETH-family asset set.");
     }
-    if (!/^0x[0-9a-f]{40}$/.test(normalizedAddress)) fail("schema_drift", "Reserve address is malformed.");
     if (reserve.decimals !== 18 || !reserve.active || reserve.oraclePrice <= 0n || reserve.suppliedRaw < 0n) {
       fail("evidence_mismatch", "Reserve evidence is inactive, incompatible, or incomplete.");
     }
@@ -121,6 +135,7 @@ export function buildVerifiedEthCollateralSnapshot(input: {
   reserves: readonly AaveReserveEvidenceInput[];
   sources: string[];
   sourceStatus: EthCollateralSourceStatus[];
+  stale?: boolean;
 }): EthCollateralDemandSnapshot {
   validateReserveSet(input.reserves);
   const weth = input.reserves.find((reserve) => reserve.symbol === "WETH");
@@ -161,8 +176,10 @@ export function buildVerifiedEthCollateralSnapshot(input: {
       rehypothecation_complete: false as const,
     },
     sources: input.sources,
-    source_status: input.sourceStatus,
-    gaps: [...PERMANENT_GAPS],
+    source_status: input.sourceStatus.map((status) => ({ ...status, stale: input.stale === true })),
+    gaps: input.stale === true
+      ? [...PERMANENT_GAPS, { code: "source_stale" as const, detail: "Previously verified finalized evidence is stale." }]
+      : [...PERMANENT_GAPS],
     capabilities: { ethereum_rpc_active: true },
   };
   const parsed = EthCollateralDemandSnapshotSchema.safeParse(snapshot);
@@ -178,7 +195,7 @@ export function buildUnavailableEthCollateralSnapshot(input: {
 }): EthCollateralDemandSnapshot {
   const sourceFailure = input.gaps.some((gap) => ![
     "actual_user_collateral_not_indexed", "net_eth_locked_not_reconciled",
-    "gross_collateral_not_reconciled", "rehypothecation_not_reconciled",
+    "gross_collateral_not_reconciled", "rehypothecation_not_reconciled", "source_stale",
   ].includes(gap.code));
   if (!sourceFailure) fail("evidence_mismatch", "Unavailable evidence requires a bounded source failure gap.");
   const snapshot = {

@@ -1,7 +1,8 @@
 import { z } from "zod";
 
-const DecimalStringSchema = z.string().regex(/^(0|[1-9]\d*)$/);
-const EthDecimalStringSchema = z.string().regex(/^(0|[1-9]\d*)(?:\.\d*[1-9])?$/);
+const DecimalStringSchema = z.string().max(78).regex(/^(0|[1-9]\d*)$/);
+const ExactWeiStringSchema = z.string().max(157).regex(/^(0|[1-9]\d*)$/);
+const EthDecimalStringSchema = z.string().max(159).regex(/^(0|[1-9]\d*)(?:\.\d*[1-9])?$/);
 const AddressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const BlockHashSchema = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
 
@@ -10,6 +11,23 @@ function formatWeiAsEth(wei: bigint): string {
   const fractionalWei = wei % 1_000_000_000_000_000_000n;
   if (fractionalWei === 0n) return whole.toString();
   return `${whole}.${fractionalWei.toString().padStart(18, "0").replace(/0+$/, "")}`;
+}
+
+function exactFromNumerator(numerator: bigint, denominator: bigint): ExactEthEquivalent {
+  const weiFloor = numerator / denominator;
+  return {
+    wei_floor: weiFloor.toString(),
+    eth_floor: formatWeiAsEth(weiFloor),
+    remainder: (numerator % denominator).toString(),
+    denominator: denominator.toString(),
+  };
+}
+
+function exactEqual(left: ExactEthEquivalent, right: ExactEthEquivalent): boolean {
+  return left.wei_floor === right.wei_floor
+    && left.eth_floor === right.eth_floor
+    && left.remainder === right.remainder
+    && left.denominator === right.denominator;
 }
 
 export const ETH_COLLATERAL_ASSETS = [
@@ -26,16 +44,20 @@ export const ETH_COLLATERAL_ASSETS = [
 ] as const;
 
 export const ExactEthEquivalentSchema = z.object({
-  wei_floor: DecimalStringSchema,
+  wei_floor: ExactWeiStringSchema,
   eth_floor: EthDecimalStringSchema,
   remainder: DecimalStringSchema,
   denominator: DecimalStringSchema.refine((value) => value !== "0"),
 }).strict().superRefine((value, context) => {
-  if (BigInt(value.remainder) >= BigInt(value.denominator)) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: "remainder must be smaller than denominator" });
-  }
-  if (value.eth_floor !== formatWeiAsEth(BigInt(value.wei_floor))) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: "eth_floor must be derived from wei_floor" });
+  try {
+    if (BigInt(value.remainder) >= BigInt(value.denominator)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "remainder must be smaller than denominator" });
+    }
+    if (value.eth_floor !== formatWeiAsEth(BigInt(value.wei_floor))) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "eth_floor must be derived from wei_floor" });
+    }
+  } catch {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "exact ETH fields must be canonical decimal strings" });
   }
 });
 export type ExactEthEquivalent = z.infer<typeof ExactEthEquivalentSchema>;
@@ -157,12 +179,52 @@ export const EthCollateralDemandSnapshotSchema = EthCollateralDemandSnapshotBase
     if (!snapshot.coverage.aave_v3_ethereum_core_complete || !snapshot.capabilities.ethereum_rpc_active || !hasPermanentGaps) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: "verified snapshot requires complete Aave coverage and permanent gaps" });
     }
+    const sourceFailureGaps = snapshot.gaps.filter((gap) => !PermanentGapCodes.has(gap.code) && gap.code !== "source_stale");
+    const staleGapCount = snapshot.gaps.filter((gap) => gap.code === "source_stale").length;
+    const sourceNames = new Set(snapshot.sources);
+    const statusNames = new Set(snapshot.source_status.map((status) => status.source));
+    const provenanceMatches = snapshot.sources.length > 0
+      && snapshot.source_status.length > 0
+      && sourceNames.size === snapshot.sources.length
+      && statusNames.size === snapshot.source_status.length
+      && sourceNames.size === statusNames.size
+      && [...sourceNames].every((source) => statusNames.has(source));
+    const allStale = snapshot.source_status.every((status) => status.stale);
+    const allFresh = snapshot.source_status.every((status) => !status.stale);
+    if (sourceFailureGaps.length > 0 || staleGapCount > 1 || !provenanceMatches
+      || (staleGapCount === 1 && !allStale) || (staleGapCount === 0 && !allFresh)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "verified snapshot has inconsistent source provenance" });
+    }
+    const weth = snapshot.assets.find((asset) => asset.symbol === "WETH");
+    if (weth !== undefined) {
+      const wethPrice = BigInt(weth.oracle_price);
+      const expectedAssets = snapshot.assets.map((asset) => exactFromNumerator(
+        BigInt(asset.supplied_raw) * BigInt(asset.oracle_price),
+        wethPrice,
+      ));
+      const validAssets = snapshot.assets.every((asset, index) => exactEqual(asset.eth_equivalent, expectedAssets[index]!));
+      const expectedSupplied = exactFromNumerator(
+        snapshot.assets.reduce((total, asset) => total + BigInt(asset.supplied_raw) * BigInt(asset.oracle_price), 0n),
+        wethPrice,
+      );
+      const expectedEligible = exactFromNumerator(
+        snapshot.assets.filter((asset) => asset.collateral_enabled).reduce(
+          (total, asset) => total + BigInt(asset.supplied_raw) * BigInt(asset.oracle_price),
+          0n,
+        ),
+        wethPrice,
+      );
+      if (!validAssets || !exactEqual(snapshot.metrics.eth_family_supplied!, expectedSupplied)
+        || !exactEqual(snapshot.metrics.collateral_eligible_supplied!, expectedEligible)) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "verified snapshot exact identities do not match reserve evidence" });
+      }
+    }
     return;
   }
 
   const allObservedMetricsAbsent = snapshot.metrics.eth_family_supplied === null
     && snapshot.metrics.collateral_eligible_supplied === null;
-  const hasSourceFailure = snapshot.gaps.some((gap) => SourceFailureGapCodes.has(gap.code));
+  const hasSourceFailure = snapshot.gaps.some((gap) => SourceFailureGapCodes.has(gap.code) && gap.code !== "source_stale");
   if (snapshot.verified_block !== null || snapshot.identities !== null || snapshot.assets.length !== 0
     || !allObservedMetricsAbsent || snapshot.coverage.aave_v3_ethereum_core_complete
     || snapshot.capabilities.ethereum_rpc_active || !hasSourceFailure) {

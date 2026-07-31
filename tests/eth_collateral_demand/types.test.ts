@@ -13,9 +13,14 @@ const PERMANENT_GAPS = [
 ] as const;
 
 function exact(weiFloor: string, remainder = "0", denominator = "1") {
+  const wei = BigInt(weiFloor);
+  const whole = wei / 1_000_000_000_000_000_000n;
+  const fractional = wei % 1_000_000_000_000_000_000n;
   return {
     wei_floor: weiFloor,
-    eth_floor: (BigInt(weiFloor) / 1_000_000_000_000_000_000n).toString(),
+    eth_floor: fractional === 0n
+      ? whole.toString()
+      : `${whole}.${fractional.toString().padStart(18, "0").replace(/0+$/, "")}`,
     remainder,
     denominator,
   };
@@ -74,7 +79,7 @@ function verifiedFixture(): EthCollateralDemandSnapshot {
       gross_collateral_complete: false,
       rehypothecation_complete: false,
     },
-    sources: ["Aave V3 Ethereum Core"],
+    sources: ["ethereum_rpc"],
     source_status: [{ source: "ethereum_rpc", role: "finalized reserve evidence", stale: false }],
     gaps: PERMANENT_GAPS.map((code) => ({ code, detail: `${code} is not indexed.` })),
     capabilities: { ethereum_rpc_active: true },
@@ -99,6 +104,12 @@ describe("EthCollateralDemandSnapshotSchema", () => {
     expect(EthCollateralDemandSnapshotSchema.safeParse(candidate).success).toBe(false);
   });
 
+  it("bounds untrusted decimal strings before bigint arithmetic", () => {
+    const candidate = verifiedFixture();
+    candidate.assets[0] = { ...candidate.assets[0]!, supplied_raw: "9".repeat(79) };
+    expect(EthCollateralDemandSnapshotSchema.safeParse(candidate).success).toBe(false);
+  });
+
   it("rejects a verified snapshot that turns a broader unknown metric into zero", () => {
     const candidate = verifiedFixture() as unknown as { metrics: { actual_user_collateral: unknown } };
     candidate.metrics.actual_user_collateral = exact("0");
@@ -108,6 +119,52 @@ describe("EthCollateralDemandSnapshotSchema", () => {
   it("rejects a verified snapshot without all permanent coverage gaps", () => {
     const candidate = verifiedFixture();
     candidate.gaps.pop();
+    expect(EthCollateralDemandSnapshotSchema.safeParse(candidate).success).toBe(false);
+  });
+
+  it.each([
+    ["fabricated per-asset exact value", (candidate: EthCollateralDemandSnapshot) => {
+      candidate.assets[0] = { ...candidate.assets[0]!, eth_equivalent: exact("1") };
+    }],
+    ["fabricated all-supply aggregate", (candidate: EthCollateralDemandSnapshot) => {
+      candidate.metrics.eth_family_supplied = exact("1");
+    }],
+    ["fabricated eligible aggregate", (candidate: EthCollateralDemandSnapshot) => {
+      candidate.metrics.collateral_eligible_supplied = exact("1");
+    }],
+    ["noncanonical aggregate denominator", (candidate: EthCollateralDemandSnapshot) => {
+      candidate.metrics.eth_family_supplied = exact("0", "0", "2");
+    }],
+  ])("rejects a verified snapshot with %s even when identity flags are true", (_name, mutate) => {
+    const candidate = verifiedFixture();
+    mutate(candidate);
+    expect(candidate.identities).toEqual({
+      supplied_equals_asset_sum: true,
+      eligible_equals_enabled_asset_sum: true,
+    });
+    expect(EthCollateralDemandSnapshotSchema.safeParse(candidate).success).toBe(false);
+  });
+
+  it.each([
+    ["empty sources and provenance", (candidate: EthCollateralDemandSnapshot) => {
+      candidate.sources = [];
+      candidate.source_status = [];
+    }],
+    ["a source failure gap", (candidate: EthCollateralDemandSnapshot) => {
+      candidate.gaps.push({ code: "rpc_access_gap", detail: "Access failed." });
+    }],
+    ["a stale gap without stale provenance", (candidate: EthCollateralDemandSnapshot) => {
+      candidate.gaps.push({ code: "source_stale", detail: "Cached evidence." });
+    }],
+    ["stale provenance without a stale gap", (candidate: EthCollateralDemandSnapshot) => {
+      candidate.source_status[0] = { ...candidate.source_status[0]!, stale: true };
+    }],
+    ["source status that is not named in sources", (candidate: EthCollateralDemandSnapshot) => {
+      candidate.source_status[0] = { ...candidate.source_status[0]!, source: "other" };
+    }],
+  ])("rejects inconsistent verified provenance: %s", (_name, mutate) => {
+    const candidate = verifiedFixture();
+    mutate(candidate);
     expect(EthCollateralDemandSnapshotSchema.safeParse(candidate).success).toBe(false);
   });
 
@@ -138,6 +195,34 @@ describe("EthCollateralDemandSnapshotSchema", () => {
     };
     expect(EthCollateralDemandSnapshotSchema.parse(candidate)).toEqual(candidate);
     candidate.metrics.eth_family_supplied = exact("0");
+    expect(EthCollateralDemandSnapshotSchema.safeParse(candidate).success).toBe(false);
+  });
+
+  it("rejects source_stale as the only unavailable failure gap", () => {
+    const candidate: EthCollateralDemandSnapshot = {
+      ...verifiedFixture(),
+      status: "unavailable",
+      verified_block: null,
+      metrics: {
+        eth_family_supplied: null,
+        collateral_eligible_supplied: null,
+        actual_user_collateral: null,
+        net_eth_locked: null,
+        gross_eth_collateral: null,
+        rehypothecation_ratio: null,
+      },
+      assets: [],
+      identities: null,
+      coverage: {
+        aave_v3_ethereum_core_complete: false,
+        user_collateral_usage_complete: false,
+        net_eth_locked_complete: false,
+        gross_collateral_complete: false,
+        rehypothecation_complete: false,
+      },
+      gaps: [{ code: "source_stale", detail: "Only cached evidence exists." }],
+      capabilities: { ethereum_rpc_active: false },
+    };
     expect(EthCollateralDemandSnapshotSchema.safeParse(candidate).success).toBe(false);
   });
 });
