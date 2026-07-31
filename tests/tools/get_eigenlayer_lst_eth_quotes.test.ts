@@ -88,7 +88,7 @@ describe("getEigenLayerLstEthQuotes", () => {
       adapterSnapshot: { ...verified(), summary: "https://rpc.example/credential-secret" },
     });
 
-    expect(result.summary).toContain("Finalized stETH/rETH/cbETH/ETHx/osETH/lsETH/mETH accounting quotes cover 7 of 12");
+    expect(result.summary).toContain("Finalized stETH/rETH/cbETH/ETHx/osETH/lsETH/mETH quotes: 7/12");
     expect(result.summary).toContain("share/custody distinct partials");
     expect(result.summary.length).toBeLessThanOrEqual(500);
     expect(JSON.stringify(result)).not.toContain("credential-secret");
@@ -112,15 +112,15 @@ describe("getEigenLayerLstEthQuotes", () => {
 
     for (const result of cases) {
       expect(result.summary).toMatch(/stETH\/rETH\/cbETH\/ETHx\/osETH\/lsETH\/mETH/);
-      expect(result.summary).toMatch(/7 of 12|고정 전략 12개 중 7개/);
+      expect(result.summary).toMatch(/7\/12|고정 전략 12개 중 7개/);
       expect(result.summary).toMatch(/share\/custody distinct partials|지분 회계와 토큰 보관 합계는 서로 다른 부분 합계/);
       expect(result.summary.length).toBeLessThanOrEqual(500);
       expect(JSON.stringify(result)).not.toContain("credential-secret");
     }
 
-    expect(cases[0]!.summary).toContain("Verified at finalized Ethereum block");
+    expect(cases[0]!.summary).toContain("Finalized-block verified");
     expect(cases[1]!.summary).toContain("Used after refresh failure");
-    expect(cases[2]!.summary).toContain("no quotes were observed");
+    expect(cases[2]!.summary).toContain("No quotes observed");
     expect(cases[3]!.summary).toContain("최종화된 이더리움 블록에서 검증됐습니다");
     expect(cases[4]!.summary).toContain("새로고침 실패 후 캐시된 값을 사용합니다");
     expect(cases[5]!.summary).toContain("인용값은 관측되지 않았습니다");
@@ -131,8 +131,7 @@ describe("getEigenLayerLstEthQuotes", () => {
       expect(result.summary).toMatch(/protocol demand/);
       expect(result.summary).toMatch(/rehypothecation/);
       expect(result.summary).toMatch(/backing/);
-      expect(result.summary).toMatch(/ETHx oracle-report freshness or proxy implementation\/source correspondence/);
-      expect(result.summary).toMatch(/lsETH oracle-report freshness or proxy implementation\/source correspondence/);
+      expect(result.summary).toContain("unverified: cbETH rate freshness, ETHx oracle-report freshness or proxy implementation/source correspondence, osETH virtual-reward-input freshness, lsETH oracle-report freshness or proxy implementation/source correspondence, mETH oracle-record freshness.");
       expect(result.summary).toMatch(/executable exit capacity/);
     }
     for (const result of cases.slice(3)) {
