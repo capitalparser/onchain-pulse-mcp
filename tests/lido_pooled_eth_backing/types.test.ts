@@ -74,7 +74,7 @@ function unavailable(code: "rpc_not_configured" | "rpc_access_gap" = "rpc_access
       combined_aave_spark_lido_demand_complete: false, rehypothecation_ratio_complete: false,
     },
     sources: configured ? ["ethereum_rpc"] : [],
-    source_status: configured ? [{ source: "ethereum_rpc", role: "lido_v4_finalized_accounting", stale: false }] : [],
+    source_status: configured ? [{ source: "ethereum_rpc", role: "lido_v4_finalized_accounting_evidence", stale: false }] : [],
     gaps: [{ code, detail: code }], capabilities: { ethereum_rpc_active: false },
   };
 }
@@ -125,6 +125,10 @@ describe("LidoPooledEthBackingSnapshotSchema", () => {
     value.metrics.total_pooled_eth_wei = UINT256_OVERFLOW;
     expect(LidoAccountingEvidenceSchema.safeParse(value.accounting).success).toBe(false);
     expect(LidoPooledEthBackingMetricsSchema.safeParse(value.metrics).success).toBe(false);
+  });
+
+  it("accepts a coherent configured unavailable snapshot", () => {
+    expect(LidoPooledEthBackingSnapshotSchema.safeParse(unavailable()).success).toBe(true);
   });
 
   it.each([

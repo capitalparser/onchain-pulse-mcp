@@ -117,3 +117,21 @@ Tests  31 passed (31)
 $ npm run typecheck
 > tsc --noEmit
 ```
+
+## QA test-fixture isolation remediation
+
+The configured-unavailable test fixture was corrected from the obsolete role
+`lido_v4_finalized_accounting` to the canonical
+`lido_v4_finalized_accounting_evidence`. A new explicit acceptance assertion
+establishes that this configured unavailable baseline is coherent before every
+partial-evidence and multiple-gap negative derives a fresh copy and changes
+only its named condition.
+
+This was test-only: the new assertion was immediately green because the domain
+already enforced the canonical role from the preceding provenance remediation.
+
+```text
+$ npm test -- tests/lido_pooled_eth_backing/types.test.ts
+Test Files  1 passed (1)
+Tests  23 passed (23)
+```
