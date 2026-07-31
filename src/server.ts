@@ -14,12 +14,17 @@ import { fetchDuneEthValue } from "./adapters/eth_value_dune.js";
 import { fetchGrowThePieRent } from "./adapters/eth_value_growthepie.js";
 import { fetchEthSupplyHistory } from "./adapters/eth_supply_coinmetrics.js";
 import { fetchEthFeeRpc } from "./adapters/eth_fee_rpc.js";
+import { fetchEthConsensusRewardsBeacon } from "./adapters/eth_consensus_rewards_beacon.js";
 import type { EnvConfig } from "./env.js";
 import { windowToDays } from "./eth_value_capture/metrics.js";
 import {
   GetEthFeeCrossCheckInputSchema,
   type EthFeeCrossCheckSnapshot,
 } from "./eth_fee_cross_check/types.js";
+import {
+  GetEthConsensusRewardsCrossCheckInputSchema,
+  type EthConsensusRewardsCrossCheckSnapshot,
+} from "./eth_consensus_rewards/types.js";
 import {
   GetEthValueCaptureInputSchema,
   type EthValueCaptureSnapshot,
@@ -31,6 +36,7 @@ import { makeFileHistoryStore, computeWindowDelta } from "./pulse/history.js";
 import { getEtfFlow } from "./tools/get_etf_flow.js";
 import { getEthValueCapture } from "./tools/get_eth_value_capture.js";
 import { getEthFeeCrossCheck } from "./tools/get_eth_fee_cross_check.js";
+import { getEthConsensusRewardsCrossCheck } from "./tools/get_eth_consensus_rewards_cross_check.js";
 import { getFundingOi } from "./tools/get_funding_oi.js";
 import { getKrPremium } from "./tools/get_kr_premium.js";
 import { getMarketPulse } from "./tools/get_market_pulse.js";
@@ -70,7 +76,7 @@ interface ToolDef {
   handler: (
     raw: unknown,
     hc: HandlerContext,
-  ) => Promise<ToolResponse | ForensicsSnapshot | EthValueCaptureSnapshot | EthFeeCrossCheckSnapshot>;
+  ) => Promise<ToolResponse | ForensicsSnapshot | EthValueCaptureSnapshot | EthFeeCrossCheckSnapshot | EthConsensusRewardsCrossCheckSnapshot>;
 }
 
 const TOOLS: ToolDef[] = [
@@ -124,6 +130,19 @@ const TOOLS: ToolDef[] = [
       required: ["start_block", "end_block"],
     },
     handler: handleEthFeeCrossCheck,
+  },
+  {
+    name: "get_eth_consensus_rewards_cross_check",
+    description: "Bounded exact verification of observed Ethereum consensus reward components from one finalized epoch.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        epoch: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        include_blocks: { type: "boolean", default: false },
+      },
+      required: ["epoch"],
+    },
+    handler: handleEthConsensusRewardsCrossCheck,
   },
   {
     name: "get_stablecoin_pulse",
@@ -330,6 +349,22 @@ export async function handleEthFeeCrossCheck(
     hc.ctx,
   );
   return getEthFeeCrossCheck({ lang: hc.env.lang, adapterSnapshot });
+}
+
+export async function handleEthConsensusRewardsCrossCheck(
+  raw: unknown,
+  hc: HandlerContext,
+): Promise<EthConsensusRewardsCrossCheckSnapshot> {
+  const args = GetEthConsensusRewardsCrossCheckInputSchema.parse(raw ?? {});
+  const adapterSnapshot = await fetchEthConsensusRewardsBeacon(
+    {
+      epoch: args.epoch,
+      includeBlocks: args.include_blocks,
+      beaconUrl: hc.env.ethereumBeaconApiUrl,
+    },
+    hc.ctx,
+  );
+  return getEthConsensusRewardsCrossCheck({ lang: hc.env.lang, adapterSnapshot });
 }
 
 async function handleStablecoinPulse(raw: unknown, hc: HandlerContext): Promise<ToolResponse> {

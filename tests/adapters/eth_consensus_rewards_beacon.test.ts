@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeContext } from "../../src/adapters/base.js";
-import { fetchEthConsensusRewardsBeacon } from "../../src/adapters/eth_consensus_rewards_beacon.js";
+import {
+  fetchEthConsensusRewardsBeacon,
+  fetchFinalizedEthConsensusRewardsBeaconEpoch,
+} from "../../src/adapters/eth_consensus_rewards_beacon.js";
 
 const env = { byok: {}, lang: "en" as const, historyPath: "/tmp/history.json" };
 
@@ -9,6 +12,21 @@ afterEach(() => {
 });
 
 describe("fetchEthConsensusRewardsBeacon", () => {
+  it("resolves only the validated finalized epoch for the opt-in live check", async () => {
+    const fetchImpl = vi.fn(async (_input: string | URL | Request) => json(finality(10)));
+
+    const finalizedEpoch = await fetchFinalizedEthConsensusRewardsBeaconEpoch(
+      "https://beacon.example/private-token",
+      makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }),
+    );
+
+    expect(finalizedEpoch).toBe(11);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(new URL(String(fetchImpl.mock.calls[0]?.[0])).pathname).toMatch(
+      /\/eth\/v1\/beacon\/states\/head\/finality_checkpoints$/,
+    );
+  });
+
   it("returns beacon_not_configured without calling fetch", async () => {
     const fetchImpl = vi.fn();
 

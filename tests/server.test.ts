@@ -2,24 +2,27 @@ import { describe, it, expect, vi } from "vitest";
 import { makeContext } from "../src/adapters/base.js";
 import { EthValueCaptureSnapshotSchema } from "../src/eth_value_capture/types.js";
 import { EthFeeCrossCheckSnapshotSchema } from "../src/eth_fee_cross_check/types.js";
+import { EthConsensusRewardsCrossCheckSnapshotSchema } from "../src/eth_consensus_rewards/types.js";
 import {
   createServer,
   handleEthFeeCrossCheck,
+  handleEthConsensusRewardsCrossCheck,
   handleEthValueCapture,
   listTools,
 } from "../src/server.js";
 import type { EnvConfig } from "../src/env.js";
 
-const env: EnvConfig = { byok: {}, lang: "en", historyPath: "/tmp/onchain-pulse-mcp-test-history.json", ethereumRpcUrl: undefined };
+const env: EnvConfig = { byok: {}, lang: "en", historyPath: "/tmp/onchain-pulse-mcp-test-history.json", ethereumRpcUrl: undefined, ethereumBeaconApiUrl: undefined };
 
 describe("server", () => {
-  it("registers all nine expected tools", () => {
+  it("registers all ten expected tools", () => {
     const names = listTools()
       .map((t) => t.name)
       .sort();
 
     expect(names).toEqual([
       "get_etf_flow",
+      "get_eth_consensus_rewards_cross_check",
       "get_eth_fee_cross_check",
       "get_eth_value_capture",
       "get_funding_oi",
@@ -29,6 +32,16 @@ describe("server", () => {
       "get_stablecoin_pulse",
       "get_token_forensics",
     ]);
+  });
+
+  it("get_eth_consensus_rewards_cross_check advertises its one-epoch reward contract", () => {
+    const tool = listTools().find((t) => t.name === "get_eth_consensus_rewards_cross_check");
+
+    expect(tool?.inputSchema.required).toEqual(["epoch"]);
+    expect(tool?.inputSchema.properties).toEqual({
+      epoch: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      include_blocks: { type: "boolean", default: false },
+    });
   });
 
   it("each tool advertises a JSON schema with type=object", () => {
@@ -179,6 +192,35 @@ describe("handleEthFeeCrossCheck", () => {
     { start_block: 100, end_block: 100, unknown: true },
   ])("rejects invalid public RPC cross-check arguments %#", async (raw) => {
     await expect(handleEthFeeCrossCheck(raw, {
+      env,
+      ctx: makeContext({ env, fetchImpl: vi.fn() as unknown as typeof fetch }),
+    })).rejects.toThrow();
+  });
+});
+
+describe("handleEthConsensusRewardsCrossCheck", () => {
+  it("returns a bounded no-config snapshot without calling fetch", async () => {
+    const fetchImpl = vi.fn();
+    const output = await handleEthConsensusRewardsCrossCheck(
+      { epoch: 10 },
+      { env, ctx: makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }) },
+    );
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(output.status).toBe("unavailable");
+    expect(output.summary).toBe("Ethereum consensus reward evidence is unavailable.");
+    expect(output.gaps.map((gap) => gap.code)).toEqual(["beacon_not_configured"]);
+    expect(EthConsensusRewardsCrossCheckSnapshotSchema.parse(output)).toEqual(output);
+  });
+
+  it.each([
+    { epoch: -1 },
+    { epoch: 1.5 },
+    { epoch: Number.MAX_SAFE_INTEGER + 1 },
+    { epoch: 10, include_blocks: "yes" },
+    { epoch: 10, unknown: true },
+  ])("rejects invalid public Beacon reward arguments %#", async (raw) => {
+    await expect(handleEthConsensusRewardsCrossCheck(raw, {
       env,
       ctx: makeContext({ env, fetchImpl: vi.fn() as unknown as typeof fetch }),
     })).rejects.toThrow();

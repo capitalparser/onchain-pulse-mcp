@@ -222,6 +222,24 @@ async function finalityCheckpoints(ctx: AdapterContext, beaconUrl: string): Prom
   return safeUint64(finalized.epoch);
 }
 
+/**
+ * Internal live-check helper. It validates the Beacon finality envelope and
+ * returns only the finalized epoch number; provider configuration is never
+ * included in the result or thrown error.
+ */
+export async function fetchFinalizedEthConsensusRewardsBeaconEpoch(
+  beaconUrl: string | undefined,
+  ctx: AdapterContext,
+): Promise<number | null> {
+  const configured = configuredBeaconUrl(beaconUrl);
+  if (configured === null || !bindProvider(ctx, configured)) return null;
+  try {
+    return await finalityCheckpoints(ctx, configured);
+  } catch {
+    return null;
+  }
+}
+
 function parseAttestationRow(value: unknown): NormalizedAttestationTotalReward {
   const row = record(value);
   const inclusionDelay = "inclusion_delay" in row ? uint64(row.inclusion_delay) : undefined;
