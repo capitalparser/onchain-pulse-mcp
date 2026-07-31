@@ -16,12 +16,12 @@ import {
 } from "../eigenlayer_lst_eth_quotes/types.js";
 
 const CACHE_SPEC: CacheSpec = { name: "eigenlayer_lst_eth_quotes", ttlMs: 30 * 60_000, max: 1 };
-const CACHE_KEY = "eigenlayer-lst-eth-quotes:mainnet-v2";
+const CACHE_KEY = "eigenlayer-lst-eth-quotes:mainnet-v3";
 const SOURCE = "ethereum_rpc" as const;
 const ROLE = "eigenlayer_finalized_lst_eth_quote_evidence" as const;
 const WORD = /^0x[0-9a-f]{64}$/;
 const ADDRESS_WORD = /^0x0{24}[0-9a-f]{40}$/;
-const COVERED_BASE_STRATEGY_INDICES = [0, 1, 2, 6, 11] as const;
+const COVERED_BASE_STRATEGY_INDICES = [0, 1, 2, 6, 10, 11] as const;
 const OSETH_CONTROLLER = "0x2A261e60FB14586B474C208b1B7AC6D0f5000306";
 const METH_STAKING = "0xe3cBd06D7dadB3F4e6557bAb7EdD924CD1489E8f";
 const METH_ORACLE = "0x8735049F496727f824Cc0f2B174d826f5c408192";
@@ -32,6 +32,8 @@ const SELECTORS = {
   meth: "0x29e84867",
   oracle: "0x7dc0d1d0",
   methToEth: "0x5890c11c",
+  lsethUnderlyingBalanceFromShares: "0xf79c3f02",
+  lsethLastCompletedEpochId: "0x89896aef",
 } as const;
 
 export interface EigenLayerLstEthQuotesRpcInput {
@@ -52,6 +54,7 @@ interface RpcRequest {
 interface CombinedEvidence {
   block: BuildVerifiedEigenLayerLstEthQuotesInput["block"];
   quotes: readonly EigenLayerCoveredLstQuoteInput[];
+  lsethLastCompletedEpochId: bigint;
 }
 
 function configuredRpcUrl(value: unknown): string | null {
@@ -95,7 +98,7 @@ async function postQuoteBatch(
   rpcUrl: string,
   requests: readonly RpcRequest[],
 ): Promise<Map<number, unknown>> {
-  if (requests.length !== 9 || requests.some((request, index) => request.id !== 92 + index)
+  if (requests.length !== 12 || requests.some((request, index) => request.id !== 92 + index)
     || new Set(requests.map((request) => request.id)).size !== requests.length) {
     throw new QuoteRpcFailure("rpc_schema_drift");
   }
@@ -148,6 +151,7 @@ function freezeEvidence(evidence: CombinedEvidence): CombinedEvidence {
   return Object.freeze({
     block: Object.freeze({ ...evidence.block }),
     quotes: Object.freeze(evidence.quotes.map((quote) => Object.freeze({ ...quote }))),
+    lsethLastCompletedEpochId: evidence.lsethLastCompletedEpochId,
   });
 }
 
@@ -155,6 +159,7 @@ function cloneEvidence(evidence: CombinedEvidence): CombinedEvidence {
   return {
     block: { ...evidence.block },
     quotes: evidence.quotes.map((quote) => ({ ...quote })),
+    lsethLastCompletedEpochId: evidence.lsethLastCompletedEpochId,
   };
 }
 
@@ -206,12 +211,17 @@ async function loadCombinedEvidence(ctx: AdapterContext, rpcUrl: string): Promis
     ethCall(97, METH_STAKING, SELECTORS.meth, blockTag),
     ethCall(98, METH_STAKING, SELECTORS.oracle, blockTag),
     ethCall(99, METH_STAKING,
-      `${SELECTORS.methToEth}${uintArgument(BigInt(covered[4]!.share_accounting_underlying))}`, blockTag),
+      `${SELECTORS.methToEth}${uintArgument(BigInt(covered[5]!.share_accounting_underlying))}`, blockTag),
     ethCall(100, METH_STAKING,
-      `${SELECTORS.methToEth}${uintArgument(BigInt(covered[4]!.token_custody))}`, blockTag),
+      `${SELECTORS.methToEth}${uintArgument(BigInt(covered[5]!.token_custody))}`, blockTag),
+    ethCall(101, EIGENLAYER_COVERED_LST_STRATEGIES[4].underlying_token,
+      `${SELECTORS.lsethUnderlyingBalanceFromShares}${uintArgument(BigInt(covered[4]!.share_accounting_underlying))}`, blockTag),
+    ethCall(102, EIGENLAYER_COVERED_LST_STRATEGIES[4].underlying_token,
+      `${SELECTORS.lsethUnderlyingBalanceFromShares}${uintArgument(BigInt(covered[4]!.token_custody))}`, blockTag),
+    ethCall(103, EIGENLAYER_COVERED_LST_STRATEGIES[4].underlying_token, SELECTORS.lsethLastCompletedEpochId, blockTag),
   ];
   const results = await postQuoteBatch(ctx, rpcUrl, requests);
-  expectedAddress(decodeAddress(results.get(97)), EIGENLAYER_COVERED_LST_STRATEGIES[4].underlying_token);
+  expectedAddress(decodeAddress(results.get(97)), EIGENLAYER_COVERED_LST_STRATEGIES[5].underlying_token);
   expectedAddress(decodeAddress(results.get(98)), METH_ORACLE);
   const quotes: EigenLayerCoveredLstQuoteInput[] = [
     {
@@ -248,11 +258,23 @@ async function loadCombinedEvidence(ctx: AdapterContext, rpcUrl: string): Promis
       underlyingToken: EIGENLAYER_COVERED_LST_STRATEGIES[4].underlying_token,
       shareAccountingTokenAmount: BigInt(covered[4]!.share_accounting_underlying),
       tokenCustodyTokenAmount: BigInt(covered[4]!.token_custody),
+      directShareAccountingEthQuote: decodeUint(results.get(101)),
+      directTokenCustodyEthQuote: decodeUint(results.get(102)),
+    },
+    {
+      ...EIGENLAYER_COVERED_LST_STRATEGIES[5],
+      underlyingToken: EIGENLAYER_COVERED_LST_STRATEGIES[5].underlying_token,
+      shareAccountingTokenAmount: BigInt(covered[5]!.share_accounting_underlying),
+      tokenCustodyTokenAmount: BigInt(covered[5]!.token_custody),
       directShareAccountingEthQuote: decodeUint(results.get(99)),
       directTokenCustodyEthQuote: decodeUint(results.get(100)),
     },
   ];
-  const evidence: CombinedEvidence = { block: { ...base.verified_block }, quotes };
+  const evidence: CombinedEvidence = {
+    block: { ...base.verified_block },
+    quotes,
+    lsethLastCompletedEpochId: decodeUint(results.get(103)),
+  };
   verified(evidence, false);
   return evidence;
 }
