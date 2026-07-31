@@ -14,7 +14,7 @@ Existing onchain intelligence tools (Nansen, Arkham, Coinglass) are dashboards b
 
 - **Read-only · snapshot-oriented**: idempotent MCP responses, no write actions, local-only history materialisation for composite z-scores.
 - **Source adapters**: free and BYOK-backed market, Ethereum, RWA, derivatives, and Korea data paths.
-- **9 MCP tools**: the six original macro tools, token forensics, ETH value capture, and a bounded finalized-block ETH fee cross-check.
+- **10 MCP tools**: the six original macro tools, token forensics, ETH value capture, and bounded Ethereum execution-fee and consensus-reward cross-checks.
 - **BYOK enrichment**: free defaults work out of the box; paid keys (Nansen/Glassnode/Arkham/Coinglass/CryptoQuant/Laevitas) are auto-detected via env vars.
 - **Composite pulse score**: 7-input weighted z-score with weights externalized to `config/pulse.yaml` — tweak to your thesis.
 - **Graceful degradation**: partial source failures yield reduced-confidence answers, never silent failure.
@@ -59,6 +59,7 @@ Set any of these env vars to enrich responses with paid data sources. The server
 | `LAEVITAS_API_KEY` | Laevitas | Reserved for v0.2 |
 | `DUNE_API_KEY` | Dune | ETH fee burn and labelled L2 rent through direct SQL execution |
 | `ETHEREUM_RPC_URL` | Ethereum Execution API | Optional finalized-block fee cross-check transport; internal only and never returned |
+| `ETHEREUM_BEACON_API_URL` | Ethereum Beacon API | Optional finalized-epoch reward-component cross-check transport; internal only and never returned |
 
 `DUNE_API_KEY` is used only when a caller explicitly selects
 `paid_mode="byok_allowed"`. Dune direct SQL is usage-based and consumes credits
@@ -82,6 +83,7 @@ Set `OPM_LANG=ko` for Korean `summary` strings. Default is `en`.
 | `get_token_forensics` | `chain`, `token_address`, `pool_address?`, `max_wallets?`, `paid_mode?` | Phase 1 token-level forensic snapshot with pool discovery, non-prescriptive flow reading, confidence, and explicit gaps |
 | `get_eth_value_capture` | `window?`, `paid_mode?`, `include_rollups?` | ETH fee burn, execution tips, L2 rent, supply change, and aligned issuance |
 | `get_eth_fee_cross_check` | `start_block`, `end_block`, `include_blocks?` | Exact finalized Ethereum execution-fee and burn verification for a bounded block range |
+| `get_eth_consensus_rewards_cross_check` | `epoch`, `include_blocks?` | Exact finalized Ethereum consensus reward-component verification for one epoch |
 
 `get_token_forensics` is Phase 1. It discovers the best pool through DexScreener
 and returns a `ForensicsSnapshot` with `thin-data` or `unknown` flow reading
@@ -243,6 +245,57 @@ npm run test:live:eth-rpc
 It remains skipped unless both `RUN_LIVE_ETH_RPC=1` and `ETHEREUM_RPC_URL` are
 set. When enabled, it resolves a finalized head and verifies no more than two
 finalized blocks.
+
+### Ethereum consensus reward-component cross-check
+
+`get_eth_consensus_rewards_cross_check` is a separate, read-only verification
+surface for observed Beacon reward components. It does not feed
+`get_eth_value_capture`, does not establish complete consensus issuance, and
+does not establish net issuance. The latter would additionally require a
+precisely aligned execution burn boundary.
+
+```json
+{
+  "name": "get_eth_consensus_rewards_cross_check",
+  "arguments": {
+    "epoch": 400000,
+    "include_blocks": false
+  }
+}
+```
+
+`epoch` is a required non-negative safe integer. The tool verifies exactly one
+epoch (32 slots) and performs at most **98 Beacon API calls**: a finality
+checkpoint, one attestation reward request, 32 slot-header requests, and up to
+two reward-evidence requests for each proposed block. It accepts only
+finalized, non-optimistic Beacon evidence. `include_blocks=true` exposes the
+verified proposed-block rows; it does not expand the one-epoch request bound.
+
+All reward arithmetic is exact integer gwei with a matching exact ETH decimal
+string. A verified response establishes these observed-component identities:
+
+- observed consensus reward = attestation net reward + sync committee net reward + block proposer reward;
+- aggregate block proposer reward = its reported block reward components.
+
+These are observed reward components, not a claim of complete issuance or net
+issuance. Slashing penalties and deposit/withdrawal reconciliation remain
+explicitly incomplete, so both issuance metrics are always `null`.
+
+Set `ETHEREUM_BEACON_API_URL` only in the server environment. It may contain
+provider credentials; it is never returned, logged, persisted, or included in
+cache keys. Without it, the tool returns a bounded `beacon_not_configured`
+unavailable snapshot and makes no network call. Default tests never use the
+endpoint.
+
+The dedicated live check is opt-in and read-only:
+
+```bash
+npm run test:live:eth-beacon
+```
+
+It remains skipped unless both `RUN_LIVE_ETH_BEACON=1` and
+`ETHEREUM_BEACON_API_URL` are set. When enabled, it resolves a safely finalized
+epoch and verifies no more than one epoch.
 
 ## Roadmap
 

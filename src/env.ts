@@ -16,6 +16,8 @@ export interface EnvConfig {
   lang: Lang;
   /** Internal-only Execution API transport endpoint. Never expose this value. */
   ethereumRpcUrl?: string;
+  /** Internal-only Beacon API transport endpoint. Never expose this value. */
+  ethereumBeaconApiUrl?: string;
   /**
    * Absolute, tilde-expanded path to the history ring buffer JSON file
    * (Task 8.5). Defaults to `${HOME}/.cache/onchain-pulse-mcp/history.json`;
@@ -47,6 +49,7 @@ export function loadEnv(env: NodeJS.ProcessEnv | Record<string, string | undefin
     },
     lang: langParse.success ? langParse.data : "en",
     ethereumRpcUrl: env.ETHEREUM_RPC_URL,
+    ethereumBeaconApiUrl: env.ETHEREUM_BEACON_API_URL,
     historyPath,
   };
 }
