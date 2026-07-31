@@ -122,6 +122,13 @@ An explicit refusal to sum protocol capacities until derivative lineage,
 borrowing loops, and rehypothecation are reconciled. Missing reconciliation
 keeps combined, net, gross, and rehypothecation metrics `null`, never zero.
 
+**SparkLend ETH Collateral Capacity Snapshot**:
+A separate read-only SparkLend Ethereum measurement for six fixed ETH-family
+reserve supplies (WETH, wstETH, rETH, weETH, rsETH, and ezETH) at one finalized
+block. It reports supplied capacity and market-level collateral eligibility,
+not actual user collateral or an Aave-plus-Spark total. The five broader
+overlap/usage/lock metrics remain `null` with explicit gaps.
+
 ### Token forensics
 
 **Token Forensics Snapshot**:

@@ -4,9 +4,11 @@ import { EthValueCaptureSnapshotSchema } from "../src/eth_value_capture/types.js
 import { EthFeeCrossCheckSnapshotSchema } from "../src/eth_fee_cross_check/types.js";
 import { EthConsensusRewardsCrossCheckSnapshotSchema } from "../src/eth_consensus_rewards/types.js";
 import { EthCollateralDemandSnapshotSchema } from "../src/eth_collateral_demand/types.js";
+import { SparkCollateralCapacitySnapshotSchema } from "../src/spark_collateral_capacity/types.js";
 import {
   createServer,
   handleEthCollateralDemand,
+  handleSparkEthCollateralCapacity,
   handleEthFeeCrossCheck,
   handleEthConsensusRewardsCrossCheck,
   handleEthValueCapture,
@@ -17,7 +19,7 @@ import type { EnvConfig } from "../src/env.js";
 const env: EnvConfig = { byok: {}, lang: "en", historyPath: "/tmp/onchain-pulse-mcp-test-history.json", ethereumRpcUrl: undefined, ethereumBeaconApiUrl: undefined };
 
 describe("server", () => {
-  it("registers all eleven expected tools", () => {
+  it("registers all twelve expected tools", () => {
     const names = listTools()
       .map((t) => t.name)
       .sort();
@@ -32,6 +34,7 @@ describe("server", () => {
       "get_kr_premium",
       "get_market_pulse",
       "get_rwa_pulse",
+      "get_spark_eth_collateral_capacity",
       "get_stablecoin_pulse",
       "get_token_forensics",
     ]);
@@ -240,6 +243,18 @@ describe("handleEthCollateralDemand", () => {
     expect(output.status).toBe("unavailable");
     expect(output.summary).toBe("Aave V3 Core ETH-family supplied capacity evidence is unavailable.");
     expect(JSON.stringify(output)).not.toContain(secret);
+  });
+});
+
+describe("handleSparkEthCollateralCapacity", () => {
+  it("uses only internal RPC configuration and rejects non-empty public input", async () => {
+    const fetchImpl = vi.fn();
+    const output = await handleSparkEthCollateralCapacity({}, { env, ctx: makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }) });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(output.gaps.map((gap) => gap.code)).toEqual(["rpc_not_configured"]);
+    expect(SparkCollateralCapacitySnapshotSchema.parse(output)).toEqual(output);
+    await expect(handleSparkEthCollateralCapacity({ rpcUrl: "https://forbidden" }, { env, ctx: makeContext({ env }) })).rejects.toThrow();
+    await expect(handleSparkEthCollateralCapacity(null, { env, ctx: makeContext({ env }) })).rejects.toThrow();
   });
 });
 
