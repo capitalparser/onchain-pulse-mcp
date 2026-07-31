@@ -163,57 +163,69 @@ rehypothecation ratio; all six broader metrics remain `null` with explicit
 gaps.
 
 **EigenLayer Covered LST ETH Quotes Snapshot**:
-A separate read-only accounting-quote view for exactly 3 of the 12 fixed legacy
-strategies: stETH, rETH, and cbETH. The base authority is EigenLayer release
-`v1.12.0`, commit `d302f65042164c8d8d0a983c1540d85a8710030b`. Exact
-18-decimal token/proxy identities are stETH
-`0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84`, rETH
-`0xae78736Cd615f374D3085123A210448E74Fc6393`, and cbETH
-`0xBe9895146f7AF43049ca1c1AE358B0541Ea49704`. ETHx, ankrETH, oETH, osETH,
-swETH, wBETH, sfrxETH, lsETH, and mETH remain explicitly unquoted.
+A separate read-only direct protocol-accounting quote view for exactly 5 of the
+12 fixed legacy strategies, in this fixed order: stETH, rETH, cbETH, osETH,
+and mETH. The base authority is EigenLayer release `v1.12.0`, commit
+`d302f65042164c8d8d0a983c1540d85a8710030b`. The 18-decimal token identities
+are stETH `0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84`, rETH
+`0xae78736Cd615f374D3085123A210448E74Fc6393`, cbETH
+`0xBe9895146f7AF43049ca1c1AE358B0541Ea49704`, osETH
+`0xf1C9acDc66974dFB6dEcB12aA385b9cD01190E38`, and mETH
+`0xd5F7838F5C461fefF7FE49ea5ebaF7728bB0ADfa`. The exact unquoted list is
+ETHx, ankrETH, oETH, swETH, wBETH, sfrxETH, lsETH.
 
-**Covered share-accounting ETH-equivalent**:
-`covered_share_accounting_eth_equivalent_wei`, the exact partial sum of ETH
-accounting quotes for the three covered strategy share-accounting token
-amounts. It is distinct from custody and is not a full LST, native-restaked, or
-total EigenLayer exposure measurement.
-
-**Covered token-custody ETH-equivalent**:
-`covered_token_custody_eth_equivalent_wei`, the exact partial sum of ETH
-accounting quotes for the three covered token balances held by their
-strategies. It is distinct from share accounting and does not reconcile issuer
-backing or downstream reuse.
+**Covered partial metrics**:
+`covered_share_accounting_eth_equivalent_wei` and
+`covered_token_custody_eth_equivalent_wei` are distinct partial sums across
+only the five covered strategy amounts. They are not full LST, native-restaked,
+or total EigenLayer exposure, independent backing, or downstream-reuse views.
 
 **Covered LST quote trust basis**:
 stETH semantics are pinned to Lido core `v4.0.0` commit
-`17005714f151e5502c559932319a3f2f74ac2436`: stETH token wei is already
-pooled-ETH accounting wei and must not be double-converted as Lido shares.
-rETH semantics are pinned to Rocket Pool commit
-`fef41a4f7cf99d7d66313c0ba04deb8ba2dabf88`: selector `0x8b32fa23`
-calls `getEthValue(uint256)` separately for aggregate share accounting and
-custody, preserving both direct floors rather than applying a rounded rate.
-cbETH semantics are pinned to Coinbase `wrapped-tokens-os` commit
-`5697a90f4c47e8d801cedce81444a8464019fe08` and Coinbase's official cbETH
-page/whitepaper: selector `0x3ba0b9a9` returns the upgradeable,
-Coinbase-controlled oracle `exchangeRate()` at `10**18` scale, and each quote
-is `floor(amount * rate / 10**18)`. The contract exposes no rate timestamp, so
-`cbeth_exchange_rate_freshness_not_verified` is permanent.
+`17005714f151e5502c559932319a3f2f74ac2436`; rETH to Rocket Pool commit
+`fef41a4f7cf99d7d66313c0ba04deb8ba2dabf88` with direct `getEthValue(uint256)`
+(`0x8b32fa23`); and cbETH to Coinbase `wrapped-tokens-os` commit
+`5697a90f4c47e8d801cedce81444a8464019fe08` with `exchangeRate()`
+(`0x3ba0b9a9`) at `10**18` scale. cbETH has no bounded rate-timestamp proof.
+
+osETH is pinned to StakeWise v3-core release `v5.0.1`, commit
+`fc70cbe1b3d41bc5f78434830d837aa270ca33bc`: direct non-proxy controller
+`0x2A261e60FB14586B474C208b1B7AC6D0f5000306` receives two
+`convertToAssets(uint256)` calls (`0x07a2d13a`). PriceFeed
+`0x8023518b2192FB5384DAdc596765B3dD1cdFe471` and
+`osTokenVaultController()` (`0xabed451d`) are documentary-only, never runtime
+calls. mETH is pinned to Mantle mantle-lsp/contracts release `v1.4.1`, commit
+`bbc4e8bf7d3e3b4ca0c5be07aba409ac66611c76`: Staking
+`0xe3cBd06D7dadB3F4e6557bAb7EdD924CD1489E8f` verifies `mETH()`
+(`0x29e84867`) and `oracle()` (`0x7dc0d1d0`) against Oracle
+`0x8735049F496727f824Cc0f2B174d826f5c408192`; Staking—not Oracle—receives
+both `mETHToETH(uint256)` (`0x5890c11c`) calls.
 
 **Covered LST quote acquisition boundary**:
-One uncached verification is 5 JSON-RPC batches, 94 logical requests, and 92
-`eth_call` requests, all at the same numeric finalized block tag. One combined
-30-minute fresh-only cache owns the path; it does not nest the base public
-cache or accept stale base evidence. A stale public result can come only from
-previously verified combined evidence after refresh failure.
+One cold verification is exactly 5 JSON-RPC batches, 100 logical requests, 98
+`eth_call` requests, and contiguous IDs 1--100 at one numeric finalized block.
+IDs 92--100 are rETH twice, cbETH once, osETH controller twice, Mantle Staking
+`mETH()` and `oracle()` once each, and Staking `mETHToETH()` twice. The sole v2
+30-minute combined cache neither consumes the base public cache nor accepts a
+stale base; stale fallback requires prior complete five-token verified evidence.
 
 The seven broader fields `lst_restaked_eth_equivalent_wei`,
 `native_restaked_eth_wei`, `eigenlayer_eth_family_exposure_eth_wei`,
-`unique_net_eth_locked`,
-`combined_aave_spark_lido_sky_eigenlayer_demand`, `rehypothecation_ratio`, and
-`executable_withdrawal_capacity_eth_wei` remain `null`. The snapshot does not
-establish full LST/native/EigenLayer totals, unique or net locked ETH, combined
-Aave/Spark/Lido/Sky/EigenLayer demand, rehypothecation, issuer-backing
-reconciliation, rate freshness, or executable withdrawal capacity.
+`unique_net_eth_locked`, `combined_aave_spark_lido_sky_eigenlayer_demand`,
+`rehypothecation_ratio`, and `executable_withdrawal_capacity_eth_wei` remain
+`null`. The snapshot does not establish full LST/native/EigenLayer totals,
+unique/net locked ETH, combined Aave/Spark/Lido/Sky/EigenLayer demand,
+rehypothecation, independent backing, cbETH/osETH reward/mETH oracle-record
+freshness, or executable withdrawal/liquidity. Permanent gaps are
+`lst_quote_coverage_partial`, `native_restaked_eth_not_measured`,
+`lst_restaked_eth_equivalent_not_measured`,
+`eigenlayer_eth_family_exposure_not_measured`,
+`unique_net_eth_locked_not_reconciled`,
+`combined_aave_spark_lido_sky_eigenlayer_demand_not_reconciled`,
+`rehypothecation_ratio_not_measured`, `executable_withdrawal_capacity_not_measured`,
+`cbeth_exchange_rate_freshness_not_verified`,
+`oseth_virtual_rewards_freshness_not_verified`, `oseth_backing_not_reconciled`,
+`meth_oracle_record_freshness_not_verified`, and `meth_backing_not_reconciled`.
 
 ### Token forensics
 

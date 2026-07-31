@@ -14,7 +14,7 @@ Existing onchain intelligence tools (Nansen, Arkham, Coinglass) are dashboards b
 
 - **Read-only · snapshot-oriented**: idempotent MCP responses, no write actions, local-only history materialisation for composite z-scores.
 - **Source adapters**: free and BYOK-backed market, Ethereum, RWA, derivatives, and Korea data paths.
-- **16 MCP tools**: the six original macro tools, token forensics, ETH value capture, bounded Ethereum execution-fee and consensus-reward cross-checks, finalized Aave V3 Core and SparkLend supplied-capacity views, Lido pooled ETH backing, legacy Maker/Sky ETH-family adapter-held token custody, fixed legacy EigenLayer ETH-family LST strategy token-unit exposure with native-restaking diagnostics, and exact covered stETH/rETH/cbETH accounting quotes.
+- **16 MCP tools**: the six original macro tools, token forensics, ETH value capture, bounded Ethereum execution-fee and consensus-reward cross-checks, finalized Aave V3 Core and SparkLend supplied-capacity views, Lido pooled ETH backing, legacy Maker/Sky ETH-family adapter-held token custody, fixed legacy EigenLayer ETH-family LST strategy token-unit exposure with native-restaking diagnostics, and bounded direct protocol-accounting quotes for stETH/rETH/cbETH/osETH/mETH.
 - **BYOK enrichment**: free defaults work out of the box; paid keys (Nansen/Glassnode/Arkham/Coinglass/CryptoQuant/Laevitas) are auto-detected via env vars.
 - **Composite pulse score**: 7-input weighted z-score with weights externalized to `config/pulse.yaml` — tweak to your thesis.
 - **Graceful degradation**: partial source failures yield reduced-confidence answers, never silent failure.
@@ -58,7 +58,7 @@ Set any of these env vars to enrich responses with paid data sources. The server
 | `CRYPTOQUANT_API_KEY` | CryptoQuant | Reserved for v0.2 |
 | `LAEVITAS_API_KEY` | Laevitas | Reserved for v0.2 |
 | `DUNE_API_KEY` | Dune | ETH fee burn and labelled L2 rent through direct SQL execution |
-| `ETHEREUM_RPC_URL` | Ethereum Execution API | Optional finalized-block fee, Aave V3 Core/SparkLend supplied-capacity, Lido backing, Maker/Sky adapter custody, EigenLayer restaking-exposure, and covered stETH/rETH/cbETH quote transport; internal only and never returned |
+| `ETHEREUM_RPC_URL` | Ethereum Execution API | Optional finalized-block fee, Aave V3 Core/SparkLend supplied-capacity, Lido backing, Maker/Sky adapter custody, EigenLayer restaking-exposure, and covered stETH/rETH/cbETH/osETH/mETH quote transport; internal only and never returned |
 | `ETHEREUM_BEACON_API_URL` | Ethereum Beacon API | Optional finalized-epoch reward-component cross-check transport; internal only and never returned |
 
 `DUNE_API_KEY` is used only when a caller explicitly selects
@@ -88,7 +88,7 @@ Set `OPM_LANG=ko` for Korean `summary` strings. Default is `en`.
 | `get_lido_pooled_eth_backing` | none | Exact finalized Lido pooled ETH backing; all-native-stake, net-locked, DeFi-collateral, and combined-demand metrics stay null |
 | `get_sky_eth_collateral_custody` | none | Exact finalized legacy Maker/Sky ETH-family adapter-held token custody; active Vault/user/net-locked/combined-demand/rehypothecation metrics stay null |
 | `get_eigenlayer_eth_restaking_exposure` | none | Exact finalized fixed legacy EigenLayer ETH-family LST token-unit exposure and native-restaking diagnostics; all broader totals stay null |
-| `get_eigenlayer_lst_eth_quotes` | none | Exact finalized stETH/rETH/cbETH accounting quotes for 3 of 12 fixed legacy EigenLayer strategies; only two explicitly covered partial ETH-equivalent sums are non-null |
+| `get_eigenlayer_lst_eth_quotes` | none | Finalized direct protocol-accounting quotes for stETH/rETH/cbETH/osETH/mETH covering only 5 of 12 fixed strategies; only two distinct partial ETH-equivalent sums are non-null |
 | `get_eth_consensus_rewards_cross_check` | `epoch`, `include_blocks?` | Exact finalized Ethereum consensus reward-component verification for one epoch |
 
 `get_token_forensics` is Phase 1. It discovers the best pool through DexScreener
@@ -422,14 +422,17 @@ nonblank `ETHEREUM_RPC_URL` are set.
 
 ### EigenLayer covered LST ETH accounting quotes
 
-`get_eigenlayer_lst_eth_quotes` has no arguments. It quotes exactly 3 of the
-12 fixed legacy EigenLayer strategies at one finalized Ethereum block:
+`get_eigenlayer_lst_eth_quotes` has no arguments. It quotes exactly 5 of the
+12 fixed legacy EigenLayer strategies at one finalized Ethereum block. The
+covered order is fixed: stETH, rETH, cbETH, osETH, mETH.
 
 | Label | Official token/proxy | Exact quote basis |
 |---|---|---|
 | stETH | `0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84` | token wei is pooled-ETH accounting wei; identity conversion |
 | rETH | `0xae78736Cd615f374D3085123A210448E74Fc6393` | two separate `getEthValue(uint256)` aggregate calls, selector `0x8b32fa23` |
 | cbETH | `0xBe9895146f7AF43049ca1c1AE358B0541Ea49704` | one `exchangeRate()` call, selector `0x3ba0b9a9`, scaled by `10**18` |
+| osETH | `0xf1C9acDc66974dFB6dEcB12aA385b9cD01190E38` | two direct controller `convertToAssets(uint256)` calls, selector `0x07a2d13a` |
+| mETH | `0xd5F7838F5C461fefF7FE49ea5ebaF7728bB0ADfa` | two direct Staking `mETHToETH(uint256)` calls, selector `0x5890c11c` |
 
 The base strategy identities remain pinned to EigenLayer
 `Layr-Labs/eigenlayer-contracts` release `v1.12.0`, commit
@@ -442,7 +445,13 @@ Lido core `v4.0.0` commit
 `wrapped-tokens-os` commit
 `5697a90f4c47e8d801cedce81444a8464019fe08`
 (`contracts/wrapped-tokens/staking/StakedTokenV1.sol`), together with
-Coinbase's official cbETH page and whitepaper.
+Coinbase's official cbETH page and whitepaper. StakeWise v3-core release
+`v5.0.1`, commit `fc70cbe1b3d41bc5f78434830d837aa270ca33bc`, pins osETH and
+the direct non-proxy osTokenVaultController
+`0x2A261e60FB14586B474C208b1B7AC6D0f5000306`. Mantle mantle-lsp/contracts
+release `v1.4.1`, commit `bbc4e8bf7d3e3b4ca0c5be07aba409ac66611c76`, pins
+mETH, the Staking proxy `0xe3cBd06D7dadB3F4e6557bAb7EdD924CD1489E8f`, and
+Oracle `0x8735049F496727f824Cc0f2B174d826f5c408192`.
 
 stETH must not be passed to `getPooledEthByShares`: the observed values are
 stETH token units, not Lido share units. rETH share-accounting and custody
@@ -451,27 +460,44 @@ one-token rate would add a second floor. cbETH quotes are recomputed as
 `floor(token amount * exchangeRate / 10**18)`. Its upgradeable, Coinbase-
 controlled oracle exposes no timestamp, so
 `cbeth_exchange_rate_freshness_not_verified` is permanent and the result is
-an accounting quote, not independently reconciled backing.
+an accounting quote, not independently reconciled backing. osETH sends each
+aggregate directly to the pinned controller's `convertToAssets`; it does not
+derive a rounded rate. PriceFeed `0x8023518b2192FB5384DAdc596765B3dD1cdFe471`
+and its documentary `osTokenVaultController()` selector `0xabed451d` are not
+runtime calls. mETH verifies Staking's `mETH()` (`0x29e84867`) and `oracle()`
+(`0x7dc0d1d0`) pointers at the finalized block, then calls Staking—not the
+Oracle—via `mETHToETH` for each input.
 
-A cold verification uses 5 JSON-RPC batches, 94 logical requests, and 92
-`eth_call` requests. Every contract call uses the same numeric finalized block
-tag. The quote path owns one 30-minute fresh-only combined cache: it never
-nests or consumes the base public cache, never accepts a stale base result,
-and may return stale data only from previously verified combined evidence
-after refresh failure.
+A cold verification uses exactly 5 JSON-RPC batches, 100 logical requests,
+98 `eth_call` requests, and contiguous IDs 1--100; every contract call uses
+the same numeric finalized block tag. IDs 92--100 are rETH twice, cbETH once,
+osETH controller twice, Mantle Staking `mETH()` and `oracle()` once each, and
+Mantle Staking `mETHToETH()` twice. The sole v2 quote cache is the 30-minute
+combined cache; it never nests or consumes the base public cache, never accepts
+a stale base result, and may stale-fallback only from prior complete five-token
+verified evidence after refresh failure.
 
 The only non-null aggregates are explicitly partial:
 `covered_share_accounting_eth_equivalent_wei` and
-`covered_token_custody_eth_equivalent_wei`. Coverage stays 3 of 12, with ETHx,
-ankrETH, oETH, osETH, swETH, wBETH, sfrxETH, lsETH, and mETH listed as
-unquoted. These seven broader metrics remain `null`:
+`covered_token_custody_eth_equivalent_wei`. They are distinct partials for 5
+of 12 only. The exact unquoted list is ETHx, ankrETH, oETH, swETH, wBETH,
+sfrxETH, lsETH. These seven broader metrics remain `null`:
 `lst_restaked_eth_equivalent_wei`, `native_restaked_eth_wei`,
 `eigenlayer_eth_family_exposure_eth_wei`, `unique_net_eth_locked`,
 `combined_aave_spark_lido_sky_eigenlayer_demand`, `rehypothecation_ratio`, and
 `executable_withdrawal_capacity_eth_wei`. The snapshot therefore does not
 establish a full LST/native/EigenLayer total, unique or net locked ETH,
-combined protocol demand, rehypothecation, issuer-backing reconciliation,
-rate freshness, or executable withdrawal capacity.
+combined protocol demand, rehypothecation, independent backing, cbETH/osETH
+reward/mETH oracle-record freshness, or executable withdrawal/liquidity.
+Permanent gaps are `lst_quote_coverage_partial`,
+`native_restaked_eth_not_measured`, `lst_restaked_eth_equivalent_not_measured`,
+`eigenlayer_eth_family_exposure_not_measured`,
+`unique_net_eth_locked_not_reconciled`,
+`combined_aave_spark_lido_sky_eigenlayer_demand_not_reconciled`,
+`rehypothecation_ratio_not_measured`, `executable_withdrawal_capacity_not_measured`,
+`cbeth_exchange_rate_freshness_not_verified`,
+`oseth_virtual_rewards_freshness_not_verified`, `oseth_backing_not_reconciled`,
+`meth_oracle_record_freshness_not_verified`, and `meth_backing_not_reconciled`.
 
 Set `ETHEREUM_RPC_URL` only in the server environment. Caller-supplied URLs are
 rejected, credentials and provider errors never enter public fields, and an

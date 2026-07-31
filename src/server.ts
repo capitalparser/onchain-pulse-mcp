@@ -195,7 +195,7 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: "get_eigenlayer_lst_eth_quotes",
-    description: "Exact finalized stETH/rETH/cbETH accounting quotes for 3 of 12 fixed legacy EigenLayer strategies; broader totals stay null.",
+    description: "Finalized direct protocol-accounting quotes for stETH/rETH/cbETH/osETH/mETH covering only 5 of 12 fixed EigenLayer strategies; broader totals stay null.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     handler: handleEigenLayerLstEthQuotes,
   },

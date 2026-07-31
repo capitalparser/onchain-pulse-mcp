@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { makeContext } from "../../src/adapters/base.js";
 import { fetchEigenLayerLstEthQuotes } from "../../src/adapters/eigenlayer_lst_eth_quotes_rpc.js";
 import { loadEnv } from "../../src/env.js";
@@ -10,6 +10,21 @@ import { getEigenLayerLstEthQuotes } from "../../src/tools/get_eigenlayer_lst_et
 
 const runLive = process.env.RUN_LIVE_EIGENLAYER_LST_ETH_QUOTES === "1"
   && Boolean(process.env.ETHEREUM_RPC_URL?.trim());
+
+describe.skipIf(runLive)("disabled EigenLayer covered LST ETH quote live gate", () => {
+  it("does not invoke transport without both explicit live gates", async () => {
+    const fetchImpl = vi.fn();
+    const env = { byok: {}, lang: "en" as const, historyPath: "/tmp/live-disabled-history.json", ethereumRpcUrl: undefined, ethereumBeaconApiUrl: undefined };
+
+    const snapshot = await fetchEigenLayerLstEthQuotes(
+      { rpcUrl: env.ethereumRpcUrl },
+      makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }),
+    );
+
+    expect(snapshot.status).toBe("unavailable");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
 
 describe.skipIf(!runLive)("EigenLayer covered LST ETH quotes", () => {
   it("independently verifies exact covered quotes, partial sums, and permanent null boundaries", async () => {
@@ -31,9 +46,18 @@ describe.skipIf(!runLive)("EigenLayer covered LST ETH quotes", () => {
       "steth_token_wei_identity_quote",
       "rocket_pool_direct_aggregate_quote",
       "coinbase_oracle_accounting_quote",
+      "stakewise_v3_direct_controller_quote",
+      "mantle_staking_direct_oracle_quote",
+    ]);
+    expect(snapshot.covered_quotes.map((quote) => quote.trust_basis)).toEqual([
+      "lido_pooled_eth_accounting",
+      "rocket_pool_network_accounting",
+      "coinbase_oracle_controlled_rate",
+      "stakewise_v3_keeper_reward_accounting",
+      "mantle_oracle_reported_accounting",
     ]);
 
-    const [steth, reth, cbeth] = snapshot.covered_quotes;
+    const [steth, reth, cbeth, oseth, meth] = snapshot.covered_quotes;
     expect(steth!.share_accounting_eth_quote_wei).toBe(steth!.share_accounting_token_amount);
     expect(steth!.token_custody_eth_quote_wei).toBe(steth!.token_custody_token_amount);
     expect(steth!.cbeth_exchange_rate_wei).toBeNull();
@@ -48,6 +72,22 @@ describe.skipIf(!runLive)("EigenLayer covered LST ETH quotes", () => {
       (BigInt(cbeth!.token_custody_token_amount) * cbethRate) / (10n ** 18n),
     );
     expect(snapshot.gaps.map((gap) => gap.code)).toContain("cbeth_exchange_rate_freshness_not_verified");
+    expect(cbeth!.share_accounting_eth_quote_wei).toBe(
+      ((BigInt(cbeth!.share_accounting_token_amount) * cbethRate) / (10n ** 18n)).toString(),
+    );
+    expect(cbeth!.token_custody_eth_quote_wei).toBe(
+      ((BigInt(cbeth!.token_custody_token_amount) * cbethRate) / (10n ** 18n)).toString(),
+    );
+    expect(oseth!.cbeth_exchange_rate_wei).toBeNull();
+    expect(meth!.cbeth_exchange_rate_wei).toBeNull();
+    for (const directQuote of [
+      oseth!.share_accounting_eth_quote_wei,
+      oseth!.token_custody_eth_quote_wei,
+      meth!.share_accounting_eth_quote_wei,
+      meth!.token_custody_eth_quote_wei,
+    ]) {
+      expect(directQuote).toMatch(/^(0|[1-9]\d*)$/);
+    }
 
     const shareSum = snapshot.covered_quotes.reduce(
       (sum, quote) => sum + BigInt(quote.share_accounting_eth_quote_wei),
@@ -60,7 +100,7 @@ describe.skipIf(!runLive)("EigenLayer covered LST ETH quotes", () => {
     expect(snapshot.metrics.covered_share_accounting_eth_equivalent_wei).toBe(shareSum.toString());
     expect(snapshot.metrics.covered_token_custody_eth_equivalent_wei).toBe(custodySum.toString());
     expect(snapshot.coverage).toEqual({
-      quoted_strategy_count: 3,
+      quoted_strategy_count: 5,
       fixed_strategy_count: 12,
       unquoted_strategy_labels: EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS,
     });
@@ -73,6 +113,23 @@ describe.skipIf(!runLive)("EigenLayer covered LST ETH quotes", () => {
       rehypothecation_ratio: null,
       executable_withdrawal_capacity_eth_wei: null,
     });
-    expect(snapshot.summary).toContain("executable withdrawal capacity");
+    expect(snapshot.gaps.map((gap) => gap.code)).toEqual(expect.arrayContaining([
+      "lst_quote_coverage_partial",
+      "cbeth_exchange_rate_freshness_not_verified",
+      "oseth_virtual_rewards_freshness_not_verified",
+      "oseth_backing_not_reconciled",
+      "meth_oracle_record_freshness_not_verified",
+      "meth_backing_not_reconciled",
+      "native_restaked_eth_not_measured",
+      "lst_restaked_eth_equivalent_not_measured",
+      "eigenlayer_eth_family_exposure_not_measured",
+      "unique_net_eth_locked_not_reconciled",
+      "combined_aave_spark_lido_sky_eigenlayer_demand_not_reconciled",
+      "rehypothecation_ratio_not_measured",
+      "executable_withdrawal_capacity_not_measured",
+    ]));
+    expect(snapshot.gaps).toHaveLength(13);
+    expect(snapshot.summary).toContain("executable withdrawal/liquidity");
+    expect(snapshot.summary.length).toBeLessThanOrEqual(500);
   }, 30_000);
 });
