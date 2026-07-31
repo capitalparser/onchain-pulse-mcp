@@ -14,7 +14,7 @@ Existing onchain intelligence tools (Nansen, Arkham, Coinglass) are dashboards b
 
 - **Read-only · snapshot-oriented**: idempotent MCP responses, no write actions, local-only history materialisation for composite z-scores.
 - **Source adapters**: free and BYOK-backed market, Ethereum, RWA, derivatives, and Korea data paths.
-- **12 MCP tools**: the six original macro tools, token forensics, ETH value capture, bounded Ethereum execution-fee and consensus-reward cross-checks, and finalized Aave V3 Core and SparkLend supplied-capacity views.
+- **13 MCP tools**: the six original macro tools, token forensics, ETH value capture, bounded Ethereum execution-fee and consensus-reward cross-checks, finalized Aave V3 Core and SparkLend supplied-capacity views, and Lido pooled ETH backing.
 - **BYOK enrichment**: free defaults work out of the box; paid keys (Nansen/Glassnode/Arkham/Coinglass/CryptoQuant/Laevitas) are auto-detected via env vars.
 - **Composite pulse score**: 7-input weighted z-score with weights externalized to `config/pulse.yaml` — tweak to your thesis.
 - **Graceful degradation**: partial source failures yield reduced-confidence answers, never silent failure.
@@ -58,7 +58,7 @@ Set any of these env vars to enrich responses with paid data sources. The server
 | `CRYPTOQUANT_API_KEY` | CryptoQuant | Reserved for v0.2 |
 | `LAEVITAS_API_KEY` | Laevitas | Reserved for v0.2 |
 | `DUNE_API_KEY` | Dune | ETH fee burn and labelled L2 rent through direct SQL execution |
-| `ETHEREUM_RPC_URL` | Ethereum Execution API | Optional finalized-block fee plus Aave V3 Core and SparkLend supplied-capacity transport; internal only and never returned |
+| `ETHEREUM_RPC_URL` | Ethereum Execution API | Optional finalized-block fee, Aave V3 Core/SparkLend supplied-capacity, and Lido pooled-ETH-backing transport; internal only and never returned |
 | `ETHEREUM_BEACON_API_URL` | Ethereum Beacon API | Optional finalized-epoch reward-component cross-check transport; internal only and never returned |
 
 `DUNE_API_KEY` is used only when a caller explicitly selects
@@ -85,6 +85,7 @@ Set `OPM_LANG=ko` for Korean `summary` strings. Default is `en`.
 | `get_eth_fee_cross_check` | `start_block`, `end_block`, `include_blocks?` | Exact finalized Ethereum execution-fee and burn verification for a bounded block range |
 | `get_eth_collateral_demand` | none | Exact finalized Aave V3 Core ETH-family supplied capacity; broader collateral and lock metrics stay null |
 | `get_spark_eth_collateral_capacity` | none | Exact finalized SparkLend ETH-family supplied capacity; Aave/Spark overlap and broader collateral metrics stay null |
+| `get_lido_pooled_eth_backing` | none | Exact finalized Lido pooled ETH backing; all-native-stake, net-locked, DeFi-collateral, and combined-demand metrics stay null |
 | `get_eth_consensus_rewards_cross_check` | `epoch`, `include_blocks?` | Exact finalized Ethereum consensus reward-component verification for one epoch |
 
 `get_token_forensics` is Phase 1. It discovers the best pool through DexScreener
@@ -309,6 +310,34 @@ npm run test:live:spark-collateral
 ```
 
 It remains skipped unless both `RUN_LIVE_SPARK_COLLATERAL=1` and a nonblank
+`ETHEREUM_RPC_URL` are set.
+
+### Lido pooled ETH backing
+
+`get_lido_pooled_eth_backing` has no arguments. It is a read-only verifier for
+Lido stETH protocol-level pooled ETH backing at one finalized Ethereum block.
+It is pinned to Lido core `v4.0.0` commit
+`17005714f151e5502c559932319a3f2f74ac2436` and reads only the official mainnet
+stETH/Lido proxy `0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84`.
+
+Each uncached verification has exactly two JSON-RPC batch rounds and nine
+logical requests: mainnet chain/finalized-block evidence, then seven contract
+calls at that exact block tag. It recomputes the internal/external pooled ETH
+and share identities using bigint-only values. This reports Lido pooled ETH
+backing only; it does not establish all Ethereum native stake, unique net ETH
+locked, downstream DeFi collateral, a combined Aave/Spark/Lido demand total, or
+a rehypothecation ratio. Those five metrics remain `null` with explicit gaps.
+
+Set `ETHEREUM_RPC_URL` only in the server environment. It may contain provider
+credentials and is never returned, logged, persisted, or used as a cache key.
+Without it, the tool returns `rpc_not_configured` without a network request.
+The read-only live verifier is explicitly opt-in:
+
+```bash
+npm run test:live:lido-backing
+```
+
+It remains skipped unless both `RUN_LIVE_LIDO_BACKING=1` and a nonblank
 `ETHEREUM_RPC_URL` are set.
 
 ### Ethereum consensus reward-component cross-check

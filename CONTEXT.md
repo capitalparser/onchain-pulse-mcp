@@ -129,6 +129,14 @@ block. It reports supplied capacity and market-level collateral eligibility,
 not actual user collateral or an Aave-plus-Spark total. The five broader
 overlap/usage/lock metrics remain `null` with explicit gaps.
 
+**Lido Pooled ETH Backing Snapshot**:
+A read-only, protocol-specific measurement of Lido stETH pooled ETH backing at
+one finalized Ethereum block. It reports verified internal/external pooled ETH,
+the accounted internal components, and shares. It is not all Ethereum native
+stake, unique net ETH locked, downstream DeFi collateral, a combined
+Aave/Spark/Lido demand total, or a rehypothecation ratio; those five broader
+metrics remain `null` with explicit gaps.
+
 ### Token forensics
 
 **Token Forensics Snapshot**:
