@@ -1,7 +1,7 @@
 # EigenLayer lsETH ETH Quote Design
 
-**Date:** 2026-08-01  
-**Branch:** `feat/eigenlayer-lseth-quote`  
+**Date:** 2026-08-01
+**Branch:** `feat/eigenlayer-lseth-quote`
 **Base:** `88805ae4ff834cffb745496f904b4dbc2137faa1`
 
 ## Goal
