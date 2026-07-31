@@ -1,23 +1,26 @@
 import { describe, it, expect, vi } from "vitest";
 import { makeContext } from "../src/adapters/base.js";
 import { EthValueCaptureSnapshotSchema } from "../src/eth_value_capture/types.js";
+import { EthFeeCrossCheckSnapshotSchema } from "../src/eth_fee_cross_check/types.js";
 import {
   createServer,
+  handleEthFeeCrossCheck,
   handleEthValueCapture,
   listTools,
 } from "../src/server.js";
 import type { EnvConfig } from "../src/env.js";
 
-const env: EnvConfig = { byok: {}, lang: "en", historyPath: "/tmp/onchain-pulse-mcp-test-history.json" };
+const env: EnvConfig = { byok: {}, lang: "en", historyPath: "/tmp/onchain-pulse-mcp-test-history.json", ethereumRpcUrl: undefined };
 
 describe("server", () => {
-  it("registers all eight expected tools", () => {
+  it("registers all nine expected tools", () => {
     const names = listTools()
       .map((t) => t.name)
       .sort();
 
     expect(names).toEqual([
       "get_etf_flow",
+      "get_eth_fee_cross_check",
       "get_eth_value_capture",
       "get_funding_oi",
       "get_kr_premium",
@@ -60,6 +63,17 @@ describe("server", () => {
     });
   });
 
+  it("get_eth_fee_cross_check advertises its exact bounded range contract", () => {
+    const tool = listTools().find((t) => t.name === "get_eth_fee_cross_check");
+
+    expect(tool?.inputSchema.required).toEqual(["start_block", "end_block"]);
+    expect(tool?.inputSchema.properties).toEqual({
+      start_block: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      end_block: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      include_blocks: { type: "boolean", default: false },
+    });
+  });
+
   it("createServer returns a connectable Server instance plus adapter context", () => {
     const { server, ctx } = createServer({ env });
 
@@ -76,6 +90,98 @@ describe("server", () => {
     expect(a).not.toBe(b);
     a.set("k", { data: { x: "deriv" }, sources: [], asOf: "", stale: false });
     expect(b.get("k")).toBeUndefined();
+  });
+});
+
+function rpcResponse(body: unknown): Response {
+  return { ok: true, json: async () => body } as Response;
+}
+
+function rpcHash(value: number): string {
+  return `0x${value.toString(16).padStart(64, "0")}`;
+}
+
+function rpcQuantity(value: number): string {
+  return `0x${value.toString(16)}`;
+}
+
+function oneBlockRpcFetch(blockNumber: number) {
+  return vi.fn()
+    .mockResolvedValueOnce(rpcResponse({ jsonrpc: "2.0", id: 1, result: { number: rpcQuantity(blockNumber) } }))
+    .mockResolvedValueOnce(rpcResponse([
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        result: {
+          number: rpcQuantity(blockNumber),
+          hash: rpcHash(blockNumber),
+          baseFeePerGas: "0xa",
+          gasUsed: "0x5",
+          timestamp: "0x65ec8786",
+          transactions: [rpcHash(1)],
+        },
+      },
+      {
+        jsonrpc: "2.0",
+        id: 3,
+        result: [{
+          blockNumber: rpcQuantity(blockNumber),
+          blockHash: rpcHash(blockNumber),
+          transactionHash: rpcHash(1),
+          transactionIndex: "0x0",
+          gasUsed: "0x5",
+          effectiveGasPrice: "0xa",
+        }],
+      },
+    ]));
+}
+
+describe("handleEthFeeCrossCheck", () => {
+  it("returns a verified, schema-valid localized snapshot from mocked finalized RPC evidence", async () => {
+    const secret = "https://rpc.example/credential-never-returned";
+    const localEnv: EnvConfig = { ...env, ethereumRpcUrl: secret };
+    const output = await handleEthFeeCrossCheck(
+      { start_block: 100, end_block: 100, include_blocks: true },
+      { env: localEnv, ctx: makeContext({ env: localEnv, fetchImpl: oneBlockRpcFetch(100) as unknown as typeof fetch }) },
+    );
+
+    expect(output.status).toBe("verified");
+    expect(output.summary).toBe("Ethereum execution fee evidence was verified against finalized blocks.");
+    expect(output.blocks).toHaveLength(1);
+    expect(output.identities).toEqual({
+      execution_equals_base_plus_priority: true,
+      gross_equals_execution_plus_blob: true,
+      total_burn_equals_base_plus_blob: true,
+    });
+    expect(EthFeeCrossCheckSnapshotSchema.parse(output)).toEqual(output);
+    expect(JSON.stringify(output)).not.toContain(secret);
+  });
+
+  it("returns a bounded no-config snapshot without calling fetch", async () => {
+    const fetchImpl = vi.fn();
+    const output = await handleEthFeeCrossCheck(
+      { start_block: 100, end_block: 100 },
+      { env, ctx: makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }) },
+    );
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(output.status).toBe("unavailable");
+    expect(output.summary).toBe("Ethereum execution fee evidence is unavailable.");
+    expect(output.gaps.map((gap) => gap.code)).toEqual(["rpc_not_configured"]);
+    expect(EthFeeCrossCheckSnapshotSchema.parse(output)).toEqual(output);
+  });
+
+  it.each([
+    { start_block: 101, end_block: 100 },
+    { start_block: 0, end_block: 64 },
+    { start_block: 0.5, end_block: 1 },
+    { start_block: 100, end_block: 100, include_blocks: "yes" },
+    { start_block: 100, end_block: 100, unknown: true },
+  ])("rejects invalid public RPC cross-check arguments %#", async (raw) => {
+    await expect(handleEthFeeCrossCheck(raw, {
+      env,
+      ctx: makeContext({ env, fetchImpl: vi.fn() as unknown as typeof fetch }),
+    })).rejects.toThrow();
   });
 });
 

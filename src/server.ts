@@ -13,8 +13,13 @@ import { rpcCrossCheck } from "./adapters/rpc_cross_check.js";
 import { fetchDuneEthValue } from "./adapters/eth_value_dune.js";
 import { fetchGrowThePieRent } from "./adapters/eth_value_growthepie.js";
 import { fetchEthSupplyHistory } from "./adapters/eth_supply_coinmetrics.js";
+import { fetchEthFeeRpc } from "./adapters/eth_fee_rpc.js";
 import type { EnvConfig } from "./env.js";
 import { windowToDays } from "./eth_value_capture/metrics.js";
+import {
+  GetEthFeeCrossCheckInputSchema,
+  type EthFeeCrossCheckSnapshot,
+} from "./eth_fee_cross_check/types.js";
 import {
   GetEthValueCaptureInputSchema,
   type EthValueCaptureSnapshot,
@@ -25,6 +30,7 @@ import { loadPulseConfig } from "./pulse/config.js";
 import { makeFileHistoryStore, computeWindowDelta } from "./pulse/history.js";
 import { getEtfFlow } from "./tools/get_etf_flow.js";
 import { getEthValueCapture } from "./tools/get_eth_value_capture.js";
+import { getEthFeeCrossCheck } from "./tools/get_eth_fee_cross_check.js";
 import { getFundingOi } from "./tools/get_funding_oi.js";
 import { getKrPremium } from "./tools/get_kr_premium.js";
 import { getMarketPulse } from "./tools/get_market_pulse.js";
@@ -64,7 +70,7 @@ interface ToolDef {
   handler: (
     raw: unknown,
     hc: HandlerContext,
-  ) => Promise<ToolResponse | ForensicsSnapshot | EthValueCaptureSnapshot>;
+  ) => Promise<ToolResponse | ForensicsSnapshot | EthValueCaptureSnapshot | EthFeeCrossCheckSnapshot>;
 }
 
 const TOOLS: ToolDef[] = [
@@ -104,6 +110,20 @@ const TOOLS: ToolDef[] = [
       },
     },
     handler: handleEthValueCapture,
+  },
+  {
+    name: "get_eth_fee_cross_check",
+    description: "Bounded exact verification of Ethereum execution fees from finalized block and receipt evidence.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        start_block: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        end_block: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        include_blocks: { type: "boolean", default: false },
+      },
+      required: ["start_block", "end_block"],
+    },
+    handler: handleEthFeeCrossCheck,
   },
   {
     name: "get_stablecoin_pulse",
@@ -293,6 +313,23 @@ export async function handleEthValueCapture(
     growthepie,
     now,
   });
+}
+
+export async function handleEthFeeCrossCheck(
+  raw: unknown,
+  hc: HandlerContext,
+): Promise<EthFeeCrossCheckSnapshot> {
+  const args = GetEthFeeCrossCheckInputSchema.parse(raw ?? {});
+  const adapterSnapshot = await fetchEthFeeRpc(
+    {
+      startBlock: args.start_block,
+      endBlock: args.end_block,
+      includeBlocks: args.include_blocks,
+      rpcUrl: hc.env.ethereumRpcUrl,
+    },
+    hc.ctx,
+  );
+  return getEthFeeCrossCheck({ lang: hc.env.lang, adapterSnapshot });
 }
 
 async function handleStablecoinPulse(raw: unknown, hc: HandlerContext): Promise<ToolResponse> {

@@ -28,6 +28,15 @@ describe("loadEnv", () => {
     expect(cfg.byok.dune).toBe("d-1");
   });
 
+  it("loads ETHEREUM_RPC_URL only into the internal Ethereum RPC configuration", () => {
+    const cfg = loadEnv({ ETHEREUM_RPC_URL: "https://rpc.example/private-token" });
+
+    expect(cfg.ethereumRpcUrl).toBe("https://rpc.example/private-token");
+    expect(JSON.stringify({ byok: cfg.byok, lang: cfg.lang, historyPath: cfg.historyPath })).not.toContain(
+      "private-token",
+    );
+  });
+
   it("respects OPM_LANG=ko", () => {
     expect(loadEnv({ OPM_LANG: "ko" }).lang).toBe("ko");
   });
