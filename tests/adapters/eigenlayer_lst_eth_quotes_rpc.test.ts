@@ -41,7 +41,8 @@ const SELECTORS = {
   ethxGetStaderOracle: "0xdefd024d", ethxConvertToAssets: "0x07a2d13a", ethxGetExchangeRate: "0xe6aa216c",
   swethToEthRate: "0xd68b2cb6", swethLastRepriceUnix: "0xfbda759b",
   oethVaultAddress: "0x430bf08a", oethVaultOToken: "0x1a32aad6", oethVaultAsset: "0x38d52e0f",
-  oethLastRebase: "0x78f353a1", oethRebasePaused: "0x53ca9f24", oethWithdrawalClaimDelay: "0x36f9a2fd",
+  // First four bytes of keccak256("withdrawalClaimDelay()"), independently verified with ethers.
+  oethLastRebase: "0x78f353a1", oethRebasePaused: "0x53ca9f24", oethWithdrawalClaimDelay: "0x45e4213b",
 } as const;
 
 interface RequestShape { jsonrpc: string; id: number; method: string; params: unknown[] }
@@ -205,7 +206,7 @@ describe("fetchEigenLayerLstEthQuotes", () => {
     expect(byId(116).params[0]).toEqual({ to: OETH_VAULT, data: SELECTORS.oethVaultAsset });
     expect(byId(117).params[0]).toEqual({ to: OETH_VAULT, data: SELECTORS.oethLastRebase });
     expect(byId(118).params[0]).toEqual({ to: OETH_VAULT, data: SELECTORS.oethRebasePaused });
-    expect(byId(119).params[0]).toEqual({ to: OETH_VAULT, data: SELECTORS.oethWithdrawalClaimDelay });
+    expect(byId(119).params[0]).toEqual({ to: OETH_VAULT, data: "0x45e4213b" });
     const calls = rounds.flat().filter((request) => request.method === "eth_call");
     expect(calls.filter((request) => request.id >= 92 && (() => {
       const target = (request.params[0] as { to: string }).to.toLowerCase();

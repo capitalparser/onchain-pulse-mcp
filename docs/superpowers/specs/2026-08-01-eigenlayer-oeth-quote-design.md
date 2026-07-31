@@ -40,7 +40,7 @@ Append IDs 114--119 while preserving IDs 1--113 byte-for-byte in purpose:
 | 116 | Vault proxy | `asset()` `0x38d52e0f` | exact address; bind WETH |
 | 117 | Vault proxy | `lastRebase()` `0x78f353a1` | exact uint64; `<=` finalized timestamp; zero valid |
 | 118 | Vault proxy | `rebasePaused()` `0x53ca9f24` | strict ABI bool 0 or 1; true valid |
-| 119 | Vault proxy | `withdrawalClaimDelay()` `0x36f9a2fd` | exact uint256; zero valid and means async withdrawals disabled |
+| 119 | Vault proxy | `withdrawalClaimDelay()` `0x45e4213b` | exact uint256; zero valid and means async withdrawals disabled |
 
 All calls use the same numeric finalized block tag. Cold batches are
 `[2,5,48,36,28]`: 119 logical requests and 117 `eth_call`s. There is no

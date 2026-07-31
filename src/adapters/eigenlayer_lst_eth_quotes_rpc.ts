@@ -55,7 +55,7 @@ const SELECTORS = {
   oethVaultAsset: "0x38d52e0f",
   oethLastRebase: "0x78f353a1",
   oethRebasePaused: "0x53ca9f24",
-  oethWithdrawalClaimDelay: "0x36f9a2fd",
+  oethWithdrawalClaimDelay: "0x45e4213b",
 } as const;
 
 export interface EigenLayerLstEthQuotesRpcInput {
