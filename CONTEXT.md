@@ -163,13 +163,14 @@ rehypothecation ratio; all six broader metrics remain `null` with explicit
 gaps.
 
 **EigenLayer Covered LST ETH Quotes Snapshot**:
-A separate read-only direct protocol-accounting quote view for exactly 6 of the
+A separate read-only direct protocol-accounting quote view for exactly 7 of the
 12 fixed legacy strategies, in this fixed order: stETH, rETH, cbETH, ETHx,
 osETH, lsETH, and mETH. The base authority is EigenLayer release `v1.12.0`, commit
 `d302f65042164c8d8d0a983c1540d85a8710030b`. The 18-decimal token identities
 are stETH `0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84`, rETH
 `0xae78736Cd615f374D3085123A210448E74Fc6393`, cbETH
-`0xBe9895146f7AF43049ca1c1AE358B0541Ea49704`, osETH
+`0xBe9895146f7AF43049ca1c1AE358B0541Ea49704`, ETHx
+`0xA35b1B31Ce002FBF2058D22F30f95D405200A15b`, osETH
 `0xf1C9acDc66974dFB6dEcB12aA385b9cD01190E38`, lsETH
 `0x8c1BEd5b9a0928467c9B1341Da1D7BD5e10b6549`, and mETH
 `0xd5F7838F5C461fefF7FE49ea5ebaF7728bB0ADfa`. The exact unquoted list is
@@ -202,6 +203,19 @@ calls. mETH is pinned to Mantle mantle-lsp/contracts release `v1.4.1`, commit
 `0x8735049F496727f824Cc0f2B174d826f5c408192`; Staking—not Oracle—receives
 both `mETHToETH(uint256)` (`0x5890c11c`) calls.
 
+ETHx conversion/oracle semantics are pinned to Stader `ethx` v1.1.0 commit
+`1939e6c36087bf7cb437e4323f426219df6313b4`. Its deployed mainnet token
+`0xA35b1B31Ce002FBF2058D22F30f95D405200A15b`, StaderConfig
+`0x4ABEF2263d5A5ED582FC9A9789a41D85b68d69DB`, StakePoolsManager
+`0xcf5EA1b38380f6aF39068375516Daf40Ed70D299`, and StaderOracle
+`0xF64bAe65f6f2a5277571143A24FaaFDFC0C2a737` are separately pinned to the
+official current README commit `9d4a9211431d6c0cdf014bd64d3718cba4ce96ab`,
+because the v1.1.0 README does not enumerate deployed addresses. The adapter
+verifies all five configuration pointers, then recomputes two manager
+`convertToAssets(uint256)` values against the Oracle's exact 96-byte
+`(reportingBlockNumber,totalETHBalance,totalETHXSupply)` tuple with
+full-precision floor arithmetic (or identity when supply is zero).
+
 lsETH is pinned to Liquid Collective `liquid-collective-protocol` release
 `v1.3.0`, commit `964f0e363fbaec8955af430888838a1666a1c6ba`: the mainnet
 River/LsETH proxy `0x8c1BEd5b9a0928467c9B1341Da1D7BD5e10b6549` receives two
@@ -228,7 +242,10 @@ unique/net locked ETH, combined Aave/Spark/Lido/Sky/EigenLayer demand,
 rehypothecation, independent backing reconciliation, cbETH exchange-rate
 freshness, osETH virtual-reward-input freshness, mETH oracle-record freshness,
 lsETH report freshness, proxy implementation/source correspondence, or backing;
-nor executable withdrawal/liquidity. Permanent gaps are
+nor executable withdrawal/liquidity. ETHx's oracle reporting block is context
+only and must not exceed the verified block; it does not establish report
+freshness, proxy implementation/source correspondence, or backing reconciliation.
+Permanent gaps are
 `lst_quote_coverage_partial`, `native_restaked_eth_not_measured`,
 `lst_restaked_eth_equivalent_not_measured`,
 `eigenlayer_eth_family_exposure_not_measured`,
@@ -240,6 +257,8 @@ nor executable withdrawal/liquidity. Permanent gaps are
 `meth_oracle_record_freshness_not_verified`, `meth_backing_not_reconciled`,
 `lseth_oracle_report_freshness_not_verified`,
 `lseth_proxy_upgradeability_not_verified`, and `lseth_backing_not_reconciled`.
+Additional v4 gaps are `ethx_oracle_report_freshness_not_verified`,
+`ethx_proxy_upgradeability_not_verified`, and `ethx_backing_not_reconciled`.
 
 ### Token forensics
 

@@ -504,9 +504,9 @@ verified evidence after refresh failure.
 
 The only non-null aggregates are explicitly partial:
 `covered_share_accounting_eth_equivalent_wei` and
-`covered_token_custody_eth_equivalent_wei`. They are distinct partials for 6
-of 12 only. The exact unquoted list is ETHx, ankrETH, oETH, swETH, wBETH,
-sfrxETH. These seven broader metrics remain `null`:
+`covered_token_custody_eth_equivalent_wei`. They are distinct partials for 7
+of 12 only. The exact unquoted list is ankrETH, oETH, swETH, wBETH, sfrxETH.
+These seven broader metrics remain `null`:
 `lst_restaked_eth_equivalent_wei`, `native_restaked_eth_wei`,
 `eigenlayer_eth_family_exposure_eth_wei`, `unique_net_eth_locked`,
 `combined_aave_spark_lido_sky_eigenlayer_demand`, `rehypothecation_ratio`, and

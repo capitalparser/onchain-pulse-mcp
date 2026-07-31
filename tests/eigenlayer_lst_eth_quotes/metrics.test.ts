@@ -40,6 +40,11 @@ describe("EigenLayer covered LST ETH quote metrics", () => {
     expect(snapshot.metrics.covered_share_accounting_eth_equivalent_wei).toBe("2927");
     expect(snapshot.metrics.covered_token_custody_eth_equivalent_wei).toBe("2725");
     expect(snapshot.coverage).toEqual({ quoted_strategy_count: 7, fixed_strategy_count: 12, unquoted_strategy_labels: EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS });
+    expect(snapshot.summary).toContain("cover seven of twelve fixed strategies");
+    expect(snapshot.gaps).toEqual(expect.arrayContaining([
+      { code: "lst_quote_coverage_partial", detail: "Only seven of the twelve fixed legacy EigenLayer LST strategies have bounded ETH accounting quotes." },
+      { code: "lst_restaked_eth_equivalent_not_measured", detail: "Seven covered quotes do not establish a full EigenLayer LST ETH-equivalent total." },
+    ]));
     expect(snapshot.gaps.map((gap) => gap.code)).toEqual(EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES);
   });
 

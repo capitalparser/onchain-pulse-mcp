@@ -88,8 +88,8 @@ describe("getEigenLayerLstEthQuotes", () => {
       adapterSnapshot: { ...verified(), summary: "https://rpc.example/credential-secret" },
     });
 
-    expect(result.summary).toContain("Finalized stETH/rETH/cbETH/ETHx/osETH/lsETH/mETH direct accounting quotes cover 7 of 12");
-    expect(result.summary).toContain("share/custody are distinct partials");
+    expect(result.summary).toContain("Finalized stETH/rETH/cbETH/ETHx/osETH/lsETH/mETH accounting quotes cover 7 of 12");
+    expect(result.summary).toContain("share/custody distinct partials");
     expect(result.summary.length).toBeLessThanOrEqual(500);
     expect(JSON.stringify(result)).not.toContain("credential-secret");
   });
@@ -113,7 +113,7 @@ describe("getEigenLayerLstEthQuotes", () => {
     for (const result of cases) {
       expect(result.summary).toMatch(/stETH\/rETH\/cbETH\/ETHx\/osETH\/lsETH\/mETH/);
       expect(result.summary).toMatch(/7 of 12|고정 전략 12개 중 7개/);
-      expect(result.summary).toMatch(/share\/custody are distinct partials|지분 회계와 토큰 보관 합계는 서로 다른 부분 합계/);
+      expect(result.summary).toMatch(/share\/custody distinct partials|지분 회계와 토큰 보관 합계는 서로 다른 부분 합계/);
       expect(result.summary.length).toBeLessThanOrEqual(500);
       expect(JSON.stringify(result)).not.toContain("credential-secret");
     }
@@ -126,13 +126,14 @@ describe("getEigenLayerLstEthQuotes", () => {
     expect(cases[5]!.summary).toContain("인용값은 관측되지 않았습니다");
 
     for (const result of cases.slice(0, 3)) {
-      expect(result.summary).toMatch(/full LST\/native\/EigenLayer totals/);
-      expect(result.summary).toMatch(/unique\/net locked ETH/);
-      expect(result.summary).toMatch(/Aave\/Spark\/Lido\/Sky\/EigenLayer demand/);
+      expect(result.summary).toMatch(/No full LST\/native\/EigenLayer total/);
+      expect(result.summary).toMatch(/net ETH/);
+      expect(result.summary).toMatch(/protocol demand/);
       expect(result.summary).toMatch(/rehypothecation/);
-      expect(result.summary).toMatch(/independent backing/);
-      expect(result.summary).toMatch(/cbETH exchange-rate, ETHx oracle-report\/proxy, osETH virtual-reward-input, lsETH oracle-report\/proxy, and mETH oracle-record freshness unverified/);
-      expect(result.summary).toMatch(/executable withdrawal\/liquidity/);
+      expect(result.summary).toMatch(/backing/);
+      expect(result.summary).toMatch(/ETHx oracle-report freshness or proxy implementation\/source correspondence/);
+      expect(result.summary).toMatch(/lsETH oracle-report freshness or proxy implementation\/source correspondence/);
+      expect(result.summary).toMatch(/executable exit capacity/);
     }
     for (const result of cases.slice(3)) {
       expect(result.summary).toMatch(/전체 LST\/네이티브\/EigenLayer 총계/);

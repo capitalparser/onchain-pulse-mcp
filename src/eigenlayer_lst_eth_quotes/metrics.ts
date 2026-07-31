@@ -15,9 +15,9 @@ const UINT256_MAX = (2n ** 256n) - 1n;
 const WAD = 10n ** 18n;
 
 const PERMANENT_GAP_DETAILS: Record<(typeof EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES)[number], string> = {
-  lst_quote_coverage_partial: "Only six of the twelve fixed legacy EigenLayer LST strategies have bounded ETH accounting quotes.",
+  lst_quote_coverage_partial: "Only seven of the twelve fixed legacy EigenLayer LST strategies have bounded ETH accounting quotes.",
   native_restaked_eth_not_measured: "No native-restaked ETH total is measured.",
-  lst_restaked_eth_equivalent_not_measured: "Six covered quotes do not establish a full EigenLayer LST ETH-equivalent total.",
+  lst_restaked_eth_equivalent_not_measured: "Seven covered quotes do not establish a full EigenLayer LST ETH-equivalent total.",
   eigenlayer_eth_family_exposure_not_measured: "Native and full LST evidence are not combined into an ETH-family total.",
   unique_net_eth_locked_not_reconciled: "Issuer backing and downstream reuse are not deduplicated or netted.",
   combined_aave_spark_lido_sky_eigenlayer_demand_not_reconciled: "No cross-protocol demand total is reconciled.",
