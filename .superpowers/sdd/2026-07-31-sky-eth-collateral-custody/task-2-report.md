@@ -50,3 +50,31 @@ evidence.
 - Provider URLs and provider error text are neither cache keys nor output.
 - Failure returns a bounded unavailable code with no joins, contracts, block,
   bucket, quote, or metric evidence.
+
+## QA remediation: verify before caching
+
+The added regression supplied individually valid uint256 RPC words whose final
+Task 1 aggregate overflows: WETH custody is `uint256.max` and the aggregate
+wstETH quote is one wei. Before remediation, the loader froze/stored this
+evidence, and the later public-domain build failed only after it had become a
+fresh/stale cache candidate.
+
+```text
+Test Files  1 failed (1)
+     Tests  1 failed | 18 passed (19)
+
+does not cache evidence that only fails the final Task 1 custody-total assertion
+expected 'rpc_schema_drift' to be 'rpc_evidence_mismatch'
+```
+
+`fetchVerifiedEvidence` now calls the Task 1 verified builder before returning
+evidence to `cache.getOrLoad`; only after that assertion succeeds can evidence
+be frozen and stored. The regression confirms a bounded
+`rpc_evidence_mismatch`, no partial output, and a second full four-batch
+attempt (eight fetch batches total), proving neither fresh nor stale cache was
+poisoned. Existing previously verified stale fallback remains unchanged.
+
+```text
+Test Files  1 passed (1)
+     Tests  19 passed (19)
+```

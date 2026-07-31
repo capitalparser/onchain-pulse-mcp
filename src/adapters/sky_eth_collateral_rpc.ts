@@ -183,6 +183,11 @@ function verified(evidence: VerifiedEvidence, stale: boolean): SkyEthCollateralC
     ...copied, sources: [SOURCE], sourceStatus: [{ source: SOURCE, role: ROLE, stale: false }], stale,
   });
 }
+function assertDomainEvidence(evidence: VerifiedEvidence): void {
+  buildVerifiedSkyEthCollateralCustodySnapshot({
+    ...cloneEvidence(evidence), sources: [SOURCE], sourceStatus: [{ source: SOURCE, role: ROLE, stale: false }],
+  });
+}
 
 async function fetchVerifiedEvidence(ctx: AdapterContext, rpcUrl: string): Promise<VerifiedEvidence> {
   let id = 1;
@@ -231,12 +236,14 @@ async function fetchVerifiedEvidence(ctx: AdapterContext, rpcUrl: string): Promi
     ethCall(id++, reth!, `${RETH_QUOTE}${uintArgument(rethRaw)}`, blockTag),
   ];
   const fourth = await postBatch(ctx, rpcUrl, round4);
-  return {
+  const evidence: VerifiedEvidence = {
     block,
     contracts: { vat: vat!, weth: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", wsteth: "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0", reth: "0xae78736Cd615f374D3085123A210448E74Fc6393" },
     ilks,
     wstethQuotedEthWei: decodeUint(fourth.get(round4[0]!.id)), rethQuotedEthWei: decodeUint(fourth.get(round4[1]!.id)),
   };
+  assertDomainEvidence(evidence);
+  return evidence;
 }
 
 export async function fetchSkyEthCollateralCustody(input: SkyEthCollateralRpcInput, ctx: AdapterContext): Promise<SkyEthCollateralCustodySnapshot> {

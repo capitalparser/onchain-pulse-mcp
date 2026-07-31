@@ -141,4 +141,22 @@ describe("fetchSkyEthCollateralCustody", () => {
       vi.useRealTimers();
     }
   });
+
+  it("does not cache evidence that only fails the final Task 1 custody-total assertion", async () => {
+    const fetchImpl = finalizedFetch((round, items) => {
+      const attemptRound = ((round - 1) % 4) + 1;
+      if (attemptRound === 3) return [...items.slice(0, 5), { ...(items[5] as object), result: `0x${word((2n ** 256n) - 1n)}` }, ...items.slice(6)];
+      if (attemptRound === 4) return [{ ...(items[0] as object), result: `0x${word(1n)}` }, items[1]!];
+      return items;
+    });
+    const ctx = makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch });
+    const first = await fetchSkyEthCollateralCustody({ rpcUrl: RPC_URL }, ctx);
+    expect(first).toMatchObject({ status: "unavailable", verified_block: null, ilks: [], buckets: [] });
+    expect(first.gaps[0]?.code).toBe("rpc_evidence_mismatch");
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+
+    const second = await fetchSkyEthCollateralCustody({ rpcUrl: RPC_URL }, ctx);
+    expect(second.gaps[0]?.code).toBe("rpc_evidence_mismatch");
+    expect(fetchImpl).toHaveBeenCalledTimes(8);
+  });
 });
