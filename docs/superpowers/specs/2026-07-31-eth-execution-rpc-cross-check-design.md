@@ -151,7 +151,14 @@ Hashes must be 32-byte hex data. Every requested block must satisfy:
 11. receipt blob-gas totals equal `block.blobGasUsed`;
 12. every per-block and aggregate fee identity holds exactly.
 
-Pre-blob blocks may omit `block.blobGasUsed` only when no receipt has blob
+Every block must carry a canonical `timestamp` quantity. Dencun activated on
+Ethereum mainnet at epoch 269568 and timestamp `1710338135`; for a block at or
+after that timestamp, `block.blobGasUsed` is required even when it is the
+explicit zero quantity `0x0`. This timestamp gate follows the
+[Ethereum Foundation Dencun mainnet announcement](https://blog.ethereum.org/2024/02/27/dencun-mainnet-announcement)
+and the Execution API block-object contract for
+[`blobGasUsed`](https://ethereum.github.io/execution-apis/api/methods/eth_getBlockByNumber/).
+Pre-Dencun blocks may omit `block.blobGasUsed` only when no receipt has blob
 fields. Blocks in the requested range must be consecutive. Any malformed,
 missing, duplicated, inconsistent, or unexpected JSON-RPC evidence invalidates
 the complete requested range.

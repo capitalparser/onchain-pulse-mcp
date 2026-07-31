@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { makeContext } from "../../src/adapters/base.js";
-import { fetchEthFeeRpc } from "../../src/adapters/eth_fee_rpc.js";
+import { fetchEthFeeRpc, fetchFinalizedEthFeeRpcHead } from "../../src/adapters/eth_fee_rpc.js";
 
 const env = { byok: {}, lang: "en" as const, historyPath: "/tmp/history.json" };
 
@@ -237,6 +237,73 @@ describe("fetchEthFeeRpc", () => {
     });
   });
 
+  it("returns schema drift with null metrics when a post-Dencun block omits blobGasUsed", async () => {
+    const fetchImpl = oneBlockFetch(100, (batch) => {
+      const result = (batch[0] as { result: Record<string, unknown> }).result;
+      result.timestamp = quantity(DENCUN_MAINNET_TIMESTAMP);
+      delete result.blobGasUsed;
+    });
+    const result = await fetchEthFeeRpc(
+      { startBlock: 100, endBlock: 100, includeBlocks: false, rpcUrl: "https://provider.example/secret" },
+      makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }),
+    );
+
+    expect(result.gaps.map((gap) => gap.code)).toEqual(["rpc_schema_drift"]);
+    expect(result.metrics).toEqual({
+      execution_fee: null, base_fee_burn: null, priority_fee: null,
+      blob_fee_burn: null, gross_fee: null, total_burn: null,
+    });
+  });
+
+  it("accepts an explicit post-Dencun blobGasUsed=0x0 block with no blob receipts", async () => {
+    const fetchImpl = oneBlockFetch(100, (batch) => {
+      const result = (batch[0] as { result: Record<string, unknown> }).result;
+      result.timestamp = quantity(DENCUN_MAINNET_TIMESTAMP);
+      result.blobGasUsed = "0x0";
+    });
+    const result = await fetchEthFeeRpc(
+      { startBlock: 100, endBlock: 100, includeBlocks: false, rpcUrl: "https://provider.example/secret" },
+      makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }),
+    );
+
+    expect(result.status).toBe("verified");
+    expect(result.metrics.blob_fee_burn).toEqual({ wei: "0", eth: "0" });
+  });
+
+  it("accepts a pre-Dencun block without blobGasUsed when receipts have no blob fields", async () => {
+    const result = await fetchEthFeeRpc(
+      { startBlock: 100, endBlock: 100, includeBlocks: false, rpcUrl: "https://provider.example/secret" },
+      makeContext({ env, fetchImpl: oneBlockFetch(100) as unknown as typeof fetch }),
+    );
+
+    expect(result.status).toBe("verified");
+  });
+
+  it("returns only a bounded access failure when finalized-head transport throws provider detail", async () => {
+    const secret = "https://provider.example/%ZZ?api_key=credential-never-returned";
+    const fetchImpl = vi.fn().mockRejectedValue(new Error(`provider denied ${secret}`));
+    const ctx = makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await expect(fetchFinalizedEthFeeRpcHead(secret, ctx)).rejects.toMatchObject({
+      code: "rpc_access_gap",
+      message: "rpc_access_gap",
+    });
+    await fetchFinalizedEthFeeRpcHead(secret, ctx).catch((error: unknown) => {
+      expect(JSON.stringify(error)).not.toContain(secret);
+      expect((error as Error).message).not.toContain("provider denied");
+    });
+  });
+
+  it("rejects a whitespace finalized-head URL without fetching", async () => {
+    const fetchImpl = vi.fn();
+
+    await expect(fetchFinalizedEthFeeRpcHead("   ", makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }))).rejects.toMatchObject({
+      code: "rpc_not_configured",
+      message: "rpc_not_configured",
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("chunks a 21-block range into paired batches of at most 20 blocks", async () => {
     const fetchImpl = rangeFetch(100, 120);
     const result = await fetchEthFeeRpc(
@@ -363,12 +430,15 @@ function quantity(value: number): string {
   return `0x${value.toString(16)}`;
 }
 
+const DENCUN_MAINNET_TIMESTAMP = 1_710_338_135;
+
 function block(number: number, transactions: string[], baseFee: number, gasUsed: number, blobGasUsed?: number): Record<string, unknown> {
   return {
     number: quantity(number),
     hash: hash(number),
     baseFeePerGas: quantity(baseFee),
     gasUsed: quantity(gasUsed),
+    timestamp: quantity(DENCUN_MAINNET_TIMESTAMP - 1),
     ...(blobGasUsed === undefined ? {} : { blobGasUsed: quantity(blobGasUsed) }),
     transactions,
   };

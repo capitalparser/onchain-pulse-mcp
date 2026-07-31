@@ -214,6 +214,12 @@ inclusive, ordered, consecutive, finalized-only, and capped at **64 blocks**.
 The verifier first obtains the Execution API `finalized` head, then obtains
 only `eth_getBlockByNumber` and `eth_getBlockReceipts` evidence for the exact
 requested range. It does not fall back to one receipt request per transaction.
+Every block timestamp is parsed as a canonical quantity. At and after the
+Dencun mainnet activation timestamp `1710338135` (epoch 269568), the block
+must explicitly include `blobGasUsed`, including `0x0` for a zero-blob block;
+otherwise the full range is unavailable rather than treated as a zero. This
+gate follows the [Ethereum Foundation Dencun announcement](https://blog.ethereum.org/2024/02/27/dencun-mainnet-announcement)
+and the [`eth_getBlockByNumber` block object](https://ethereum.github.io/execution-apis/api/methods/eth_getBlockByNumber/).
 
 All fee arithmetic uses exact integer wei and returns a matching exact ETH
 decimal string. The response verifies these identities for every aggregate

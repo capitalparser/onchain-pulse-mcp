@@ -117,6 +117,7 @@ function oneBlockRpcFetch(blockNumber: number) {
           hash: rpcHash(blockNumber),
           baseFeePerGas: "0xa",
           gasUsed: "0x5",
+          timestamp: "0x65ec8786",
           transactions: [rpcHash(1)],
         },
       },

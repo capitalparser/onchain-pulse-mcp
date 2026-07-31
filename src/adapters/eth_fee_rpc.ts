@@ -21,6 +21,8 @@ const CACHE_SPEC = {
 };
 const QUANTITY_PATTERN = /^0x(?:0|[1-9a-f][0-9a-f]*)$/;
 const HASH_PATTERN = /^0x[0-9a-f]{64}$/;
+/** Dencun mainnet activation: epoch 269568, 2024-03-13 13:55:35 UTC. */
+export const DENCUN_MAINNET_TIMESTAMP = 1_710_338_135;
 const providerByContext = new WeakMap<AdapterContext, string>();
 
 export interface EthFeeRpcInput {
@@ -32,10 +34,19 @@ export interface EthFeeRpcInput {
 }
 
 type FailureKind = Exclude<EthFeeCrossCheckGapCode, "rpc_not_configured" | "source_stale">;
+type FinalizedHeadFailureCode = Exclude<EthFeeCrossCheckGapCode, "source_stale">;
 
 class RpcFailure extends Error {
   constructor(readonly kind: FailureKind) {
     super(kind);
+  }
+}
+
+/** Bounded public error used by the opt-in finalized-head preflight only. */
+export class EthFeeRpcFinalizedHeadError extends Error {
+  constructor(readonly code: FinalizedHeadFailureCode) {
+    super(code);
+    this.name = "EthFeeRpcFinalizedHeadError";
   }
 }
 
@@ -70,7 +81,16 @@ function assertRange(input: EthFeeRpcInput): void {
 }
 
 function configuredRpcUrl(value: unknown): string | null {
-  return typeof value === "string" && value.trim() !== "" ? value : null;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+function bindProvider(ctx: AdapterContext, rpcUrl: string): boolean {
+  const boundProvider = providerByContext.get(ctx);
+  if (boundProvider !== undefined && boundProvider !== rpcUrl) return false;
+  if (boundProvider === undefined) providerByContext.set(ctx, rpcUrl);
+  return true;
 }
 
 function unavailable(input: EthFeeRpcInput, code: Exclude<EthFeeCrossCheckGapCode, "source_stale">): EthFeeCrossCheckSnapshot {
@@ -152,10 +172,12 @@ function optionalBlobQuantities(value: Record<string, unknown>): { blobGasUsed?:
 function parseBlock(value: unknown, requestedBlock: number): Omit<NormalizedEthFeeBlock, "receipts"> {
   const block = record(value);
   const number = safeBlockNumber(block.number);
+  const timestamp = safeBlockNumber(block.timestamp);
   if (number !== requestedBlock) throw new RpcFailure("rpc_evidence_mismatch");
   if (!Array.isArray(block.transactions)) throw new RpcFailure("rpc_schema_drift");
   const transactions = block.transactions.map(canonicalHash);
   const hasBlobGas = Object.prototype.hasOwnProperty.call(block, "blobGasUsed");
+  if (timestamp >= DENCUN_MAINNET_TIMESTAMP && !hasBlobGas) throw new RpcFailure("rpc_schema_drift");
   return {
     number,
     hash: canonicalHash(block.hash),
@@ -230,6 +252,25 @@ async function finalizedBlock(ctx: AdapterContext, rpcUrl: string): Promise<numb
   if (!Object.prototype.hasOwnProperty.call(response, "result")) throw new RpcFailure("rpc_access_gap");
   if (response.result === null) throw new RpcFailure("rpc_finality_gap");
   return safeBlockNumber(record(response.result).number);
+}
+
+/**
+ * Resolves a finalized head for the opt-in live test without ever exposing
+ * provider URL or response detail through an error boundary.
+ */
+export async function fetchFinalizedEthFeeRpcHead(
+  rpcUrl: unknown,
+  ctx: AdapterContext,
+): Promise<number> {
+  const configured = configuredRpcUrl(rpcUrl);
+  if (configured === null) throw new EthFeeRpcFinalizedHeadError("rpc_not_configured");
+  if (!bindProvider(ctx, configured)) throw new EthFeeRpcFinalizedHeadError("rpc_access_gap");
+  try {
+    return await finalizedBlock(ctx, configured);
+  } catch (error) {
+    if (error instanceof RpcFailure) throw new EthFeeRpcFinalizedHeadError(error.kind);
+    throw new EthFeeRpcFinalizedHeadError("rpc_access_gap");
+  }
 }
 
 function toPublicMetrics(metrics: FeeMetrics): EthFeeCrossCheckMetrics {
@@ -316,9 +357,7 @@ export async function fetchEthFeeRpc(input: EthFeeRpcInput, ctx: AdapterContext)
   assertRange(input);
   const rpcUrl = configuredRpcUrl(input.rpcUrl);
   if (rpcUrl === null) return unavailable(input, "rpc_not_configured");
-  const boundProvider = providerByContext.get(ctx);
-  if (boundProvider !== undefined && boundProvider !== rpcUrl) return unavailable(input, "rpc_access_gap");
-  if (boundProvider === undefined) providerByContext.set(ctx, rpcUrl);
+  if (!bindProvider(ctx, rpcUrl)) return unavailable(input, "rpc_access_gap");
 
   const cache = ctx.cacheFor<EthFeeCrossCheckSnapshot>(CACHE_SPEC);
   const key = cacheKey(input);
