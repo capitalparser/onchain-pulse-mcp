@@ -16,7 +16,7 @@ import {
 } from "../eigenlayer_lst_eth_quotes/types.js";
 
 const CACHE_SPEC: CacheSpec = { name: "eigenlayer_lst_eth_quotes", ttlMs: 30 * 60_000, max: 1 };
-const CACHE_KEY = "eigenlayer-lst-eth-quotes:mainnet-v6";
+const CACHE_KEY = "eigenlayer-lst-eth-quotes:mainnet-v7";
 const SOURCE = "ethereum_rpc" as const;
 const ROLE = "eigenlayer_finalized_lst_eth_quote_evidence" as const;
 const WORD = /^0x[0-9a-f]{64}$/;

@@ -4,6 +4,7 @@ import { fetchEigenLayerLstEthQuotes } from "../../src/adapters/eigenlayer_lst_e
 import { loadEnv } from "../../src/env.js";
 import {
   EIGENLAYER_COVERED_LST_STRATEGIES,
+  EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS,
   EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS,
 } from "../../src/eigenlayer_lst_eth_quotes/types.js";
 import { getEigenLayerLstEthQuotes } from "../../src/tools/get_eigenlayer_lst_eth_quotes.js";
@@ -126,6 +127,7 @@ describe.skipIf(!runLive)("EigenLayer covered LST ETH quotes", () => {
       quoted_strategy_count: 9,
       fixed_strategy_count: 12,
       unquoted_strategy_labels: EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS,
+      unquoted_strategy_blockers: EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS,
     });
     expect(snapshot.metrics).toMatchObject({
       lst_restaked_eth_equivalent_wei: null,
@@ -163,6 +165,9 @@ describe.skipIf(!runLive)("EigenLayer covered LST ETH quotes", () => {
       "combined_aave_spark_lido_sky_eigenlayer_demand_not_reconciled",
       "rehypothecation_ratio_not_measured",
       "executable_withdrawal_capacity_not_measured",
+      "ankreth_official_immutable_source_and_freshness_not_verified",
+      "wbeth_official_immutable_source_proxy_and_freshness_not_verified",
+      "sfrxeth_quote_terminates_in_frxeth_not_eth",
     ]));
     expect(snapshot.report_context?.lseth_last_completed_epoch_id).toMatch(/^(0|[1-9]\d*)$/);
     expect(snapshot.report_context?.ethx_oracle_reporting_block_number).toMatch(/^(0|[1-9]\d*)$/);
@@ -170,8 +175,8 @@ describe.skipIf(!runLive)("EigenLayer covered LST ETH quotes", () => {
     expect(snapshot.report_context?.oeth_last_rebase_unix).toMatch(/^(0|[1-9]\d*)$/);
     expect(typeof snapshot.report_context?.oeth_rebase_paused).toBe("boolean");
     expect(snapshot.report_context?.oeth_withdrawal_claim_delay_seconds).toMatch(/^(0|[1-9]\d*)$/);
-    expect(snapshot.gaps).toHaveLength(26);
-    expect(snapshot.summary).toContain("not redeemability");
+    expect(snapshot.gaps).toHaveLength(29);
+    expect(snapshot.summary).toContain("not backing");
     expect(snapshot.summary.length).toBeLessThanOrEqual(500);
   }, 30_000);
 });

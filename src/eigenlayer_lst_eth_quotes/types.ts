@@ -67,6 +67,24 @@ export const EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS = [
   "sfrxETH",
 ] as const;
 
+export const EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS = [
+  {
+    label: "ankrETH",
+    code: "ankreth_official_immutable_source_and_freshness_not_verified",
+    detail: "Pinned evidence does not verify an official immutable Ankr source/deployment artifact, same-finalized proxy-to-source binding, or ratio freshness getter.",
+  },
+  {
+    label: "wBETH",
+    code: "wbeth_official_immutable_source_proxy_and_freshness_not_verified",
+    detail: "Pinned evidence does not verify issuer-owned immutable source/release, same-finalized proxy binding, or timestamp/epoch freshness getter. WAD-floor semantics do not equate offchain rate/backing/redemption/market price. Fail-closed NO-GO.",
+  },
+  {
+    label: "sfrxETH",
+    code: "sfrxeth_quote_terminates_in_frxeth_not_eth",
+    detail: "Official Frax ERC-4626 convertToAssets returns frxETH wei; no direct official frxETH-to-ETH accounting view, so the quote terminates in frxETH, not ETH. Fail-closed NO-GO.",
+  },
+] as const;
+
 export const EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES = [
   "lst_quote_coverage_partial",
   "native_restaked_eth_not_measured",
@@ -94,6 +112,9 @@ export const EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES = [
   "sweth_reprice_freshness_not_verified",
   "sweth_proxy_upgradeability_not_verified",
   "sweth_backing_not_reconciled",
+  "ankreth_official_immutable_source_and_freshness_not_verified",
+  "wbeth_official_immutable_source_proxy_and_freshness_not_verified",
+  "sfrxeth_quote_terminates_in_frxeth_not_eth",
 ] as const;
 
 const SOURCE_FAILURE_GAP_CODES = new Set([
@@ -179,6 +200,23 @@ const CoverageSchema = z.object({
     z.literal("wBETH"),
     z.literal("sfrxETH"),
   ]),
+  unquoted_strategy_blockers: z.tuple([
+    z.object({
+      label: z.literal(EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS[0].label),
+      code: z.literal(EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS[0].code),
+      detail: z.literal(EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS[0].detail),
+    }).strict(),
+    z.object({
+      label: z.literal(EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS[1].label),
+      code: z.literal(EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS[1].code),
+      detail: z.literal(EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS[1].detail),
+    }).strict(),
+    z.object({
+      label: z.literal(EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS[2].label),
+      code: z.literal(EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS[2].code),
+      detail: z.literal(EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS[2].detail),
+    }).strict(),
+  ]),
 }).strict();
 
 const ReportContextSchema = z.object({
@@ -217,7 +255,7 @@ export type EigenLayerLstEthQuoteSourceStatus = z.infer<typeof EigenLayerLstEthQ
 const SnapshotBaseSchema = z.object({
   status: z.enum(["verified", "unavailable"]),
   summary: z.string().min(1).max(500),
-  methodology: z.literal("eigenlayer-covered-lst-eth-quotes-v6"),
+  methodology: z.literal("eigenlayer-covered-lst-eth-quotes-v7"),
   verified_block: EigenLayerRestakingBlockSchema.nullable(),
   covered_quotes: z.array(QuoteSchema),
   report_context: ReportContextSchema.nullable(),
@@ -265,10 +303,13 @@ export const EigenLayerLstEthQuotesSnapshotSchema = SnapshotBaseSchema.superRefi
       (gap) => (EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES as readonly string[]).includes(gap.code)
         || gap.code === "source_stale",
     ) && staleGaps <= 1;
+    const ceilingGapCorrespondence = EIGENLAYER_UNQUOTED_LST_STRATEGY_BLOCKERS.every(
+      (blocker) => snapshot.gaps.some((gap) => gap.code === blocker.code && gap.detail === blocker.detail),
+    );
     if (snapshot.verified_block === null || snapshot.report_context === null || snapshot.identities === null || snapshot.coverage === null
       || snapshot.metrics.covered_share_accounting_eth_equivalent_wei === null
       || snapshot.metrics.covered_token_custody_eth_equivalent_wei === null
-      || !snapshot.capabilities.ethereum_rpc_active || !provenance || !permanentGaps
+      || !snapshot.capabilities.ethereum_rpc_active || !provenance || !permanentGaps || !ceilingGapCorrespondence
       || snapshot.covered_quotes.length !== EIGENLAYER_COVERED_LST_STRATEGIES.length) {
       add(context, "verified quote snapshot is incomplete or has incoherent provenance");
       return;

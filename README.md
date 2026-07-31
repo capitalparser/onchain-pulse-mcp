@@ -532,10 +532,21 @@ A cold verification uses exactly 5 JSON-RPC batches, 119 logical requests,
 the same numeric finalized block tag. IDs 92--103 preserve prior evidence;
 IDs 104--111 verify ETHx pointers, two conversions, and its Oracle tuple; IDs
 112--113 read swETH's rate and `lastRepriceUNIX()` context; IDs 114--119 verify
-OETH/Vault/WETH pointers and read OETH context. The sole v6 quote cache is the 30-minute
+OETH/Vault/WETH pointers and read OETH context. The sole v7 quote cache is the 30-minute
 combined cache; it never nests or consumes the base public cache, never accepts
 a stale base result, and may stale-fallback only from prior complete nine-token
 verified evidence after refresh failure.
+
+The v7 methodology mechanically fixes the accounting ceiling at 9/12. Coverage
+contains the exact ordered blockers `ankrETH`, `wBETH`, and `sfrxETH`: pinned
+mutable official Ankr docs do not verify an immutable official source/deployment
+artifact, same-finalized proxy-to-source binding, or ratio freshness getter;
+pinned wBETH evidence does not verify an issuer-owned immutable source/release,
+same-finalized proxy binding, or timestamp/epoch freshness getter; and Frax
+`convertToAssets` returns frxETH wei, so sfrxETH terminates
+in frxETH rather than ETH. These are fail-closed NO-GOs; offchain rate, backing,
+redemption, and market price remain distinct from known WAD-floor semantics for
+wBETH.
 
 The only non-null aggregates are explicitly partial:
 `covered_share_accounting_eth_equivalent_wei` and
@@ -565,12 +576,15 @@ Permanent gaps are `lst_quote_coverage_partial`,
 `meth_oracle_record_freshness_not_verified`, `meth_backing_not_reconciled`,
 `lseth_oracle_report_freshness_not_verified`,
 `lseth_proxy_upgradeability_not_verified`, and `lseth_backing_not_reconciled`.
-Additional v6 gaps are `ethx_oracle_report_freshness_not_verified`,
+Additional v7 gaps are `ethx_oracle_report_freshness_not_verified`,
 `ethx_proxy_upgradeability_not_verified`, `ethx_backing_not_reconciled`,
 `oeth_rebase_freshness_not_verified`, `oeth_proxy_upgradeability_not_verified`,
 `oeth_backing_not_reconciled`, `oeth_async_withdrawal_liquidity_not_verified`,
 `sweth_reprice_freshness_not_verified`, `sweth_proxy_upgradeability_not_verified`,
-and `sweth_backing_not_reconciled`.
+and `sweth_backing_not_reconciled`. The three v7 ceiling gaps are
+`ankreth_official_immutable_source_and_freshness_not_verified`,
+`wbeth_official_immutable_source_proxy_and_freshness_not_verified`, and
+`sfrxeth_quote_terminates_in_frxeth_not_eth`, for exactly 29 permanent gaps.
 
 Set `ETHEREUM_RPC_URL` only in the server environment. Caller-supplied URLs are
 rejected, credentials and provider errors never enter public fields, and an
