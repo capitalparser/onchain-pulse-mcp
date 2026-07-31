@@ -84,3 +84,51 @@ restored only cached development dependencies after the initial harness failure.
 - The provider literal correction changes only the mocked contract target in
   the existing Aave regression test; the public Aave Snapshot contract remains
   unchanged.
+
+## QA follow-up — symbol identity hardening
+
+### RED
+
+The independent QA correctly found that arbitrary asset symbols could embed the
+NUL fingerprint delimiter. The new literal regression suite failed before the
+fix:
+
+```text
+tests/adapters/aave_v3_market_rpc.test.ts (18 tests | 4 failed)
+expected { status: 'unavailable', … } to deeply equal { status: 'unavailable', … }
+Expected code: rpc_evidence_mismatch
+Received code: rpc_access_gap
+```
+
+The four failing cases were a NUL-delimited constructed alias, a control
+character, a delimiter, and a 17-character symbol. The pre-fix path reached
+the mocked fetch instead of failing during spec validation.
+
+### GREEN
+
+- Asset symbols now require the bounded grammar
+  `^[A-Za-z][A-Za-z0-9]{0,15}$` before normalization or fingerprinting.
+- The grammar covers the current fixed asset families (`WETH`, `wstETH`,
+  `cbETH`, `rETH`, `weETH`, `osETH`, `ETHx`, `rsETH`, `tETH`, and `ezETH`)
+  while excluding controls and fingerprint delimiters.
+- Direct tests prove malicious/oversized symbols make zero fetches and that
+  distinct accepted same-market symbols cannot alias a cached identity.
+
+### Follow-up verification
+
+```text
+npx vitest run tests/adapters/aave_v3_market_rpc.test.ts \
+  tests/adapters/eth_collateral_aave_v3.test.ts \
+  tests/eth_collateral_demand
+Test Files  4 passed (4)
+Tests       80 passed (80)
+
+npm test
+Test Files  49 passed | 4 skipped (53)
+Tests       599 passed | 6 skipped (605)
+
+npm run typecheck
+tsc --noEmit
+
+git diff --check
+```

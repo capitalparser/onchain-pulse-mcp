@@ -10,6 +10,7 @@ const HASH_PATTERN = /^0x[0-9a-f]{64}$/;
 const WORD_PATTERN = /^0x[0-9a-f]{64}$/;
 const CONFIGURATION_PATTERN = /^0x[0-9a-f]{640}$/;
 const IDENTIFIER_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
+const ASSET_SYMBOL_PATTERN = /^[A-Za-z][A-Za-z0-9]{0,15}$/;
 const bindingByContext = new WeakMap<AdapterContext, Map<string, { fingerprint: string; provider: string }>>();
 
 /** IPoolAddressesProvider.getPoolDataProvider(). */
@@ -89,7 +90,7 @@ function normalizedSpec(spec: FinalizedAaveV3MarketSpec): FinalizedAaveV3MarketS
   const assets: { symbol: string; underlying: string }[] = [];
   let wethCount = 0;
   for (const asset of spec.assets) {
-    if (typeof asset !== "object" || asset === null || typeof asset.symbol !== "string" || asset.symbol.trim() === ""
+    if (typeof asset !== "object" || asset === null || typeof asset.symbol !== "string" || !ASSET_SYMBOL_PATTERN.test(asset.symbol)
       || typeof asset.underlying !== "string" || !ADDRESS_PATTERN.test(asset.underlying)) return null;
     const address = asset.underlying.toLowerCase();
     if (symbols.has(asset.symbol) || addresses.has(address) || address === ZERO_ADDRESS) return null;

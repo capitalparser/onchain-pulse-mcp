@@ -102,6 +102,19 @@ describe("fetchFinalizedAaveV3Market", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["a NUL-delimited alias symbol", `ETH1\u0000${"0x0000000000000000000000000000000000000003"}\u0000ETH2`],
+    ["a control-character symbol", "ETH\u0001"],
+    ["a delimiter symbol", "ETH\u0000NEXT"],
+    ["an oversized symbol", "A".repeat(17)],
+  ])("rejects %s before cache identity or fetch", async (_name, symbol) => {
+    const fetchImpl = vi.fn();
+    const badSpec = { ...spec("symbol-validation", 2), assets: [assets(1)[0]!, { symbol, underlying: "0x0000000000000000000000000000000000000002" }] };
+    const result = await fetchFinalizedAaveV3Market(badSpec, { rpcUrl: "https://rpc.example/secret" }, makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }));
+    expect(result).toEqual({ status: "unavailable", code: "rpc_evidence_mismatch" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("isolates provider binding and raw caches by market in one context", async () => {
     const fetchImpl = finalizedFetch();
     const ctx = makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch });
@@ -126,6 +139,20 @@ describe("fetchFinalizedAaveV3Market", () => {
     if (second.status === "verified") expect(second.evidence.reserves[0]?.suppliedRaw).toBe(2n);
     const drifted = await fetchFinalizedAaveV3Market(
       { ...stableSpec, assets: [{ ...stableSpec.assets[0]!, underlying: "0x0000000000000000000000000000000000000009" }, ...stableSpec.assets.slice(1)] },
+      { rpcUrl: "https://rpc.example/secret" },
+      ctx,
+    );
+    expect(drifted).toEqual({ status: "unavailable", code: "rpc_evidence_mismatch" });
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+  });
+
+  it("does not alias distinct same-market accepted asset symbols", async () => {
+    const fetchImpl = finalizedFetch();
+    const ctx = makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch });
+    const stableSpec = spec("symbol-drift", 2, "symbol-cache");
+    await expect(fetchFinalizedAaveV3Market(stableSpec, { rpcUrl: "https://rpc.example/secret" }, ctx)).resolves.toMatchObject({ status: "verified" });
+    const drifted = await fetchFinalizedAaveV3Market(
+      { ...stableSpec, assets: [stableSpec.assets[0]!, { ...stableSpec.assets[1]!, symbol: "stETH" }] },
       { rpcUrl: "https://rpc.example/secret" },
       ctx,
     );
