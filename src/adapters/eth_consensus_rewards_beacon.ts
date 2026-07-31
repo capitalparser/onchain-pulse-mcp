@@ -169,9 +169,29 @@ function endpointUrl(base: string, path: string): string {
   const endpoint = new URL(path, "https://beacon.invalid");
   const basePath = provider.pathname.endsWith("/") ? provider.pathname.slice(0, -1) : provider.pathname;
   provider.pathname = `${basePath}${endpoint.pathname}`;
-  for (const [key, value] of endpoint.searchParams) provider.searchParams.set(key, value);
+  const endpointQuery = endpoint.search.startsWith("?") ? endpoint.search.slice(1) : endpoint.search;
+  const endpointKeys = new Set(endpointQuery === "" ? [] : endpointQuery.split("&").map(decodedQueryKey).filter((key): key is string => key !== null));
+  const baseQuery = provider.search.startsWith("?") ? provider.search.slice(1) : provider.search;
+  const retainedBaseQuery = baseQuery === ""
+    ? []
+    : baseQuery.split("&").filter((component) => {
+      const key = decodedQueryKey(component);
+      return key === null || !endpointKeys.has(key);
+    });
+  const combinedQuery = [...retainedBaseQuery, ...(endpointQuery === "" ? [] : [endpointQuery])].join("&");
+  provider.search = combinedQuery === "" ? "" : `?${combinedQuery}`;
   provider.hash = "";
   return provider.toString();
+}
+
+function decodedQueryKey(component: string): string | null {
+  const separator = component.indexOf("=");
+  const rawKey = separator === -1 ? component : component.slice(0, separator);
+  try {
+    return decodeURIComponent(rawKey.replace(/\+/g, " "));
+  } catch {
+    return null;
+  }
 }
 
 async function request(ctx: AdapterContext, beaconUrl: string, path: string, method: "GET" | "POST"): Promise<unknown> {

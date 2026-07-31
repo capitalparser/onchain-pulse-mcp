@@ -117,6 +117,31 @@ describe("fetchEthConsensusRewardsBeacon", () => {
     expect(JSON.stringify(result)).not.toContain("credential");
   });
 
+  it("preserves every untouched provider-query byte while replacing only a colliding slot", async () => {
+    const fetchImpl = finalizedEpochFetch(10);
+    const base = "https://user:pass@provider.example:8443/private-token?api_key=a%20~+b%26c&tag=one%2Ftwo&tag=three%3Dfour&encoded=%26%3D&=empty-key&flag&slot=base%20slot#discard-me";
+    const result = await fetchEthConsensusRewardsBeacon(
+      { epoch: 10, includeBlocks: false, beaconUrl: base },
+      makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }),
+    );
+
+    expect(result.status).toBe("verified");
+    const untouched = "api_key=a%20~+b%26c&tag=one%2Ftwo&tag=three%3Dfour&encoded=%26%3D&=empty-key&flag";
+    for (const [input] of fetchImpl.mock.calls) {
+      const rawUrl = String(input);
+      expect(rawUrl).toMatch(/^https:\/\/user:pass@provider\.example:8443\/private-token\/eth\/v1\/beacon\//);
+      const query = rawUrl.includes("?") ? rawUrl.slice(rawUrl.indexOf("?") + 1) : "";
+      if (rawUrl.includes("/headers?")) {
+        const slot = new URL(rawUrl).searchParams.get("slot");
+        expect(query).toBe(`${untouched}&slot=${slot}`);
+      } else {
+        expect(query).toBe(`${untouched}&slot=base%20slot`);
+      }
+      expect(rawUrl).not.toContain("#");
+    }
+    expect(JSON.stringify(result)).not.toContain("a%20~+b%26c");
+  });
+
   it.each([
     ["requested epoch equals finalized epoch", finality(9)],
     ["optimistic finality evidence", { ...finality(10), execution_optimistic: true }],
