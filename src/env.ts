@@ -14,6 +14,8 @@ export interface BYOKKeys {
 export interface EnvConfig {
   byok: BYOKKeys;
   lang: Lang;
+  /** Internal-only Execution API transport endpoint. Never expose this value. */
+  ethereumRpcUrl?: string;
   /**
    * Absolute, tilde-expanded path to the history ring buffer JSON file
    * (Task 8.5). Defaults to `${HOME}/.cache/onchain-pulse-mcp/history.json`;
@@ -44,6 +46,7 @@ export function loadEnv(env: NodeJS.ProcessEnv | Record<string, string | undefin
       dune: env.DUNE_API_KEY,
     },
     lang: langParse.success ? langParse.data : "en",
+    ethereumRpcUrl: env.ETHEREUM_RPC_URL,
     historyPath,
   };
 }

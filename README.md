@@ -14,7 +14,7 @@ Existing onchain intelligence tools (Nansen, Arkham, Coinglass) are dashboards b
 
 - **Read-only · snapshot-oriented**: idempotent MCP responses, no write actions, local-only history materialisation for composite z-scores.
 - **Source adapters**: free and BYOK-backed market, Ethereum, RWA, derivatives, and Korea data paths.
-- **8 MCP tools**: the six original macro tools, token forensics, and ETH value capture.
+- **9 MCP tools**: the six original macro tools, token forensics, ETH value capture, and a bounded finalized-block ETH fee cross-check.
 - **BYOK enrichment**: free defaults work out of the box; paid keys (Nansen/Glassnode/Arkham/Coinglass/CryptoQuant/Laevitas) are auto-detected via env vars.
 - **Composite pulse score**: 7-input weighted z-score with weights externalized to `config/pulse.yaml` — tweak to your thesis.
 - **Graceful degradation**: partial source failures yield reduced-confidence answers, never silent failure.
@@ -58,6 +58,7 @@ Set any of these env vars to enrich responses with paid data sources. The server
 | `CRYPTOQUANT_API_KEY` | CryptoQuant | Reserved for v0.2 |
 | `LAEVITAS_API_KEY` | Laevitas | Reserved for v0.2 |
 | `DUNE_API_KEY` | Dune | ETH fee burn and labelled L2 rent through direct SQL execution |
+| `ETHEREUM_RPC_URL` | Ethereum Execution API | Optional finalized-block fee cross-check transport; internal only and never returned |
 
 `DUNE_API_KEY` is used only when a caller explicitly selects
 `paid_mode="byok_allowed"`. Dune direct SQL is usage-based and consumes credits
@@ -80,6 +81,7 @@ Set `OPM_LANG=ko` for Korean `summary` strings. Default is `en`.
 | `get_rwa_pulse` | `window?` (`1d`, `7d`, `30d`) | RWA TVL pulse |
 | `get_token_forensics` | `chain`, `token_address`, `pool_address?`, `max_wallets?`, `paid_mode?` | Phase 1 token-level forensic snapshot with pool discovery, non-prescriptive flow reading, confidence, and explicit gaps |
 | `get_eth_value_capture` | `window?`, `paid_mode?`, `include_rollups?` | ETH fee burn, execution tips, L2 rent, supply change, and aligned issuance |
+| `get_eth_fee_cross_check` | `start_block`, `end_block`, `include_blocks?` | Exact finalized Ethereum execution-fee and burn verification for a bounded block range |
 
 `get_token_forensics` is Phase 1. It discovers the best pool through DexScreener
 and returns a `ForensicsSnapshot` with `thin-data` or `unknown` flow reading
@@ -187,8 +189,54 @@ npm run test:live:eth-value
 The live Coin Metrics and GrowThePie checks are free. The Dune check consumes
 Dune credits and runs only when both `DUNE_API_KEY` is present and
 `RUN_LIVE_DUNE_ETH_VALUE=1` explicitly authorizes it. ETH collateral demand,
-price/ETH-BTC comparison, ETF or treasury-company flows, execution RPC
-re-indexing, and Beacon reward indexing remain deferred.
+price/ETH-BTC comparison, ETF or treasury-company flows, and Beacon reward
+indexing remain deferred.
+
+### Ethereum execution fee cross-check
+
+`get_eth_fee_cross_check` is a separate, read-only verification surface. It
+does not replace the completed-UTC-day Dune aggregation used by
+`get_eth_value_capture`, and full daily RPC reindexing remains deferred.
+
+```json
+{
+  "name": "get_eth_fee_cross_check",
+  "arguments": {
+    "start_block": 23000000,
+    "end_block": 23000001,
+    "include_blocks": false
+  }
+}
+```
+
+Both block arguments are required non-negative safe integers. The range is
+inclusive, ordered, consecutive, finalized-only, and capped at **64 blocks**.
+The verifier first obtains the Execution API `finalized` head, then obtains
+only `eth_getBlockByNumber` and `eth_getBlockReceipts` evidence for the exact
+requested range. It does not fall back to one receipt request per transaction.
+
+All fee arithmetic uses exact integer wei and returns a matching exact ETH
+decimal string. The response verifies these identities for every aggregate
+(and every requested block when `include_blocks=true`):
+
+- execution fee = base-fee burn + priority fee;
+- gross fee = execution fee + blob-fee burn;
+- total burn = base-fee burn + blob-fee burn.
+
+Set `ETHEREUM_RPC_URL` only in the server environment. It may contain provider
+credentials; it is never returned, logged, persisted, or included in cache
+keys. Without it, the tool returns a bounded `rpc_not_configured` unavailable
+snapshot and performs no network call. Default tests never use the endpoint.
+
+The dedicated live check is opt-in and read-only:
+
+```bash
+npm run test:live:eth-rpc
+```
+
+It remains skipped unless both `RUN_LIVE_ETH_RPC=1` and `ETHEREUM_RPC_URL` are
+set. When enabled, it resolves a finalized head and verifies no more than two
+finalized blocks.
 
 ## Roadmap
 
