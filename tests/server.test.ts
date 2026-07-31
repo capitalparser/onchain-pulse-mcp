@@ -8,6 +8,7 @@ import { SparkCollateralCapacitySnapshotSchema } from "../src/spark_collateral_c
 import { LidoPooledEthBackingSnapshotSchema } from "../src/lido_pooled_eth_backing/types.js";
 import { SkyEthCollateralCustodySnapshotSchema } from "../src/sky_eth_collateral_custody/types.js";
 import { EigenLayerEthRestakingExposureSnapshotSchema } from "../src/eigenlayer_eth_restaking/types.js";
+import { EigenLayerLstEthQuotesSnapshotSchema } from "../src/eigenlayer_lst_eth_quotes/types.js";
 import {
   createServer,
   handleEthCollateralDemand,
@@ -15,6 +16,7 @@ import {
   handleLidoPooledEthBacking,
   handleSkyEthCollateralCustody,
   handleEigenLayerEthRestakingExposure,
+  handleEigenLayerLstEthQuotes,
   handleEthFeeCrossCheck,
   handleEthConsensusRewardsCrossCheck,
   handleEthValueCapture,
@@ -25,13 +27,14 @@ import type { EnvConfig } from "../src/env.js";
 const env: EnvConfig = { byok: {}, lang: "en", historyPath: "/tmp/onchain-pulse-mcp-test-history.json", ethereumRpcUrl: undefined, ethereumBeaconApiUrl: undefined };
 
 describe("server", () => {
-  it("registers all fifteen expected tools including EigenLayer restaking exposure", () => {
+  it("registers all sixteen expected tools including EigenLayer covered LST ETH quotes", () => {
     const names = listTools()
       .map((t) => t.name)
       .sort();
 
     expect(names).toEqual([
       "get_eigenlayer_eth_restaking_exposure",
+      "get_eigenlayer_lst_eth_quotes",
       "get_etf_flow",
       "get_eth_collateral_demand",
       "get_eth_consensus_rewards_cross_check",
@@ -151,6 +154,20 @@ describe("server", () => {
     expect(EigenLayerEthRestakingExposureSnapshotSchema.parse(output)).toEqual(output);
     await expect(handleEigenLayerEthRestakingExposure({ rpcUrl: "https://forbidden" }, hc)).rejects.toThrow();
     await expect(handleEigenLayerEthRestakingExposure(null, hc)).rejects.toThrow();
+  });
+
+  it("registers and dispatches EigenLayer covered LST ETH quotes through internal RPC configuration only", async () => {
+    const tool = listTools().find((item) => item.name === "get_eigenlayer_lst_eth_quotes");
+    const fetchImpl = vi.fn();
+    const hc = { env, ctx: makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }) };
+    expect(tool?.inputSchema).toEqual({ type: "object", properties: {}, additionalProperties: false });
+    const output = await tool?.handler({}, hc);
+    expect(output).toMatchObject({ status: "unavailable", verified_block: null, covered_quotes: [], identities: null, coverage: null });
+    expect((output as { gaps: Array<{ code: string }> }).gaps[0]?.code).toBe("rpc_not_configured");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(EigenLayerLstEthQuotesSnapshotSchema.parse(output)).toEqual(output);
+    await expect(handleEigenLayerLstEthQuotes({ rpcUrl: "https://forbidden" }, hc)).rejects.toThrow();
+    await expect(handleEigenLayerLstEthQuotes(null, hc)).rejects.toThrow();
   });
 
   it("createServer returns a connectable Server instance plus adapter context", () => {
