@@ -78,7 +78,13 @@ describe("SkyEthCollateralCustodySnapshotSchema", () => {
     ["a fabricated bucket total", (value: any) => { value.buckets[0].raw_custody = "7"; }],
     ["a fabricated total quote", (value: any) => { value.metrics.sky_eth_family_adapter_custody_eth_wei = "24"; }],
     ["a mismatched join Vat", (value: any) => { value.ilks[0].vat = address("99"); }],
+    ["a zero resolved Vat", (value: any) => { value.resolved_contracts.vat = address("0"); }],
+    ["a zero dynamic join", (value: any) => { value.ilks[0].join = address("0"); }],
     ["an overflowed uint256", (value: any) => { value.ilks[0].raw_custody = (2n ** 256n).toString(); }],
+    ["an unsafe block number", (value: any) => { value.verified_block.number = Number.MAX_SAFE_INTEGER + 1; }],
+    ["an unsafe block timestamp", (value: any) => { value.verified_block.timestamp = Number.MAX_SAFE_INTEGER + 1; }],
+    ["an overlong summary", (value: any) => { value.summary = "x".repeat(501); }],
+    ["an overlong permanent gap detail", (value: any) => { value.gaps[0].detail = "x".repeat(241); }],
     ["mixed fresh and stale evidence", (value: any) => { value.source_status.push({ source: "other", role: "other", stale: true }); }],
   ])("rejects %s without throwing", (_name, mutate) => {
     const value = verified();

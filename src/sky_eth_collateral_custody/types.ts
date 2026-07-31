@@ -8,7 +8,7 @@ const DecimalStringSchema = z.string().max(78).regex(/^(0|[1-9]\d*)$/).refine((v
     return false;
   }
 }, "must be a uint256");
-const AddressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
+const AddressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/).refine((value) => !/^0x0{40}$/i.test(value), "must be nonzero");
 const BlockHashSchema = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
 
 export const SKY_ETH_CUSTODY_ILKS = [
@@ -32,7 +32,8 @@ const SourceFailureGapCodes = new Set([
 ]);
 
 export const SkyEthCollateralBlockSchema = z.object({
-  number: z.number().int().nonnegative(), hash: BlockHashSchema, timestamp: z.number().int().nonnegative(),
+  number: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), hash: BlockHashSchema,
+  timestamp: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 }).strict();
 export type SkyEthCollateralBlock = z.infer<typeof SkyEthCollateralBlockSchema>;
 
@@ -59,7 +60,7 @@ export const SkyEthCollateralGapCodeSchema = z.enum([
   ...PermanentGapCodes, "rpc_not_configured", "rpc_access_gap", "rpc_chain_mismatch", "rpc_finality_gap", "rpc_schema_drift", "rpc_evidence_mismatch", "source_stale",
 ]);
 export type SkyEthCollateralGapCode = z.infer<typeof SkyEthCollateralGapCodeSchema>;
-export const SkyEthCollateralGapSchema = z.object({ code: SkyEthCollateralGapCodeSchema, detail: z.string().min(1) }).strict();
+export const SkyEthCollateralGapSchema = z.object({ code: SkyEthCollateralGapCodeSchema, detail: z.string().min(1).max(240) }).strict();
 export type SkyEthCollateralGap = z.infer<typeof SkyEthCollateralGapSchema>;
 
 export const SkyEthCollateralSourceStatusSchema = z.object({
@@ -69,7 +70,7 @@ export type SkyEthCollateralSourceStatus = z.infer<typeof SkyEthCollateralSource
 
 const SnapshotBaseSchema = z.object({
   status: z.enum(["verified", "unavailable"]),
-  summary: z.string().min(1),
+  summary: z.string().min(1).max(500),
   methodology: z.literal("sky-eth-collateral-adapter-custody-v1"),
   verified_block: SkyEthCollateralBlockSchema.nullable(),
   resolved_contracts: SkyResolvedContractsSchema.nullable(),

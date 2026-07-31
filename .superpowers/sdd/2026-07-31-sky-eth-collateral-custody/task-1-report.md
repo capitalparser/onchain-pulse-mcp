@@ -54,3 +54,43 @@ rejection; and unavailable output without observed custody.
 - No provider URL or provider error is represented by this domain.
 - Unavailable output contains no block, contracts, joins, buckets, quote
   inputs, identities, or observed custody metric.
+
+## QA remediation: evidence bounds
+
+Regression tests were added before the remediation for zero resolved Vat/join
+addresses, block numbers and timestamps above `Number.MAX_SAFE_INTEGER`, and
+summary/detail strings above the public bounds. The focused RED run failed as
+expected against the original implementation:
+
+```text
+Test Files  2 failed (2)
+     Tests  8 failed | 13 passed (21)
+
+fails closed for a zero join
+expected function to throw an error, but it didn't
+
+rejects a zero dynamic join without throwing
+expected true to be false
+
+rejects an unsafe block number without throwing
+expected true to be false
+
+rejects an unsafe block timestamp without throwing
+expected true to be false
+
+rejects an overlong summary without throwing
+expected true to be false
+
+rejects an overlong permanent gap detail without throwing
+expected true to be false
+```
+
+GREEN hardens both schema and builder address checks to reject the all-zero
+address before common-Vat or duplicate-join reconciliation. The schema now
+bounds block numbers/timestamps to `Number.MAX_SAFE_INTEGER`, summaries to
+500 characters, and gap details to 240 characters. The rerun passed:
+
+```text
+Test Files  2 passed (2)
+     Tests  21 passed (21)
+```

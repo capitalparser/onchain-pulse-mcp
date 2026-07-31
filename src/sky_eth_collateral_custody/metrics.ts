@@ -35,7 +35,7 @@ function uint(value: bigint, field: string): bigint {
 }
 
 function validAddress(value: string): boolean {
-  return /^0x[0-9a-fA-F]{40}$/.test(value);
+  return /^0x[0-9a-fA-F]{40}$/.test(value) && !/^0x0{40}$/i.test(value);
 }
 
 function sum(left: bigint, right: bigint, field: string): bigint {

@@ -53,6 +53,21 @@ describe("Sky ETH adapter custody metrics", () => {
     })).toThrow(SkyEthCollateralCustodyDomainError);
   });
 
+  it.each([
+    ["a zero Vat", (input: ReturnType<typeof evidence>, resolved = contracts) => ({ ilks: input, contracts: { ...resolved, vat: address("0") } })],
+    ["a zero join", (input: ReturnType<typeof evidence>, resolved = contracts) => {
+      input[0] = { ...input[0]!, join: address("0") };
+      return { ilks: input, contracts: resolved };
+    }],
+  ])("fails closed for %s", (_name, mutate) => {
+    const changed = mutate(evidence());
+    expect(() => buildVerifiedSkyEthCollateralCustodySnapshot({
+      block: { number: 1, hash: `0x${"ab".repeat(32)}`, timestamp: 2 }, ...changed,
+      wstethQuotedEthWei: 10n, rethQuotedEthWei: 7n,
+      sources: ["ethereum_rpc"], sourceStatus: [{ source: "ethereum_rpc", role: "sky_chainlog_finalized_adapter_custody_evidence", stale: false }],
+    })).toThrow(SkyEthCollateralCustodyDomainError);
+  });
+
   it("creates unavailable output with no partial custody evidence", () => {
     const snapshot = buildUnavailableSkyEthCollateralCustodySnapshot({
       summary: "unavailable", gaps: [{ code: "rpc_access_gap", detail: "bounded" }],
@@ -60,5 +75,16 @@ describe("Sky ETH adapter custody metrics", () => {
       sourceStatus: [{ source: "ethereum_rpc", role: "sky_chainlog_finalized_adapter_custody_evidence", stale: false }],
     });
     expect(snapshot).toMatchObject({ status: "unavailable", verified_block: null, resolved_contracts: null, ilks: [], buckets: [] });
+  });
+
+  it.each([
+    ["an overlong summary", "x".repeat(501), "bounded"],
+    ["an overlong gap detail", "unavailable", "x".repeat(241)],
+  ])("fails closed when unavailable output has %s", (_name, summary, detail) => {
+    expect(() => buildUnavailableSkyEthCollateralCustodySnapshot({
+      summary, gaps: [{ code: "rpc_access_gap", detail }],
+      sources: ["ethereum_rpc"],
+      sourceStatus: [{ source: "ethereum_rpc", role: "sky_chainlog_finalized_adapter_custody_evidence", stale: false }],
+    })).toThrow(SkyEthCollateralCustodyDomainError);
   });
 });
