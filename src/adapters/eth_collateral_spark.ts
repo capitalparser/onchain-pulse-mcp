@@ -5,29 +5,29 @@ import {
   type FinalizedAaveV3MarketSpec,
 } from "./aave_v3_market_rpc.js";
 import {
-  buildUnavailableEthCollateralSnapshot,
-  buildVerifiedEthCollateralSnapshot,
-  EthCollateralDomainError,
-} from "../eth_collateral_demand/metrics.js";
+  buildUnavailableSparkCollateralSnapshot,
+  buildVerifiedSparkCollateralSnapshot,
+  SparkCollateralDomainError,
+} from "../spark_collateral_capacity/metrics.js";
 import {
-  ETH_COLLATERAL_ASSETS,
-  type EthCollateralDemandSnapshot,
-  type EthCollateralGapCode,
-} from "../eth_collateral_demand/types.js";
+  SPARK_COLLATERAL_ASSETS,
+  type SparkCollateralCapacitySnapshot,
+  type SparkCollateralGapCode,
+} from "../spark_collateral_capacity/types.js";
 
-const AAVE_V3_CORE_SPEC: FinalizedAaveV3MarketSpec = {
-  marketId: "aave-v3-ethereum-core",
-  cacheName: "eth_collateral_aave_v3",
-  poolAddressesProvider: "0x2f39d218133afab8f2b819b1066c7e434ad94e9e",
-  assets: ETH_COLLATERAL_ASSETS,
+const SPARK_LEND_SPEC: FinalizedAaveV3MarketSpec = {
+  marketId: "spark-lend-ethereum",
+  cacheName: "eth_collateral_spark",
+  poolAddressesProvider: "0x02C3eA4e34C0cBd694D2adFa2c690EECbC1793eE",
+  assets: SPARK_COLLATERAL_ASSETS,
 };
 
-export interface EthCollateralAaveV3Input {
+export interface EthCollateralSparkInput {
   /** Internal-only provider configuration. It is never returned or cached. */
   rpcUrl?: unknown;
 }
 
-type UnavailableCode = Extract<AaveV3MarketRpcFailureCode, EthCollateralGapCode>;
+type UnavailableCode = Extract<AaveV3MarketRpcFailureCode, SparkCollateralGapCode>;
 
 function configuredRpcUrl(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -35,7 +35,7 @@ function configuredRpcUrl(value: unknown): string | null {
   return trimmed === "" ? null : trimmed;
 }
 
-function unavailable(input: EthCollateralAaveV3Input, code: UnavailableCode): EthCollateralDemandSnapshot {
+function unavailable(input: EthCollateralSparkInput, code: UnavailableCode): SparkCollateralCapacitySnapshot {
   const configured = configuredRpcUrl(input.rpcUrl) !== null;
   const detail = {
     rpc_not_configured: "Ethereum RPC is not configured.",
@@ -45,32 +45,32 @@ function unavailable(input: EthCollateralAaveV3Input, code: UnavailableCode): Et
     rpc_schema_drift: "Ethereum RPC returned malformed evidence.",
     rpc_evidence_mismatch: "Ethereum RPC evidence did not reconcile.",
   }[code];
-  return buildUnavailableEthCollateralSnapshot({
-    summary: "Aave V3 Ethereum collateral capacity evidence is unavailable.",
+  return buildUnavailableSparkCollateralSnapshot({
+    summary: "SparkLend Ethereum collateral capacity evidence is unavailable.",
     gaps: [{ code, detail }],
     sources: configured ? ["ethereum_rpc"] : [],
     sourceStatus: configured
-      ? [{ source: "ethereum_rpc", role: "aave_v3_finalized_reserve_evidence", stale: false }]
+      ? [{ source: "ethereum_rpc", role: "spark_lend_finalized_reserve_evidence", stale: false }]
       : [],
   });
 }
 
-export async function fetchEthCollateralAaveV3(
-  input: EthCollateralAaveV3Input,
+export async function fetchEthCollateralSpark(
+  input: EthCollateralSparkInput,
   ctx: AdapterContext,
-): Promise<EthCollateralDemandSnapshot> {
-  const result = await fetchFinalizedAaveV3Market(AAVE_V3_CORE_SPEC, input, ctx);
+): Promise<SparkCollateralCapacitySnapshot> {
+  const result = await fetchFinalizedAaveV3Market(SPARK_LEND_SPEC, input, ctx);
   if (result.status === "unavailable") return unavailable(input, result.code);
   try {
-    return buildVerifiedEthCollateralSnapshot({
+    return buildVerifiedSparkCollateralSnapshot({
       block: result.evidence.block,
       reserves: result.evidence.reserves,
       sources: ["ethereum_rpc"],
-      sourceStatus: [{ source: "ethereum_rpc", role: "aave_v3_finalized_reserve_evidence", stale: false }],
+      sourceStatus: [{ source: "ethereum_rpc", role: "spark_lend_finalized_reserve_evidence", stale: false }],
       stale: result.stale,
     });
   } catch (error) {
-    if (error instanceof EthCollateralDomainError) {
+    if (error instanceof SparkCollateralDomainError) {
       return unavailable(input, error.kind === "schema_drift" ? "rpc_schema_drift" : "rpc_evidence_mismatch");
     }
     return unavailable(input, "rpc_access_gap");

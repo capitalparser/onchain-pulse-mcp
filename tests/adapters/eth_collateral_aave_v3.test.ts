@@ -3,7 +3,7 @@ import { makeContext } from "../../src/adapters/base.js";
 import { fetchEthCollateralAaveV3 } from "../../src/adapters/eth_collateral_aave_v3.js";
 
 const env = { byok: {}, lang: "en" as const, historyPath: "/tmp/history.json" };
-const PROVIDER = "0x2f39d218133afa8f2b819b1066c7e434ad94e9e";
+const PROVIDER = "0x2f39d218133afab8f2b819b1066c7e434ad94e9e";
 const DATA_PROVIDER = "0x1111111111111111111111111111111111111111";
 const ORACLE = "0x2222222222222222222222222222222222222222";
 const WETH = "0xc02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".toLowerCase();

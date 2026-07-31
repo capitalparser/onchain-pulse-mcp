@@ -14,7 +14,7 @@ Existing onchain intelligence tools (Nansen, Arkham, Coinglass) are dashboards b
 
 - **Read-only · snapshot-oriented**: idempotent MCP responses, no write actions, local-only history materialisation for composite z-scores.
 - **Source adapters**: free and BYOK-backed market, Ethereum, RWA, derivatives, and Korea data paths.
-- **10 MCP tools**: the six original macro tools, token forensics, ETH value capture, and bounded Ethereum execution-fee and consensus-reward cross-checks.
+- **12 MCP tools**: the six original macro tools, token forensics, ETH value capture, bounded Ethereum execution-fee and consensus-reward cross-checks, and finalized Aave V3 Core and SparkLend supplied-capacity views.
 - **BYOK enrichment**: free defaults work out of the box; paid keys (Nansen/Glassnode/Arkham/Coinglass/CryptoQuant/Laevitas) are auto-detected via env vars.
 - **Composite pulse score**: 7-input weighted z-score with weights externalized to `config/pulse.yaml` — tweak to your thesis.
 - **Graceful degradation**: partial source failures yield reduced-confidence answers, never silent failure.
@@ -58,7 +58,7 @@ Set any of these env vars to enrich responses with paid data sources. The server
 | `CRYPTOQUANT_API_KEY` | CryptoQuant | Reserved for v0.2 |
 | `LAEVITAS_API_KEY` | Laevitas | Reserved for v0.2 |
 | `DUNE_API_KEY` | Dune | ETH fee burn and labelled L2 rent through direct SQL execution |
-| `ETHEREUM_RPC_URL` | Ethereum Execution API | Optional finalized-block fee and Aave V3 Core supplied-capacity transport; internal only and never returned |
+| `ETHEREUM_RPC_URL` | Ethereum Execution API | Optional finalized-block fee plus Aave V3 Core and SparkLend supplied-capacity transport; internal only and never returned |
 | `ETHEREUM_BEACON_API_URL` | Ethereum Beacon API | Optional finalized-epoch reward-component cross-check transport; internal only and never returned |
 
 `DUNE_API_KEY` is used only when a caller explicitly selects
@@ -84,6 +84,7 @@ Set `OPM_LANG=ko` for Korean `summary` strings. Default is `en`.
 | `get_eth_value_capture` | `window?`, `paid_mode?`, `include_rollups?` | ETH fee burn, execution tips, L2 rent, supply change, and aligned issuance |
 | `get_eth_fee_cross_check` | `start_block`, `end_block`, `include_blocks?` | Exact finalized Ethereum execution-fee and burn verification for a bounded block range |
 | `get_eth_collateral_demand` | none | Exact finalized Aave V3 Core ETH-family supplied capacity; broader collateral and lock metrics stay null |
+| `get_spark_eth_collateral_capacity` | none | Exact finalized SparkLend ETH-family supplied capacity; Aave/Spark overlap and broader collateral metrics stay null |
 | `get_eth_consensus_rewards_cross_check` | `epoch`, `include_blocks?` | Exact finalized Ethereum consensus reward-component verification for one epoch |
 
 `get_token_forensics` is Phase 1. It discovers the best pool through DexScreener
@@ -281,6 +282,33 @@ npm run test:live:eth-collateral
 ```
 
 It remains skipped unless both `RUN_LIVE_ETH_COLLATERAL=1` and
+`ETHEREUM_RPC_URL` are set.
+
+### SparkLend ETH-family supplied capacity
+
+`get_spark_eth_collateral_capacity` has no arguments. It is a read-only,
+protocol-specific verifier for SparkLend Ethereum WETH, wstETH, rETH, weETH,
+rsETH, and ezETH reserve supply. It reports supplied capacity and the
+market-level collateral-eligible subset; it does not claim actual user
+collateral, unique or net ETH locked, gross collateral, rehypothecation, or a
+combined Aave/Spark amount. Those five broader metrics remain `null` with
+explicit gaps until overlap reconciliation exists.
+
+The verifier reuses the finalized Aave V3 market RPC module but resolves the
+official Spark PoolAddressesProvider. Each uncached request is four JSON-RPC
+batch rounds and exactly **23 logical calls**: chain/finalized block, provider
+resolution, six configurations plus six aToken supplies, then six prices plus
+one duplicate WETH reference price. All contract calls use the same finalized
+block tag. Values are bigint-only exact rational ETH equivalents; RPC URLs stay
+environment-only and never appear in outputs, errors, logs, or cache keys.
+
+The read-only live verifier is opt-in:
+
+```bash
+npm run test:live:spark-collateral
+```
+
+It remains skipped unless both `RUN_LIVE_SPARK_COLLATERAL=1` and a nonblank
 `ETHEREUM_RPC_URL` are set.
 
 ### Ethereum consensus reward-component cross-check
