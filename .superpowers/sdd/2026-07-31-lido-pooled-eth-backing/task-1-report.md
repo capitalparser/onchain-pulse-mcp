@@ -76,3 +76,44 @@ $ git diff --check
 
 The skipped tests are pre-existing default-skipped live tests. No Lido live
 request was made.
+
+## QA remediation — external accounting, uint256, and provenance
+
+After QA requested changes against `f9414f57ba392e258f0fee70ad97c5a21a49cb9d`,
+new regressions were added before changing production code.
+
+### RED
+
+```text
+$ npm test -- tests/lido_pooled_eth_backing/types.test.ts tests/lido_pooled_eth_backing/metrics.test.ts
+
+7 failed | 24 passed (31)
+
+expected undefined to be '7'
+expected [Function] to throw an error
+expected true to be false
+```
+
+The failures proved the prior domain omitted public raw `external_ether_wei`,
+did not reject an `externalEther` value that differed from the computed floor,
+accepted `2^256`, and accepted a configured unavailable snapshot with a
+fabricated but internally matching source.
+
+### GREEN
+
+The domain now requires raw `externalEther`; publishes it as
+`accounting.external_ether_wei`; recomputes the share-ratio floor and requires
+equality before using the verified raw amount in the metrics and total identity.
+All decimal public fields use a canonical `uint256` contract and the builder
+rejects bigint inputs above `2^256 - 1`. Configured provenance is exactly one
+`ethereum_rpc` source and one
+`lido_v4_finalized_accounting_evidence` status; only `rpc_not_configured` may
+have empty provenance.
+
+```text
+Test Files  2 passed (2)
+Tests  31 passed (31)
+
+$ npm run typecheck
+> tsc --noEmit
+```

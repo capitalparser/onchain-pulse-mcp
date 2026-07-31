@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { LidoPooledEthBackingSnapshotSchema } from "../../src/lido_pooled_eth_backing/types.js";
+import {
+  LidoAccountingEvidenceSchema,
+  LidoPooledEthBackingMetricsSchema,
+  LidoPooledEthBackingSnapshotSchema,
+} from "../../src/lido_pooled_eth_backing/types.js";
+
+const UINT256_OVERFLOW = (1n << 256n).toString();
 
 const permanentGaps = [
   "all_ethereum_native_staked_not_measured",
@@ -16,7 +22,7 @@ function verified() {
     methodology: "lido-pooled-eth-backing-v1",
     verified_block: { number: 1, hash: `0x${"a".repeat(64)}`, timestamp: 1 },
     accounting: {
-      total_supply_wei: "37", total_pooled_ether_wei: "37", total_shares: "50", external_shares: "10",
+      total_supply_wei: "37", total_pooled_ether_wei: "37", total_shares: "50", external_shares: "10", external_ether_wei: "7",
       buffered_ether_wei: "3", cl_validators_balance_at_last_report_wei: "20",
       cl_pending_balance_at_last_report_wei: "4", deposited_since_last_report_wei: "3",
       deposited_for_current_report_wei: "2",
@@ -41,7 +47,7 @@ function verified() {
       combined_aave_spark_lido_demand_complete: false, rehypothecation_ratio_complete: false,
     },
     sources: ["ethereum_rpc"],
-    source_status: [{ source: "ethereum_rpc", role: "lido_v4_finalized_accounting", stale: false }],
+    source_status: [{ source: "ethereum_rpc", role: "lido_v4_finalized_accounting_evidence", stale: false }],
     gaps: permanentGaps.map((gap) => ({ ...gap })),
     capabilities: { ethereum_rpc_active: true },
   };
@@ -88,6 +94,18 @@ describe("LidoPooledEthBackingSnapshotSchema", () => {
     ["an unmarked stale source", (value: ReturnType<typeof verified>) => { value.source_status[0]!.stale = true; }],
     ["an impossible deposited-for-current amount", (value: ReturnType<typeof verified>) => { value.accounting.deposited_for_current_report_wei = "4"; }],
     ["a fabricated external floor", (value: ReturnType<typeof verified>) => { value.metrics.external_pooled_eth_wei = "11"; }],
+    ["a raw external ether amount that differs from the share-ratio floor", (value: ReturnType<typeof verified>) => { value.accounting.external_ether_wei = "8"; }],
+    ["a fabricated canonical source", (value: ReturnType<typeof verified>) => {
+      value.sources = ["fabricated_rpc"];
+      value.source_status = [{ source: "fabricated_rpc", role: "lido_v4_finalized_accounting_evidence", stale: false }];
+    }],
+    ["extra matching provenance", (value: ReturnType<typeof verified>) => {
+      value.sources.push("extra_rpc");
+      value.source_status.push({ source: "extra_rpc", role: "lido_v4_finalized_accounting_evidence", stale: false });
+    }],
+    ["a noncanonical source role", (value: ReturnType<typeof verified>) => {
+      value.source_status[0]!.role = "fabricated_role";
+    }],
   ])("rejects %s", (_name, mutate) => {
     const value = verified();
     mutate(value);
@@ -101,10 +119,19 @@ describe("LidoPooledEthBackingSnapshotSchema", () => {
     expect(LidoPooledEthBackingSnapshotSchema.safeParse(value).success).toBe(true);
   });
 
+  it("rejects 2^256 decimal strings from every public accounting and metric contract", () => {
+    const value = verified();
+    value.accounting.total_supply_wei = UINT256_OVERFLOW;
+    value.metrics.total_pooled_eth_wei = UINT256_OVERFLOW;
+    expect(LidoAccountingEvidenceSchema.safeParse(value.accounting).success).toBe(false);
+    expect(LidoPooledEthBackingMetricsSchema.safeParse(value.metrics).success).toBe(false);
+  });
+
   it.each([
     ["partial evidence", (() => { const value = unavailable(); (value.metrics as { total_pooled_eth_wei: string | null }).total_pooled_eth_wei = "1"; return value; })()],
     ["configured failure missing provenance", (() => { const value = unavailable(); value.sources = []; value.source_status = []; return value; })()],
-    ["unconfigured failure with provenance", (() => { const value = unavailable("rpc_not_configured"); value.sources = ["ethereum_rpc"]; value.source_status = [{ source: "ethereum_rpc", role: "role", stale: false }]; return value; })()],
+    ["unconfigured failure with provenance", (() => { const value = unavailable("rpc_not_configured"); value.sources = ["ethereum_rpc"]; value.source_status = [{ source: "ethereum_rpc", role: "lido_v4_finalized_accounting_evidence", stale: false }]; return value; })()],
+    ["configured failure with fabricated source", (() => { const value = unavailable(); value.sources = ["fabricated_rpc"]; value.source_status = [{ source: "fabricated_rpc", role: "lido_v4_finalized_accounting_evidence", stale: false }]; return value; })()],
     ["multiple failure gaps", (() => { const value = unavailable(); (value.gaps as Array<{ code: string; detail: string }>).push({ code: "rpc_schema_drift", detail: "extra" }); return value; })()],
   ])("rejects unavailable snapshot with %s", (_name, value) => {
     expect(LidoPooledEthBackingSnapshotSchema.safeParse(value).success).toBe(false);

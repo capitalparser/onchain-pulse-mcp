@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { buildUnavailableLidoPooledEthBackingSnapshot, buildVerifiedLidoPooledEthBackingSnapshot } from "../../src/lido_pooled_eth_backing/metrics.js";
+import type { LidoPooledEthBackingSourceStatus } from "../../src/lido_pooled_eth_backing/types.js";
 
 const block = { number: 1, hash: `0x${"a".repeat(64)}`, timestamp: 1 };
-const sourceStatus = [{ source: "ethereum_rpc", role: "lido_v4_finalized_accounting", stale: false }];
+const sourceStatus: LidoPooledEthBackingSourceStatus[] = [{ source: "ethereum_rpc", role: "lido_v4_finalized_accounting_evidence", stale: false }];
 const accounting = {
-  totalSupply: 37n, totalPooledEther: 37n, totalShares: 50n, externalShares: 10n,
+  totalSupply: 37n, totalPooledEther: 37n, totalShares: 50n, externalShares: 10n, externalEther: 7n,
   bufferedEther: 3n, clValidatorsBalanceAtLastReport: 20n, clPendingBalanceAtLastReport: 4n,
   depositedSinceLastReport: 3n, depositedForCurrentReport: 2n,
 };
@@ -18,6 +19,7 @@ describe("Lido pooled ETH backing metrics", () => {
       unique_net_eth_locked: null, defi_eth_collateral: null, combined_aave_spark_lido_demand: null,
       rehypothecation_ratio: null,
     });
+    expect(result.accounting?.external_ether_wei).toBe("7");
     expect(result.identities).toEqual({
       internal_ether_equals_components: true, internal_shares_equals_total_minus_external: true,
       external_ether_equals_floor_share_ratio: true, total_pooled_ether_equals_internal_plus_external: true,
@@ -36,7 +38,9 @@ describe("Lido pooled ETH backing metrics", () => {
     ["negative evidence", { ...accounting, bufferedEther: -1n }],
     ["external shares equal to total shares", { ...accounting, externalShares: 50n }],
     ["inconsistent total supply", { ...accounting, totalSupply: 41n }],
+    ["external ether that does not equal the share-ratio floor", { ...accounting, externalEther: 8n }],
     ["deposited current above deposited since", { ...accounting, depositedForCurrentReport: 4n }],
+    ["a 2^256 accounting input", { ...accounting, externalEther: 1n << 256n }],
   ])("rejects %s without returning partial metrics", (_name, bad) => {
     expect(() => buildVerifiedLidoPooledEthBackingSnapshot({ block, accounting: bad, sources: ["ethereum_rpc"], sourceStatus })).toThrow();
   });

@@ -1,5 +1,6 @@
 import {
   LIDO_POOLED_ETH_BACKING_METHODOLOGY,
+  UINT256_MAX,
   LidoPooledEthBackingSnapshotSchema,
   type LidoAccountingEvidenceInput,
   type LidoPooledEthBackingBlock,
@@ -30,7 +31,7 @@ function fail(kind: LidoPooledEthBackingDomainError["kind"], message: string): n
 function validateAccounting(accounting: LidoAccountingEvidenceInput): void {
   const fields = Object.values(accounting);
   if (fields.some((value) => typeof value !== "bigint")) fail("schema_drift", "Lido accounting must use bigint evidence.");
-  if (fields.some((value) => value < 0n)) fail("evidence_mismatch", "Lido accounting cannot be negative.");
+  if (fields.some((value) => value < 0n || value > UINT256_MAX)) fail("evidence_mismatch", "Lido accounting must fit uint256.");
   if (accounting.totalPooledEther <= 0n || accounting.totalShares <= 0n || accounting.externalShares >= accounting.totalShares) {
     fail("evidence_mismatch", "Lido accounting has impossible total or share evidence.");
   }
@@ -57,9 +58,10 @@ export function buildVerifiedLidoPooledEthBackingSnapshot(input: {
   const internalEther = accounting.bufferedEther + accounting.clValidatorsBalanceAtLastReport
     + accounting.clPendingBalanceAtLastReport + accounting.depositedSinceLastReport;
   const internalShares = accounting.totalShares - accounting.externalShares;
-  const externalEther = accounting.externalShares * internalEther / internalShares;
-  const totalPooledEther = internalEther + externalEther;
-  if (accounting.totalPooledEther !== totalPooledEther || accounting.totalSupply !== totalPooledEther || externalEther > totalPooledEther) {
+  const externalEtherFloor = accounting.externalShares * internalEther / internalShares;
+  const totalPooledEther = internalEther + accounting.externalEther;
+  if (accounting.externalEther !== externalEtherFloor || accounting.totalPooledEther !== totalPooledEther
+    || accounting.totalSupply !== totalPooledEther || accounting.externalEther > totalPooledEther) {
     fail("evidence_mismatch", "Lido pooled ETH accounting identities do not reconcile.");
   }
   const snapshot = {
@@ -69,13 +71,13 @@ export function buildVerifiedLidoPooledEthBackingSnapshot(input: {
     verified_block: input.block,
     accounting: {
       total_supply_wei: accounting.totalSupply.toString(), total_pooled_ether_wei: accounting.totalPooledEther.toString(),
-      total_shares: accounting.totalShares.toString(), external_shares: accounting.externalShares.toString(),
+      total_shares: accounting.totalShares.toString(), external_shares: accounting.externalShares.toString(), external_ether_wei: accounting.externalEther.toString(),
       buffered_ether_wei: accounting.bufferedEther.toString(), cl_validators_balance_at_last_report_wei: accounting.clValidatorsBalanceAtLastReport.toString(),
       cl_pending_balance_at_last_report_wei: accounting.clPendingBalanceAtLastReport.toString(), deposited_since_last_report_wei: accounting.depositedSinceLastReport.toString(),
       deposited_for_current_report_wei: accounting.depositedForCurrentReport.toString(),
     },
     metrics: {
-      total_pooled_eth_wei: totalPooledEther.toString(), internal_pooled_eth_wei: internalEther.toString(), external_pooled_eth_wei: externalEther.toString(),
+      total_pooled_eth_wei: totalPooledEther.toString(), internal_pooled_eth_wei: internalEther.toString(), external_pooled_eth_wei: accounting.externalEther.toString(),
       buffered_eth_wei: accounting.bufferedEther.toString(), cl_validators_balance_at_last_report_wei: accounting.clValidatorsBalanceAtLastReport.toString(),
       cl_pending_balance_at_last_report_wei: accounting.clPendingBalanceAtLastReport.toString(), deposited_since_last_report_wei: accounting.depositedSinceLastReport.toString(),
       deposited_for_current_report_wei: accounting.depositedForCurrentReport.toString(), steth_total_supply_wei: accounting.totalSupply.toString(),

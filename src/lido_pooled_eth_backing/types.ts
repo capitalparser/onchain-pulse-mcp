@@ -1,8 +1,17 @@
 import { z } from "zod";
 
 export const LIDO_POOLED_ETH_BACKING_METHODOLOGY = "lido-pooled-eth-backing-v1" as const;
+export const LIDO_POOLED_ETH_BACKING_SOURCE = "ethereum_rpc" as const;
+export const LIDO_POOLED_ETH_BACKING_SOURCE_ROLE = "lido_v4_finalized_accounting_evidence" as const;
+export const UINT256_MAX = (1n << 256n) - 1n;
 
-const DecimalStringSchema = z.string().max(78).regex(/^(0|[1-9]\d*)$/);
+const DecimalStringSchema = z.string().max(78).regex(/^(0|[1-9]\d*)$/).refine((value) => {
+  try {
+    return BigInt(value) <= UINT256_MAX;
+  } catch {
+    return false;
+  }
+}, "must be an exact uint256 decimal string");
 const BlockHashSchema = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
 const BlockIntegerSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 
@@ -18,6 +27,7 @@ export const LidoAccountingEvidenceSchema = z.object({
   total_pooled_ether_wei: DecimalStringSchema,
   total_shares: DecimalStringSchema,
   external_shares: DecimalStringSchema,
+  external_ether_wei: DecimalStringSchema,
   buffered_ether_wei: DecimalStringSchema,
   cl_validators_balance_at_last_report_wei: DecimalStringSchema,
   cl_pending_balance_at_last_report_wei: DecimalStringSchema,
@@ -89,8 +99,8 @@ export const LidoPooledEthBackingGapSchema = z.object({
 export type LidoPooledEthBackingGap = z.infer<typeof LidoPooledEthBackingGapSchema>;
 
 export const LidoPooledEthBackingSourceStatusSchema = z.object({
-  source: z.string().min(1).max(80),
-  role: z.string().min(1).max(120),
+  source: z.literal(LIDO_POOLED_ETH_BACKING_SOURCE),
+  role: z.literal(LIDO_POOLED_ETH_BACKING_SOURCE_ROLE),
   stale: z.boolean(),
 }).strict();
 export type LidoPooledEthBackingSourceStatus = z.infer<typeof LidoPooledEthBackingSourceStatusSchema>;
@@ -126,11 +136,11 @@ const LidoPooledEthBackingSnapshotBaseSchema = z.object({
   capabilities: z.object({ ethereum_rpc_active: z.boolean() }).strict(),
 }).strict();
 
-function sameSourceSet(snapshot: z.infer<typeof LidoPooledEthBackingSnapshotBaseSchema>): boolean {
-  const sources = new Set(snapshot.sources);
-  const statuses = new Set(snapshot.source_status.map((status) => status.source));
-  return sources.size === snapshot.sources.length && statuses.size === snapshot.source_status.length
-    && sources.size === statuses.size && [...sources].every((source) => statuses.has(source));
+function hasCanonicalConfiguredProvenance(snapshot: z.infer<typeof LidoPooledEthBackingSnapshotBaseSchema>, stale: boolean): boolean {
+  return snapshot.sources.length === 1 && snapshot.sources[0] === LIDO_POOLED_ETH_BACKING_SOURCE
+    && snapshot.source_status.length === 1 && snapshot.source_status[0]!.source === LIDO_POOLED_ETH_BACKING_SOURCE
+    && snapshot.source_status[0]!.role === LIDO_POOLED_ETH_BACKING_SOURCE_ROLE
+    && snapshot.source_status[0]!.stale === stale;
 }
 
 interface AccountingBigints {
@@ -138,6 +148,7 @@ interface AccountingBigints {
   total_pooled_ether_wei: bigint;
   total_shares: bigint;
   external_shares: bigint;
+  external_ether_wei: bigint;
   buffered_ether_wei: bigint;
   cl_validators_balance_at_last_report_wei: bigint;
   cl_pending_balance_at_last_report_wei: bigint;
@@ -153,6 +164,7 @@ function values(snapshot: z.infer<typeof LidoPooledEthBackingSnapshotBaseSchema>
       total_pooled_ether_wei: BigInt(snapshot.accounting.total_pooled_ether_wei),
       total_shares: BigInt(snapshot.accounting.total_shares),
       external_shares: BigInt(snapshot.accounting.external_shares),
+      external_ether_wei: BigInt(snapshot.accounting.external_ether_wei),
       buffered_ether_wei: BigInt(snapshot.accounting.buffered_ether_wei),
       cl_validators_balance_at_last_report_wei: BigInt(snapshot.accounting.cl_validators_balance_at_last_report_wei),
       cl_pending_balance_at_last_report_wei: BigInt(snapshot.accounting.cl_pending_balance_at_last_report_wei),
@@ -175,8 +187,7 @@ export const LidoPooledEthBackingSnapshotSchema = LidoPooledEthBackingSnapshotBa
       const notConfigured = snapshot.gaps[0]?.code === "rpc_not_configured";
       const coherentProvenance = notConfigured
         ? snapshot.sources.length === 0 && snapshot.source_status.length === 0
-        : snapshot.sources.length > 0 && snapshot.source_status.length > 0 && sameSourceSet(snapshot)
-          && snapshot.source_status.every((status) => !status.stale);
+        : hasCanonicalConfiguredProvenance(snapshot, false);
       if (snapshot.verified_block !== null || snapshot.accounting !== null || snapshot.identities !== null
         || !observedMetricsAbsent || snapshot.coverage.lido_v4_mainnet_accounting_complete
         || snapshot.capabilities.ethereum_rpc_active || !failure || !coherentProvenance) {
@@ -202,9 +213,9 @@ export const LidoPooledEthBackingSnapshotSchema = LidoPooledEthBackingSnapshotBa
     const accounting = values(snapshot);
     if (snapshot.verified_block === null || snapshot.accounting === null || accounting === null || snapshot.identities === null
       || allObservedMetrics.some((value) => value === null) || !snapshot.coverage.lido_v4_mainnet_accounting_complete
-      || !snapshot.capabilities.ethereum_rpc_active || !permanentExact || !onlyPermanentOrStale || !sameSourceSet(snapshot)
-      || snapshot.sources.length === 0 || (!allFresh && !allStale) || (allFresh && staleGaps.length !== 0)
-      || (allStale && staleGaps.length !== 1)) {
+      || !snapshot.capabilities.ethereum_rpc_active || !permanentExact || !onlyPermanentOrStale
+      || (!allFresh && !allStale) || (allFresh && (!hasCanonicalConfiguredProvenance(snapshot, false) || staleGaps.length !== 0))
+      || (allStale && (!hasCanonicalConfiguredProvenance(snapshot, true) || staleGaps.length !== 1))) {
       issue("verified Lido snapshot is incomplete or has incoherent provenance");
       return;
     }
@@ -216,12 +227,12 @@ export const LidoPooledEthBackingSnapshotSchema = LidoPooledEthBackingSnapshotBa
       issue("verified Lido accounting has impossible balances");
       return;
     }
-    const externalEther = accounting.external_shares * internalEther / internalShares;
-    const totalPooled = internalEther + externalEther;
+    const externalEtherFloor = accounting.external_shares * internalEther / internalShares;
+    const totalPooled = internalEther + accounting.external_ether_wei;
     const actual = snapshot.metrics;
     const expected = {
       total_pooled_eth_wei: totalPooled.toString(), internal_pooled_eth_wei: internalEther.toString(),
-      external_pooled_eth_wei: externalEther.toString(), buffered_eth_wei: accounting.buffered_ether_wei.toString(),
+      external_pooled_eth_wei: accounting.external_ether_wei.toString(), buffered_eth_wei: accounting.buffered_ether_wei.toString(),
       cl_validators_balance_at_last_report_wei: accounting.cl_validators_balance_at_last_report_wei.toString(),
       cl_pending_balance_at_last_report_wei: accounting.cl_pending_balance_at_last_report_wei.toString(),
       deposited_since_last_report_wei: accounting.deposited_since_last_report_wei.toString(),
@@ -229,7 +240,8 @@ export const LidoPooledEthBackingSnapshotSchema = LidoPooledEthBackingSnapshotBa
       steth_total_supply_wei: accounting.total_supply_wei.toString(), total_shares: accounting.total_shares.toString(),
       internal_shares: internalShares.toString(), external_shares: accounting.external_shares.toString(),
     };
-    if (accounting.total_pooled_ether_wei !== totalPooled || accounting.total_supply_wei !== totalPooled || externalEther > totalPooled
+    if (accounting.external_ether_wei !== externalEtherFloor || accounting.total_pooled_ether_wei !== totalPooled
+      || accounting.total_supply_wei !== totalPooled || accounting.external_ether_wei > totalPooled
       || Object.entries(expected).some(([key, value]) => actual[key as keyof typeof expected] !== value)) {
       issue("verified Lido accounting identities do not reconcile");
     }
@@ -244,6 +256,7 @@ export interface LidoAccountingEvidenceInput {
   totalPooledEther: bigint;
   totalShares: bigint;
   externalShares: bigint;
+  externalEther: bigint;
   bufferedEther: bigint;
   clValidatorsBalanceAtLastReport: bigint;
   clPendingBalanceAtLastReport: bigint;
