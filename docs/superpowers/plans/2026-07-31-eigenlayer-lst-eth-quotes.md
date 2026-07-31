@@ -61,7 +61,9 @@ bounded result. Existing tools and schemas remain unchanged.
 
 **Files**
 
+- Modify: `src/adapters/eigenlayer_eth_restaking_rpc.ts`
 - Create: `src/adapters/eigenlayer_lst_eth_quotes_rpc.ts`
+- Modify: `tests/adapters/eigenlayer_eth_restaking_rpc.test.ts`
 - Test: `tests/adapters/eigenlayer_lst_eth_quotes_rpc.test.ts`
 - Report: `.superpowers/sdd/2026-07-31-eigenlayer-lst-eth-quotes/task-2-report.md`
 
@@ -79,11 +81,17 @@ bounded result. Existing tools and schemas remain unchanged.
 - Prove malformed or partial evidence is not cached.
 - Prove immutable verified cache, concurrent coalescing, provider binding, and
   controlled stale fallback.
+- Prove the combined adapter uses a shared uncached fresh-only EigenLayer
+  verifier, never the existing public cache or stale base fallback, and cannot
+  extend an older base TTL into a fresh combined entry.
 
 **GREEN**
 
-- Compose `fetchEigenLayerEthRestakingExposure` inside one verified-only
-  combined cache loader.
+- Extract the smallest internal fresh-only verified loader from
+  `eigenlayer_eth_restaking_rpc.ts` while preserving the existing public
+  adapter's cache and behavior unchanged.
+- Compose that uncached, non-stale loader inside one verified-only combined
+  cache loader.
 - Use the base snapshot's exact numeric block tag.
 - Call rETH `getEthValue` separately for share accounting and custody.
 - Call cbETH `exchangeRate` once and compute each floor quote exactly.

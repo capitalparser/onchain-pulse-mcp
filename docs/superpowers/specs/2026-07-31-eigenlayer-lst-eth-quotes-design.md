@@ -38,9 +38,13 @@ The base evidence remains the merged
 - exact StrategyManager and underlying-token identities read at that block; and
 - separate `share_accounting_underlying` and `token_custody` values.
 
-The quote adapter must call the existing adapter rather than duplicate its 91
-logical requests. It accepts the base snapshot only when it is verified and
-then requires these exact runtime token identities and decimals:
+The quote adapter must share the existing adapter's exact verification
+implementation rather than duplicate it or consume its public cached snapshot.
+Task 2 exposes a narrow internal fresh-only loader from the existing adapter.
+That loader performs the same 91 logical requests, never consults or writes the
+existing public adapter cache, and never returns its stale fallback. The quote
+adapter accepts only its fresh verified result and then requires these exact
+runtime token identities and decimals:
 
 | Label | Expected token | Decimals |
 | --- | --- | ---: |
@@ -111,7 +115,21 @@ Pinned official source:
 
 - Coinbase `wrapped-tokens-os` commit
   `5697a90f4c47e8d801cedce81444a8464019fe08`;
-- `contracts/wrapped-tokens/staking/StakedTokenV1.sol`.
+- `contracts/wrapped-tokens/staking/StakedTokenV1.sol`;
+- Coinbase's official cbETH page, accessed 2026-07-31, which identifies the
+  mainnet proxy
+  `0xBe9895146f7AF43049ca1c1AE358B0541Ea49704`, says an unwrap amount is cbETH
+  multiplied by the conversion rate, and defines the published rate as ETH2
+  units per cbETH; and
+- Coinbase's official cbETH whitepaper, accessed 2026-07-31, which defines the
+  rate as the conversion between cbETH and staked ETH and documents that the
+  smart contract exposes the oracle-updated rate.
+
+Official denomination and deployment references:
+
+- `https://www.coinbase.com/cbeth`
+- `https://www.coinbase.com/cbeth/whitepaper`
+- `https://docs.cdp.coinbase.com/api-reference/exchange-api/rest-api/wrapped-assets/get-wrapped-asset-details`
 
 Call the official upgradeable cbETH proxy at the same numeric finalized block:
 
@@ -137,8 +155,9 @@ freshness.
 
 One cold end-to-end verification uses:
 
-1. the existing EigenLayer adapter's four batches, 91 logical requests, and 89
-   `eth_call` requests; then
+1. the existing EigenLayer adapter's shared fresh-only verifier: four batches,
+   91 logical requests, and 89 `eth_call` requests, without touching its public
+   cache; then
 2. one quote batch at the exact block number returned by the verified base
    snapshot:
    - rETH `getEthValue(share-accounting amount)`;
@@ -156,9 +175,12 @@ conversion adds no call. The quote batch uses strict canonical JSON-RPC
 envelopes, unique ids within the batch, exact one-word uint256 results, and no
 provider-supplied error text.
 
-When the fully verified combined quote evidence is cached, the base adapter
-need not be called again until refresh. The counts above describe an uncached
-end-to-end verification, not every invocation.
+The quote adapter owns the only cache in this path. When fully verified
+combined quote evidence is cached, neither the fresh-only base loader nor the
+quote batch runs again until that cache expires. Its 30-minute TTL begins with
+this combined acquisition, so a second cache cannot extend older base evidence.
+The counts above describe an uncached end-to-end verification, not every
+invocation.
 
 ## Public Snapshot
 
@@ -226,6 +248,9 @@ Public uint256 values are canonical decimal strings. The domain layer:
 - Coalesce concurrent cold loads.
 - Bind one adapter context to one internal RPC URL without using the URL in a
   cache key.
+- Use only the existing adapter's shared uncached fresh-only verifier; never
+  accept or cache a stale base snapshot and never nest the existing public
+  30-minute cache inside the combined cache.
 - A refresh failure may return only previously verified immutable stale
   evidence.
 - Map the existing base adapter's bounded source failure to an unavailable
