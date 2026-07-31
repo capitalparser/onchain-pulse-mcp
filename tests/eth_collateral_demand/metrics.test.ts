@@ -91,6 +91,25 @@ describe("verified collateral capacity", () => {
     });
   });
 
+  it("canonicalizes a divisible aggregate while retaining per-asset WETH-reference evidence", () => {
+    const inputReserves = reserves();
+    inputReserves[0] = { ...inputReserves[0]!, suppliedRaw: 2n, oraclePrice: 2n };
+    inputReserves[1] = { ...inputReserves[1]!, suppliedRaw: 0n };
+    const snapshot = buildVerifiedEthCollateralSnapshot({
+      block: { number: 123, hash: `0x${"a".repeat(64)}`, timestamp: 1_700_000_000 },
+      reserves: inputReserves,
+      sources: ["ethereum_rpc"],
+      sourceStatus: [{ source: "ethereum_rpc", role: "finalized reserve evidence", stale: false }],
+    });
+    expect(snapshot.assets.find((asset) => asset.symbol === "WETH")?.eth_equivalent).toEqual({
+      wei_floor: "2", eth_floor: "0.000000000000000002", remainder: "0", denominator: "2",
+    });
+    expect(snapshot.metrics.eth_family_supplied).toEqual({
+      wei_floor: "2", eth_floor: "0.000000000000000002", remainder: "0", denominator: "1",
+    });
+    expect(snapshot.metrics.collateral_eligible_supplied).toEqual(snapshot.metrics.eth_family_supplied);
+  });
+
   it.each([
     ["missing reserve", (items: ReturnType<typeof reserves>) => items.slice(1)],
     ["duplicate reserve", (items: ReturnType<typeof reserves>) => [...items, items[0]!]],

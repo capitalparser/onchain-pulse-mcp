@@ -116,6 +116,22 @@ describe("EthCollateralDemandSnapshotSchema", () => {
     expect(EthCollateralDemandSnapshotSchema.safeParse(candidate).success).toBe(false);
   });
 
+  it.each(["eth_family_supplied", "collateral_eligible_supplied"] as const)("rejects verified payloads with %s absent without throwing", (metric) => {
+    const candidate = verifiedFixture();
+    candidate.metrics[metric] = null;
+    expect(() => EthCollateralDemandSnapshotSchema.safeParse(candidate)).not.toThrow();
+    expect(EthCollateralDemandSnapshotSchema.safeParse(candidate).success).toBe(false);
+  });
+
+  it("rejects malformed nested exact evidence without throwing from safeParse", () => {
+    const candidate = verifiedFixture() as unknown as {
+      assets: Array<{ eth_equivalent: Record<string, string> }>;
+    };
+    candidate.assets[0]!.eth_equivalent.denominator = "not-a-decimal";
+    expect(() => EthCollateralDemandSnapshotSchema.safeParse(candidate)).not.toThrow();
+    expect(EthCollateralDemandSnapshotSchema.safeParse(candidate).success).toBe(false);
+  });
+
   it("rejects a verified snapshot without all permanent coverage gaps", () => {
     const candidate = verifiedFixture();
     candidate.gaps.pop();

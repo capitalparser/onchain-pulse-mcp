@@ -13,13 +13,23 @@ function formatWeiAsEth(wei: bigint): string {
   return `${whole}.${fractionalWei.toString().padStart(18, "0").replace(/0+$/, "")}`;
 }
 
-function exactFromNumerator(numerator: bigint, denominator: bigint): ExactEthEquivalent {
-  const weiFloor = numerator / denominator;
+function gcd(left: bigint, right: bigint): bigint {
+  let a = left < 0n ? -left : left;
+  let b = right < 0n ? -right : right;
+  while (b !== 0n) [a, b] = [b, a % b];
+  return a;
+}
+
+function exactFromNumerator(numerator: bigint, denominator: bigint, canonical = false): ExactEthEquivalent {
+  const divisor = canonical ? gcd(numerator, denominator) : 1n;
+  const normalizedNumerator = numerator / divisor;
+  const normalizedDenominator = denominator / divisor;
+  const weiFloor = normalizedNumerator / normalizedDenominator;
   return {
     wei_floor: weiFloor.toString(),
     eth_floor: formatWeiAsEth(weiFloor),
-    remainder: (numerator % denominator).toString(),
-    denominator: denominator.toString(),
+    remainder: (normalizedNumerator % normalizedDenominator).toString(),
+    denominator: normalizedDenominator.toString(),
   };
 }
 
@@ -28,6 +38,14 @@ function exactEqual(left: ExactEthEquivalent, right: ExactEthEquivalent): boolea
     && left.eth_floor === right.eth_floor
     && left.remainder === right.remainder
     && left.denominator === right.denominator;
+}
+
+function canonicalAggregateExact(assets: readonly EthCollateralAssetEvidence[], wethPrice: bigint): ExactEthEquivalent {
+  return exactFromNumerator(
+    assets.reduce((total, asset) => total + BigInt(asset.supplied_raw) * BigInt(asset.oracle_price), 0n),
+    wethPrice,
+    true,
+  );
 }
 
 export const ETH_COLLATERAL_ASSETS = [
@@ -196,26 +214,19 @@ export const EthCollateralDemandSnapshotSchema = EthCollateralDemandSnapshotBase
       context.addIssue({ code: z.ZodIssueCode.custom, message: "verified snapshot has inconsistent source provenance" });
     }
     const weth = snapshot.assets.find((asset) => asset.symbol === "WETH");
-    if (weth !== undefined) {
+    const suppliedMetric = snapshot.metrics.eth_family_supplied;
+    const eligibleMetric = snapshot.metrics.collateral_eligible_supplied;
+    if (weth !== undefined && suppliedMetric !== null && eligibleMetric !== null) {
       const wethPrice = BigInt(weth.oracle_price);
       const expectedAssets = snapshot.assets.map((asset) => exactFromNumerator(
         BigInt(asset.supplied_raw) * BigInt(asset.oracle_price),
         wethPrice,
       ));
       const validAssets = snapshot.assets.every((asset, index) => exactEqual(asset.eth_equivalent, expectedAssets[index]!));
-      const expectedSupplied = exactFromNumerator(
-        snapshot.assets.reduce((total, asset) => total + BigInt(asset.supplied_raw) * BigInt(asset.oracle_price), 0n),
-        wethPrice,
-      );
-      const expectedEligible = exactFromNumerator(
-        snapshot.assets.filter((asset) => asset.collateral_enabled).reduce(
-          (total, asset) => total + BigInt(asset.supplied_raw) * BigInt(asset.oracle_price),
-          0n,
-        ),
-        wethPrice,
-      );
-      if (!validAssets || !exactEqual(snapshot.metrics.eth_family_supplied!, expectedSupplied)
-        || !exactEqual(snapshot.metrics.collateral_eligible_supplied!, expectedEligible)) {
+      const expectedSupplied = canonicalAggregateExact(snapshot.assets, wethPrice);
+      const expectedEligible = canonicalAggregateExact(snapshot.assets.filter((asset) => asset.collateral_enabled), wethPrice);
+      if (!validAssets || !exactEqual(suppliedMetric, expectedSupplied)
+        || !exactEqual(eligibleMetric, expectedEligible)) {
         context.addIssue({ code: z.ZodIssueCode.custom, message: "verified snapshot exact identities do not match reserve evidence" });
       }
     }

@@ -160,3 +160,58 @@ are set. Verified evidence requires complete fresh or controlled-stale source
 provenance; unavailable evidence cannot claim `source_stale` as its only
 failure. The builder's `stale: true` path marks every source status stale and
 adds exactly one bounded stale gap.
+
+---
+
+## Re-review remediation — RED
+
+Command:
+
+```text
+$ npx vitest run tests/eth_collateral_demand
+```
+
+Output:
+
+```text
+ FAIL  tests/eth_collateral_demand/metrics.test.ts > verified collateral capacity > canonicalizes a divisible aggregate while retaining per-asset WETH-reference evidence
+EthCollateralDomainError: Verified collateral snapshot violates its public contract.
+
+ FAIL  tests/eth_collateral_demand/types.test.ts > EthCollateralDemandSnapshotSchema > rejects verified payloads with eth_family_supplied absent without throwing
+TypeError: Cannot read properties of null (reading 'wei_floor')
+
+ FAIL  tests/eth_collateral_demand/types.test.ts > EthCollateralDemandSnapshotSchema > rejects verified payloads with collateral_eligible_supplied absent without throwing
+TypeError: Cannot read properties of null (reading 'wei_floor')
+
+ Test Files  2 failed (2)
+      Tests  3 failed | 34 passed (37)
+```
+
+## Re-review remediation — GREEN
+
+Command:
+
+```text
+$ npx vitest run tests/eth_collateral_demand && npm run typecheck && git diff --check
+```
+
+Output:
+
+```text
+ RUN  v2.1.9 /Users/kjun/orca/workspaces/vault/onchain-pulse-mcp-eth-collateral-aave
+
+ ✓ tests/eth_collateral_demand/metrics.test.ts (17 tests) 5ms
+ ✓ tests/eth_collateral_demand/types.test.ts (20 tests) 6ms
+
+ Test Files  2 passed (2)
+      Tests  37 passed (37)
+
+> onchain-pulse-mcp@0.0.1 typecheck
+> tsc --noEmit
+```
+
+Per-asset exact values retain the original WETH-oracle denominator. Aggregate
+values now share the builder's canonical GCD-reduced representation, including
+the divisible denominator-one case. Dependent schema identity arithmetic runs
+only after both required aggregate metrics are present, so `safeParse` returns
+a normal failed result for null or malformed nested payloads.
