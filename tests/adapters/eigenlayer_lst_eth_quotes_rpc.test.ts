@@ -8,12 +8,15 @@ import { EIGENLAYER_COVERED_LST_STRATEGIES } from "../../src/eigenlayer_lst_eth_
 const env = { byok: {}, lang: "en" as const, historyPath: "/tmp/history.json" };
 const RPC_URL = "https://rpc.example/credential-secret";
 const SUBSTITUTE_TOKEN = `0x${"f".repeat(40)}`;
-const COVERED_BASE_INDICES = [0, 1, 2, 3, 6, 7, 10, 11] as const;
+const COVERED_BASE_INDICES = [0, 1, 2, 3, 5, 6, 7, 10, 11] as const;
 const ETHX_TOKEN = "0xA35b1B31Ce002FBF2058D22F30f95D405200A15b";
 const ETHX_STADER_CONFIG = "0x4ABEF2263d5A5ED582FC9A9789a41D85b68d69DB";
 const ETHX_STAKE_POOLS_MANAGER = "0xcf5EA1b38380f6aF39068375516Daf40Ed70D299";
 const ETHX_STADER_ORACLE = "0xF64bAe65f6f2a5277571143A24FaaFDFC0C2a737";
 const OSETH_CONTROLLER = "0x2A261e60FB14586B474C208b1B7AC6D0f5000306";
+const OETH_TOKEN = "0x856c4Efb76C1D1AE02e20CEB03A2A6a08b0b8dC3";
+const OETH_VAULT = "0x39254033945AA2E4809Cc2977E7087BEE48bd7Ab";
+const WETH_TOKEN = "0xC02aaA39b223FE8D0A0E5C4F27eAD9083C756Cc2";
 const SWETH_TOKEN = "0xf951E335afb289353dc249e82926178EaC7DEd78";
 const METH_STAKING = "0xe3cBd06D7dadB3F4e6557bAb7EdD924CD1489E8f";
 const METH_ORACLE = "0x8735049F496727f824Cc0f2B174d826f5c408192";
@@ -37,6 +40,8 @@ const SELECTORS = {
   ethxStaderConfig: "0x490ffa35", ethxGetToken: "0xcc45dabe", ethxGetStakePoolsManager: "0x2ec5e018",
   ethxGetStaderOracle: "0xdefd024d", ethxConvertToAssets: "0x07a2d13a", ethxGetExchangeRate: "0xe6aa216c",
   swethToEthRate: "0xd68b2cb6", swethLastRepriceUnix: "0xfbda759b",
+  oethVaultAddress: "0x430bf08a", oethVaultOToken: "0x1a32aad6", oethVaultAsset: "0x38d52e0f",
+  oethLastRebase: "0x78f353a1", oethRebasePaused: "0x53ca9f24", oethWithdrawalClaimDelay: "0x36f9a2fd",
 } as const;
 
 interface RequestShape { jsonrpc: string; id: number; method: string; params: unknown[] }
@@ -99,12 +104,25 @@ function resultFor(request: RequestShape): unknown {
     if (call.data === SELECTORS.swethToEthRate) return { jsonrpc: "2.0", id: request.id, result: word(1_000_000_000_000_000_000n) };
     if (call.data === SELECTORS.swethLastRepriceUnix) return { jsonrpc: "2.0", id: request.id, result: word(0n) };
   }
+  if (to === OETH_TOKEN.toLowerCase() && call.data === SELECTORS.oethVaultAddress) {
+    return { jsonrpc: "2.0", id: request.id, result: addressWord(OETH_VAULT) };
+  }
+  if (to === OETH_VAULT.toLowerCase()) {
+    const values: Record<string, string> = {
+      [SELECTORS.oethVaultOToken]: addressWord(OETH_TOKEN),
+      [SELECTORS.oethVaultAsset]: addressWord(WETH_TOKEN),
+      [SELECTORS.oethLastRebase]: word(0n),
+      [SELECTORS.oethRebasePaused]: word(1n),
+      [SELECTORS.oethWithdrawalClaimDelay]: word(0n),
+    };
+    if (values[call.data] !== undefined) return { jsonrpc: "2.0", id: request.id, result: values[call.data] };
+  }
   if (to === OSETH_CONTROLLER.toLowerCase()) {
     if (call.data === `${SELECTORS.osethConvertToAssets}${uintArg(21n)}`) return { jsonrpc: "2.0", id: request.id, result: word(31n) };
     if (call.data === `${SELECTORS.osethConvertToAssets}${uintArg(26n)}`) return { jsonrpc: "2.0", id: request.id, result: word(38n) };
   }
   if (to === METH_STAKING.toLowerCase()) {
-    if (call.data === SELECTORS.meth) return { jsonrpc: "2.0", id: request.id, result: addressWord(EIGENLAYER_COVERED_LST_STRATEGIES[7]!.underlying_token) };
+    if (call.data === SELECTORS.meth) return { jsonrpc: "2.0", id: request.id, result: addressWord(EIGENLAYER_COVERED_LST_STRATEGIES[8]!.underlying_token) };
     if (call.data === SELECTORS.oracle) return { jsonrpc: "2.0", id: request.id, result: addressWord(METH_ORACLE) };
     if (call.data === `${SELECTORS.methToEth}${uintArg(26n)}`) return { jsonrpc: "2.0", id: request.id, result: word(46n) };
     if (call.data === `${SELECTORS.methToEth}${uintArg(31n)}`) return { jsonrpc: "2.0", id: request.id, result: word(57n) };
@@ -146,21 +164,21 @@ function expectAtomicUnavailable(result: Awaited<ReturnType<typeof fetchEigenLay
 }
 
 describe("fetchEigenLayerLstEthQuotes", () => {
-  it("verifies the noncontiguous eight-strategy base subset and exact finalized quote batch", async () => {
+  it("verifies the noncontiguous nine-strategy base subset and exact finalized quote batch", async () => {
     const fetchImpl = finalizedCombinedFetch();
     const result = await fetchEigenLayerLstEthQuotes({ rpcUrl: RPC_URL }, makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }));
     expect(result.status, JSON.stringify(result.gaps)).toBe("verified");
-    expect(result.covered_quotes.map((quote) => quote.label)).toEqual(["stETH", "rETH", "cbETH", "ETHx", "osETH", "swETH", "lsETH", "mETH"]);
+    expect(result.covered_quotes.map((quote) => quote.label)).toEqual(["stETH", "rETH", "cbETH", "ETHx", "oETH", "osETH", "swETH", "lsETH", "mETH"]);
     expect(result.covered_quotes.map((quote) => [quote.share_accounting_token_amount, quote.token_custody_token_amount, quote.share_accounting_eth_quote_wei, quote.token_custody_eth_quote_wei])).toEqual([
-      ["21", "20", "21", "20"], ["16", "21", "20", "26"], ["17", "22", "25", "33"], ["18", "23", "27", "34"], ["21", "26", "31", "38"], ["22", "27", "22", "27"], ["25", "30", "37", "42"], ["26", "31", "46", "57"],
+      ["21", "20", "21", "20"], ["16", "21", "20", "26"], ["17", "22", "25", "33"], ["18", "23", "27", "34"], ["20", "25", "20", "25"], ["21", "26", "31", "38"], ["22", "27", "22", "27"], ["25", "30", "37", "42"], ["26", "31", "46", "57"],
     ]);
-    expect(result.metrics).toMatchObject({ covered_share_accounting_eth_equivalent_wei: "229", covered_token_custody_eth_equivalent_wei: "277" });
-    expect(result.report_context).toEqual({ lseth_last_completed_epoch_id: "123", ethx_oracle_reporting_block_number: "256", sweth_last_reprice_unix: "0" });
+    expect(result.metrics).toMatchObject({ covered_share_accounting_eth_equivalent_wei: "249", covered_token_custody_eth_equivalent_wei: "302" });
+    expect(result.report_context).toEqual({ lseth_last_completed_epoch_id: "123", ethx_oracle_reporting_block_number: "256", sweth_last_reprice_unix: "0", oeth_last_rebase_unix: "0", oeth_rebase_paused: true, oeth_withdrawal_claim_delay_seconds: "0" });
     const rounds = fetchImpl.mock.calls.map(([, init]) => JSON.parse((init as RequestInit).body as string) as RequestShape[]);
-    expect(rounds.map((round) => round.length)).toEqual([2, 5, 48, 36, 22]);
-    expect(rounds.flat()).toHaveLength(113);
-    expect(rounds.flat().map((request) => request.id)).toEqual(Array.from({ length: 113 }, (_, index) => index + 1));
-    expect(rounds.slice(1).flat()).toHaveLength(111);
+    expect(rounds.map((round) => round.length)).toEqual([2, 5, 48, 36, 28]);
+    expect(rounds.flat()).toHaveLength(119);
+    expect(rounds.flat().map((request) => request.id)).toEqual(Array.from({ length: 119 }, (_, index) => index + 1));
+    expect(rounds.slice(1).flat()).toHaveLength(117);
     expect(rounds.slice(1).flat().every((request) => request.method === "eth_call" && request.params[1] === "0x100")).toBe(true);
     const byId = (id: number) => rounds.flat().find((request) => request.id === id)!;
     expect(byId(95).params[0]).toEqual({ to: OSETH_CONTROLLER, data: `${SELECTORS.osethConvertToAssets}${uintArg(21n)}` });
@@ -182,7 +200,17 @@ describe("fetchEigenLayerLstEthQuotes", () => {
     expect(byId(111).params[0]).toEqual({ to: ETHX_STADER_ORACLE, data: SELECTORS.ethxGetExchangeRate });
     expect(byId(112).params[0]).toEqual({ to: SWETH_TOKEN, data: SELECTORS.swethToEthRate });
     expect(byId(113).params[0]).toEqual({ to: SWETH_TOKEN, data: SELECTORS.swethLastRepriceUnix });
+    expect(byId(114).params[0]).toEqual({ to: OETH_TOKEN, data: SELECTORS.oethVaultAddress });
+    expect(byId(115).params[0]).toEqual({ to: OETH_VAULT, data: SELECTORS.oethVaultOToken });
+    expect(byId(116).params[0]).toEqual({ to: OETH_VAULT, data: SELECTORS.oethVaultAsset });
+    expect(byId(117).params[0]).toEqual({ to: OETH_VAULT, data: SELECTORS.oethLastRebase });
+    expect(byId(118).params[0]).toEqual({ to: OETH_VAULT, data: SELECTORS.oethRebasePaused });
+    expect(byId(119).params[0]).toEqual({ to: OETH_VAULT, data: SELECTORS.oethWithdrawalClaimDelay });
     const calls = rounds.flat().filter((request) => request.method === "eth_call");
+    expect(calls.filter((request) => request.id >= 92 && (() => {
+      const target = (request.params[0] as { to: string }).to.toLowerCase();
+      return target === OETH_TOKEN.toLowerCase() || target === OETH_VAULT.toLowerCase();
+    })()).map((request) => request.id)).toEqual([114, 115, 116, 117, 118, 119]);
     expect(calls.some((request) => (request.params[0] as { to: string; data: string }).to.toLowerCase() === PRICE_FEED.toLowerCase()
       || (request.params[0] as { to: string; data: string }).data === SELECTORS.priceFeedController)).toBe(false);
   });
@@ -214,6 +242,21 @@ describe("fetchEigenLayerLstEthQuotes", () => {
     ["zero Swell rate", 112, word(0n), "rpc_evidence_mismatch"],
     ["future Swell reprice timestamp", 113, word(102n), "rpc_evidence_mismatch"],
     ["non-default rate with zero Swell reprice timestamp", 112, word(1_000_000_000_000_000_001n), "rpc_evidence_mismatch"],
+  ] as const)("fails closed on %s", async (_name, id, resultWord, code) => {
+    const fetchImpl = finalizedCombinedFetch((round, items) => round === 5 ? items.map((item) => (item as { id: number }).id === id
+      ? { ...(item as object), result: resultWord } : item) : items);
+    const result = await fetchEigenLayerLstEthQuotes({ rpcUrl: RPC_URL }, makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }));
+    expectAtomicUnavailable(result); expect(result.gaps[0]?.code).toBe(code);
+  });
+
+  it.each([
+    ["OETH vault pointer mismatch", 114, addressWord(SUBSTITUTE_TOKEN), "rpc_evidence_mismatch"],
+    ["OETH vault token pointer mismatch", 115, addressWord(SUBSTITUTE_TOKEN), "rpc_evidence_mismatch"],
+    ["OETH vault asset pointer mismatch", 116, addressWord(SUBSTITUTE_TOKEN), "rpc_evidence_mismatch"],
+    ["malformed OETH address", 114, `0x${"f".repeat(64)}`, "rpc_schema_drift"],
+    ["overflowing OETH uint64 rebase", 117, word(2n ** 64n), "rpc_schema_drift"],
+    ["invalid OETH ABI bool", 118, word(2n), "rpc_schema_drift"],
+    ["future OETH rebase", 117, word(102n), "rpc_evidence_mismatch"],
   ] as const)("fails closed on %s", async (_name, id, resultWord, code) => {
     const fetchImpl = finalizedCombinedFetch((round, items) => round === 5 ? items.map((item) => (item as { id: number }).id === id
       ? { ...(item as object), result: resultWord } : item) : items);
@@ -307,7 +350,7 @@ describe("fetchEigenLayerLstEthQuotes", () => {
     }) : items);
     const result = await fetchEigenLayerLstEthQuotes({ rpcUrl: RPC_URL }, makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }));
     expect(result.status).toBe("verified");
-    expect(result.covered_quotes[4]).toMatchObject({ share_accounting_eth_quote_wei: "38", token_custody_eth_quote_wei: "31" });
+    expect(result.covered_quotes[5]).toMatchObject({ share_accounting_eth_quote_wei: "38", token_custody_eth_quote_wei: "31" });
   });
 
   it("binds separate direct River results and completed epoch context to their exact IDs", async () => {
@@ -320,8 +363,8 @@ describe("fetchEigenLayerLstEthQuotes", () => {
     }) : items);
     const result = await fetchEigenLayerLstEthQuotes({ rpcUrl: RPC_URL }, makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }));
     expect(result.status).toBe("verified");
-    expect(result.covered_quotes[6]).toMatchObject({ share_accounting_eth_quote_wei: "42", token_custody_eth_quote_wei: "37" });
-    expect(result.report_context).toEqual({ lseth_last_completed_epoch_id: "0", ethx_oracle_reporting_block_number: "256", sweth_last_reprice_unix: "0" });
+    expect(result.covered_quotes[7]).toMatchObject({ share_accounting_eth_quote_wei: "42", token_custody_eth_quote_wei: "37" });
+    expect(result.report_context).toMatchObject({ lseth_last_completed_epoch_id: "0", oeth_last_rebase_unix: "0", oeth_rebase_paused: true, oeth_withdrawal_claim_delay_seconds: "0" });
   });
 
   it("fails closed when the required direct River epoch evidence is malformed", async () => {
@@ -379,7 +422,7 @@ describe("fetchEigenLayerLstEthQuotes", () => {
     const fetchImpl = finalizedCombinedFetch((round, items) => round === 5 ? items.map((item) => zeroDirectIds.has((item as { id: number }).id) ? { ...(item as object), result: word(0n) } : item) : items);
     const result = await fetchEigenLayerLstEthQuotes({ rpcUrl: RPC_URL }, makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }));
     expect(result.status).toBe("verified");
-    expect(result.covered_quotes.slice(1).map((quote) => [quote.share_accounting_eth_quote_wei, quote.token_custody_eth_quote_wei])).toEqual([["0", "0"], ["25", "33"], ["27", "34"], ["0", "0"], ["22", "27"], ["0", "0"], ["0", "0"]]);
+    expect(result.covered_quotes.slice(1).map((quote) => [quote.share_accounting_eth_quote_wei, quote.token_custody_eth_quote_wei])).toEqual([["0", "0"], ["25", "33"], ["27", "34"], ["20", "25"], ["0", "0"], ["22", "27"], ["0", "0"], ["0", "0"]]);
   });
 
   it("does not cache failed direct evidence", async () => {
@@ -390,17 +433,17 @@ describe("fetchEigenLayerLstEthQuotes", () => {
     expectAtomicUnavailable(first); expectAtomicUnavailable(second); expect(fetchImpl).toHaveBeenCalledTimes(10);
   });
 
-  it("coalesces, v5-caches verified evidence, returns clones, and only uses complete v5 stale evidence", async () => {
+  it("coalesces, v6-caches verified evidence, returns clones, and only uses complete v6 stale evidence", async () => {
     vi.useFakeTimers();
     try {
       const fetchImpl = finalizedCombinedFetch(); const ctx = makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch });
       const [first, second] = await Promise.all([fetchEigenLayerLstEthQuotes({ rpcUrl: RPC_URL }, ctx), fetchEigenLayerLstEthQuotes({ rpcUrl: RPC_URL }, ctx)]);
       expect(first.status).toBe("verified"); expect(second.status).toBe("verified"); expect(fetchImpl).toHaveBeenCalledTimes(5);
       (first.covered_quotes[4] as { share_accounting_eth_quote_wei: string }).share_accounting_eth_quote_wei = "999";
-      expect((await fetchEigenLayerLstEthQuotes({ rpcUrl: RPC_URL }, ctx)).covered_quotes[4]?.share_accounting_eth_quote_wei).toBe("31");
+      expect((await fetchEigenLayerLstEthQuotes({ rpcUrl: RPC_URL }, ctx)).covered_quotes[4]?.share_accounting_eth_quote_wei).toBe("20");
       vi.advanceTimersByTime(30 * 60_000 + 1); fetchImpl.mockRejectedValueOnce(new Error("private provider detail"));
       const stale = await fetchEigenLayerLstEthQuotes({ rpcUrl: RPC_URL }, ctx);
-      expect(stale.status).toBe("verified"); expect(stale.source_status[0]?.stale).toBe(true); expect(stale.covered_quotes).toHaveLength(8); expect(stale.report_context).toEqual({ lseth_last_completed_epoch_id: "123", ethx_oracle_reporting_block_number: "256", sweth_last_reprice_unix: "0" });
+      expect(stale.status).toBe("verified"); expect(stale.source_status[0]?.stale).toBe(true); expect(stale.covered_quotes).toHaveLength(9); expect(stale.report_context).toMatchObject({ oeth_last_rebase_unix: "0", oeth_rebase_paused: true, oeth_withdrawal_claim_delay_seconds: "0" });
     } finally { vi.useRealTimers(); }
   });
 
@@ -412,7 +455,7 @@ describe("fetchEigenLayerLstEthQuotes", () => {
     expect((await fetchEigenLayerLstEthQuotes({ rpcUrl: RPC_URL }, ctx)).status).toBe("verified"); expect(fetchImpl).toHaveBeenCalledTimes(9);
   });
 
-  it("vetoes a concurrent provider mismatch without poisoning a verified v5 load", async () => {
+  it("vetoes a concurrent provider mismatch without poisoning a verified v6 load", async () => {
     const fetchImpl = finalizedCombinedFetch(); const ctx = makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch });
     const [accepted, rejected] = await Promise.all([
       fetchEigenLayerLstEthQuotes({ rpcUrl: RPC_URL }, ctx),

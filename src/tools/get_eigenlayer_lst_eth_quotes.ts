@@ -9,12 +9,12 @@ export interface GetEigenLayerLstEthQuotesArgs {
   adapterSnapshot: EigenLayerLstEthQuotesSnapshot;
 }
 
-const EN_BASE = "Finalized stETH/rETH/cbETH/ETHx/osETH/swETH/lsETH/mETH quotes: 8/12; share/custody distinct partials.";
-const EN_LIMITATION = "No full LST/native/EigenLayer total, net ETH, protocol demand, rehypothecation, backing, or executable exit capacity; unverified: cbETH rate freshness, ETHx report freshness or proxy correspondence, osETH virtual-reward-input freshness, swETH reprice freshness or proxy correspondence, lsETH report freshness or proxy correspondence, mETH oracle-record freshness.";
-const EN_UNAVAILABLE = "No quotes observed for stETH/rETH/cbETH/ETHx/osETH/swETH/lsETH/mETH (8/12); share/custody distinct partials.";
-const KO_BASE = "최종화된 직접 회계 인용값(stETH/rETH/cbETH/ETHx/osETH/swETH/lsETH/mETH)은 고정 전략 12개 중 8개만 다루며, 지분 회계와 토큰 보관 합계는 서로 다른 부분 합계입니다.";
-const KO_LIMITATION = "이는 전체 LST/네이티브/EigenLayer 총계, 고유/순 락업 ETH, Aave/Spark/Lido/Sky/EigenLayer 통합 수요, 재담보화, 독립적인 담보 대사, cbETH 환율 최신성, ETHx 보고 최신성 또는 프록시 일치성, osETH 가상 보상 입력 최신성, swETH 재가격 최신성 또는 프록시 일치성, lsETH 보고 최신성 또는 프록시 일치성, mETH 오라클 기록 최신성, 실행 가능한 출금/유동성을 입증하지 않습니다.";
-const KO_UNAVAILABLE = "stETH/rETH/cbETH/ETHx/osETH/swETH/lsETH/mETH의 고정 전략 12개 중 8개 직접 회계 인용 뷰는 현재 사용할 수 없으며, 인용값은 관측되지 않았습니다. 정의된 지분 회계와 토큰 보관 합계는 서로 다른 부분 합계입니다.";
+const EN_BASE = "Finalized 9/12 quotes (stETH/rETH/cbETH/ETHx/oETH/osETH/swETH/lsETH/mETH); share/custody are distinct partials. OETH is nominal unit accounting, not redeemability.";
+const EN_LIMITATION = "No full totals, net ETH, demand, rehypothecation, backing, or async/executable liquidity. Freshness unverified: cbETH rate; ETHx report; oETH rebase; osETH virtual rewards; swETH reprice; lsETH report; mETH oracle record. Proxy-source unverified: ETHx/oETH/swETH/lsETH.";
+const EN_UNAVAILABLE = "No quotes observed for the 9/12 target (stETH/rETH/cbETH/ETHx/oETH/osETH/swETH/lsETH/mETH); share/custody are distinct partials. OETH target is nominal unit accounting, not redeemability.";
+const KO_BASE = "최종화된 9/12 인용(stETH/rETH/cbETH/ETHx/oETH/osETH/swETH/lsETH/mETH)이며 지분 회계와 보관 합계는 별도 부분합입니다. OETH는 명목 단위 회계이며 상환 가능성이 아닙니다.";
+const KO_LIMITATION = "전체 총계, 순 ETH, 통합 수요, 재담보화, 담보, 비동기/실행 가능 유동성을 입증하지 않습니다. 최신성 미검증: cbETH 환율, ETHx 보고, oETH 리베이스, osETH 가상 보상, swETH 재가격, lsETH 보고, mETH 오라클 기록. 프록시-소스 일치성 미검증: ETHx/oETH/swETH/lsETH.";
+const KO_UNAVAILABLE = "9/12 대상(stETH/rETH/cbETH/ETHx/oETH/osETH/swETH/lsETH/mETH) 인용값은 관측되지 않았습니다. 지분 회계와 보관 합계는 별도 부분합이며 OETH 대상은 명목 단위 회계이지 상환 가능성이 아닙니다.";
 
 function summaryFor(snapshot: EigenLayerLstEthQuotesSnapshot, lang: Lang): string {
   const stale = snapshot.gaps.some((gap) => gap.code === "source_stale");
