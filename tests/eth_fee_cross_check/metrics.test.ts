@@ -76,6 +76,16 @@ function expectDomainError(
   }
 }
 
+function expectSchemaError(evidence: unknown): void {
+  try {
+    calculateEthFeeCrossCheck(evidence as NormalizedEthFeeBlock[]);
+    throw new Error("Expected calculation to reject malformed normalized evidence.");
+  } catch (error) {
+    expect(error).toBeInstanceOf(EthFeeCrossCheckDomainError);
+    expect((error as EthFeeCrossCheckDomainError).category).toBe("schema");
+  }
+}
+
 describe("formatExactEthAmount", () => {
   it.each([
     [0n, { wei: "0", eth: "0" }],
@@ -88,6 +98,10 @@ describe("formatExactEthAmount", () => {
 
   it("rejects negative wei instead of exposing a signed ETH amount", () => {
     expect(() => formatExactEthAmount(-1n)).toThrow(EthFeeCrossCheckDomainError);
+  });
+
+  it("rejects a non-bigint wei input as a typed schema failure", () => {
+    expect(() => (formatExactEthAmount as (wei: unknown) => unknown)(1)).toThrow(EthFeeCrossCheckDomainError);
   });
 });
 
@@ -139,6 +153,90 @@ describe("calculateEthFeeCrossCheck", () => {
     expectDomainError((block) => {
       block.hash = "0x1234";
     }, "schema");
+  });
+
+  it("rejects empty normalized evidence as a schema-shaped failure", () => {
+    expectSchemaError([]);
+  });
+
+  it("rejects uppercase hash variants instead of treating them as different canonical hashes", () => {
+    const block = validBlock();
+    block.hash = hash(10).replace("a", "A");
+    block.receipts[0]!.blockHash = block.hash;
+    block.receipts[1]!.blockHash = block.hash;
+    expectSchemaError([block]);
+  });
+
+  it("rejects a case-variant duplicate block hash", () => {
+    const first = validBlock();
+    first.hash = hash(10);
+    first.receipts.forEach((receipt) => { receipt.blockHash = first.hash; });
+    const second = validBlobBlock();
+    second.hash = hash(10).replace("a", "A");
+    second.receipts[0]!.blockHash = second.hash;
+    expectSchemaError([first, second]);
+  });
+
+  it("rejects a case-variant duplicate transaction hash", () => {
+    const first = validBlock();
+    first.transactions[0] = hash(10);
+    first.receipts[0]!.transactionHash = hash(10);
+    const second = validBlobBlock();
+    second.transactions[0] = hash(10).replace("a", "A");
+    second.receipts[0]!.transactionHash = second.transactions[0]!;
+    expectSchemaError([first, second]);
+  });
+
+  it("rejects duplicate transaction hashes across blocks", () => {
+    const second = validBlobBlock();
+    second.transactions[0] = hash(1);
+    second.receipts[0]!.transactionHash = hash(1);
+    expect(() => calculateEthFeeCrossCheck([validBlock(), second])).toThrow(EthFeeCrossCheckDomainError);
+  });
+
+  it.each([
+    ["block base fee", (block: NormalizedEthFeeBlock) => { (block as unknown as { baseFeePerGas: unknown }).baseFeePerGas = 10; }],
+    ["block gas used", (block: NormalizedEthFeeBlock) => { (block as unknown as { gasUsed: unknown }).gasUsed = 5; }],
+    ["block blob gas used", (block: NormalizedEthFeeBlock) => { (block as unknown as { blobGasUsed: unknown }).blobGasUsed = 1; }],
+    ["receipt gas used", (block: NormalizedEthFeeBlock) => { (block.receipts[0] as unknown as { gasUsed: unknown }).gasUsed = 2; }],
+    ["receipt effective gas price", (block: NormalizedEthFeeBlock) => { (block.receipts[0] as unknown as { effectiveGasPrice: unknown }).effectiveGasPrice = 13; }],
+    ["receipt blob gas used", (block: NormalizedEthFeeBlock) => {
+      const blob = validBlobBlock();
+      (blob.receipts[0] as unknown as { blobGasUsed: unknown }).blobGasUsed = 7;
+      block.number = blob.number;
+      block.hash = blob.hash;
+      block.baseFeePerGas = blob.baseFeePerGas;
+      block.gasUsed = blob.gasUsed;
+      block.blobGasUsed = blob.blobGasUsed;
+      block.transactions = blob.transactions;
+      block.receipts = blob.receipts;
+    }],
+    ["receipt blob gas price", (block: NormalizedEthFeeBlock) => {
+      const blob = validBlobBlock();
+      (blob.receipts[0] as unknown as { blobGasPrice: unknown }).blobGasPrice = 3;
+      block.number = blob.number;
+      block.hash = blob.hash;
+      block.baseFeePerGas = blob.baseFeePerGas;
+      block.gasUsed = blob.gasUsed;
+      block.blobGasUsed = blob.blobGasUsed;
+      block.transactions = blob.transactions;
+      block.receipts = blob.receipts;
+    }],
+  ])("rejects a non-bigint %s without leaking a native TypeError", (_name, mutate) => {
+    const block = validBlock();
+    mutate(block);
+    expectSchemaError([block]);
+  });
+
+  it.each([
+    ["block base fee", (block: NormalizedEthFeeBlock) => { block.baseFeePerGas = -1n; }],
+    ["block gas used", (block: NormalizedEthFeeBlock) => { block.gasUsed = -1n; }],
+    ["receipt gas used", (block: NormalizedEthFeeBlock) => { block.receipts[0]!.gasUsed = -1n; }],
+    ["receipt effective gas price", (block: NormalizedEthFeeBlock) => { block.receipts[0]!.effectiveGasPrice = -1n; }],
+  ])("rejects negative %s as schema-shaped evidence", (_name, mutate) => {
+    const block = validBlock();
+    mutate(block);
+    expectSchemaError([block]);
   });
 
   it.each([

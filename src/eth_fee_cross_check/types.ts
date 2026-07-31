@@ -95,6 +95,10 @@ export const EthFeeCrossCheckMetricsSchema = z
   .strict();
 export type EthFeeCrossCheckMetrics = z.infer<typeof EthFeeCrossCheckMetricsSchema>;
 
+type CompleteEthFeeCrossCheckMetrics = {
+  [Metric in keyof EthFeeCrossCheckMetrics]: ExactEthAmount;
+};
+
 const VerifiedEthFeeCrossCheckMetricsSchema = EthFeeCrossCheckMetricsSchema.refine(
   (metrics) => Object.values(metrics).every((metric) => metric !== null),
   "Verified snapshots require every fee metric.",
@@ -108,7 +112,7 @@ const UnavailableEthFeeCrossCheckMetricsSchema = EthFeeCrossCheckMetricsSchema.r
 export const EthFeeCrossCheckBlockSchema = z
   .object({
     block_number: z.number().int().nonnegative().safe(),
-    block_hash: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
+    block_hash: z.string().regex(/^0x[0-9a-f]{64}$/),
     transaction_count: z.number().int().nonnegative().safe(),
     metrics: VerifiedEthFeeCrossCheckMetricsSchema,
   })
@@ -158,16 +162,120 @@ const SnapshotBaseSchema = z
   })
   .strict();
 
-export const EthFeeCrossCheckSnapshotSchema = SnapshotBaseSchema.superRefine((snapshot, context) => {
-  const verified = snapshot.status === "verified";
-  const hasAllMetrics = Object.values(snapshot.metrics).every((metric) => metric !== null);
-  const hasNoMetrics = Object.values(snapshot.metrics).every((metric) => metric === null);
+function addSnapshotIssue(context: z.RefinementCtx, message: string, path: Array<string | number> = []): void {
+  context.addIssue({ code: z.ZodIssueCode.custom, message, path });
+}
 
-  if (verified && (snapshot.verified_range === null || snapshot.identities === null || !hasAllMetrics)) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: "Verified snapshots require complete evidence and metrics." });
+function hasCompleteMetrics(metrics: EthFeeCrossCheckMetrics): metrics is CompleteEthFeeCrossCheckMetrics {
+  return Object.values(metrics).every((metric) => metric !== null);
+}
+
+function hasNoMetrics(metrics: EthFeeCrossCheckMetrics): boolean {
+  return Object.values(metrics).every((metric) => metric === null);
+}
+
+function wei(amount: ExactEthAmount): bigint {
+  return BigInt(amount.wei);
+}
+
+function metricsSatisfyIdentities(metrics: EthFeeCrossCheckMetrics): boolean {
+  if (!hasCompleteMetrics(metrics)) return false;
+  return (
+    wei(metrics.execution_fee) === wei(metrics.base_fee_burn) + wei(metrics.priority_fee)
+    && wei(metrics.gross_fee) === wei(metrics.execution_fee) + wei(metrics.blob_fee_burn)
+    && wei(metrics.total_burn) === wei(metrics.base_fee_burn) + wei(metrics.blob_fee_burn)
+  );
+}
+
+function metricsEqual(left: CompleteEthFeeCrossCheckMetrics, right: CompleteEthFeeCrossCheckMetrics): boolean {
+  return (
+    wei(left.execution_fee) === wei(right.execution_fee)
+    && wei(left.base_fee_burn) === wei(right.base_fee_burn)
+    && wei(left.priority_fee) === wei(right.priority_fee)
+    && wei(left.blob_fee_burn) === wei(right.blob_fee_burn)
+    && wei(left.gross_fee) === wei(right.gross_fee)
+    && wei(left.total_burn) === wei(right.total_burn)
+  );
+}
+
+function sumBlockMetrics(blocks: EthFeeCrossCheckBlock[]): CompleteEthFeeCrossCheckMetrics {
+  const sum = (name: keyof CompleteEthFeeCrossCheckMetrics): ExactEthAmount => {
+    const total = blocks.reduce((value, block) => {
+      if (!hasCompleteMetrics(block.metrics)) throw new Error("Block metrics must be complete.");
+      return value + wei(block.metrics[name]);
+    }, 0n);
+    const whole = total / 1_000_000_000_000_000_000n;
+    const fraction = (total % 1_000_000_000_000_000_000n).toString().padStart(18, "0").replace(/0+$/, "");
+    return { wei: total.toString(), eth: fraction === "" ? whole.toString() : `${whole}.${fraction}` };
+  };
+  return {
+    execution_fee: sum("execution_fee"),
+    base_fee_burn: sum("base_fee_burn"),
+    priority_fee: sum("priority_fee"),
+    blob_fee_burn: sum("blob_fee_burn"),
+    gross_fee: sum("gross_fee"),
+    total_burn: sum("total_burn"),
+  };
+}
+
+export const EthFeeCrossCheckSnapshotSchema = SnapshotBaseSchema.superRefine((snapshot, context) => {
+  const requestedBlockCount = snapshot.requested_range.end_block - snapshot.requested_range.start_block + 1;
+  if (snapshot.requested_range.end_block < snapshot.requested_range.start_block || requestedBlockCount > ETH_FEE_CROSS_CHECK_MAX_BLOCKS) {
+    addSnapshotIssue(context, "Requested range must be ordered and contain at most 64 blocks.", ["requested_range"]);
   }
-  if (!verified && (snapshot.verified_range !== null || snapshot.identities !== null || !hasNoMetrics || snapshot.blocks !== undefined)) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: "Unavailable snapshots must not contain verified evidence." });
+
+  if (snapshot.status === "unavailable") {
+    if (snapshot.verified_range !== null || snapshot.identities !== null || !hasNoMetrics(snapshot.metrics) || snapshot.blocks !== undefined) {
+      addSnapshotIssue(context, "Unavailable snapshots must not contain verified evidence.");
+    }
+    if (snapshot.gaps.length === 0 || snapshot.sources.length !== 0 || snapshot.source_status.length !== 0) {
+      addSnapshotIssue(context, "Unavailable snapshots require a gap and no source provenance.");
+    }
+    return;
+  }
+
+  if (snapshot.verified_range === null || snapshot.identities === null || !hasCompleteMetrics(snapshot.metrics)) {
+    addSnapshotIssue(context, "Verified snapshots require complete evidence and metrics.");
+    return;
+  }
+  const verifiedRange = snapshot.verified_range;
+  const metrics = snapshot.metrics;
+  if (
+    verifiedRange.start_block !== snapshot.requested_range.start_block
+    || verifiedRange.end_block !== snapshot.requested_range.end_block
+    || verifiedRange.finalized_block < verifiedRange.end_block
+    || verifiedRange.block_count !== requestedBlockCount
+  ) {
+    addSnapshotIssue(context, "Verified range must exactly reconcile with the finalized requested range.", ["verified_range"]);
+  }
+  if (!metricsSatisfyIdentities(metrics)) {
+    addSnapshotIssue(context, "Exact aggregate fee identities must hold.", ["metrics"]);
+  }
+
+  if (snapshot.blocks !== undefined) {
+    const blocks = snapshot.blocks;
+    if (blocks.length !== verifiedRange.block_count) {
+      addSnapshotIssue(context, "Block rows must cover every verified block exactly once.", ["blocks"]);
+    }
+    const hashes = new Set<string>();
+    let transactionCount = 0;
+    for (let index = 0; index < blocks.length; index += 1) {
+      const block = blocks[index]!;
+      if (block.block_number !== verifiedRange.start_block + index || hashes.has(block.block_hash)) {
+        addSnapshotIssue(context, "Block rows must be ordered, consecutive, and hash-unique.", ["blocks", index]);
+      }
+      hashes.add(block.block_hash);
+      transactionCount += block.transaction_count;
+      if (!metricsSatisfyIdentities(block.metrics)) {
+        addSnapshotIssue(context, "Every block row must satisfy exact fee identities.", ["blocks", index, "metrics"]);
+      }
+    }
+    if (transactionCount !== verifiedRange.transaction_count) {
+      addSnapshotIssue(context, "Block-row transaction counts must equal the verified range.", ["blocks"]);
+    }
+    if (blocks.length > 0 && !metricsEqual(sumBlockMetrics(blocks), metrics)) {
+      addSnapshotIssue(context, "Block-row metrics must equal aggregate metrics.", ["blocks"]);
+    }
   }
 });
 export type EthFeeCrossCheckSnapshot = z.infer<typeof EthFeeCrossCheckSnapshotSchema>;

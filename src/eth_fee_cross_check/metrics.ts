@@ -1,7 +1,7 @@
 import type { ExactEthAmount } from "./types.js";
 
 const WEI_PER_ETH = 1_000_000_000_000_000_000n;
-const HASH_PATTERN = /^0x[0-9a-fA-F]{64}$/;
+const HASH_PATTERN = /^0x[0-9a-f]{64}$/;
 
 export type EthFeeCrossCheckDomainErrorCategory = "schema" | "evidence_mismatch";
 
@@ -70,8 +70,8 @@ function isSafeBlockNumber(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
 }
 
-function isUnsigned(value: bigint): boolean {
-  return value >= 0n;
+function isUnsigned(value: unknown): value is bigint {
+  return typeof value === "bigint" && value >= 0n;
 }
 
 function emptyMetrics(): FeeMetrics {
