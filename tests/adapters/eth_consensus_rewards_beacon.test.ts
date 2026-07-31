@@ -65,7 +65,7 @@ describe("fetchEthConsensusRewardsBeacon", () => {
     const fetchImpl = allProposedEpochFetch(10, active);
 
     const result = await fetchEthConsensusRewardsBeacon(
-      { epoch: 10, includeBlocks: false, beaconUrl: "https://beacon.example/private-token" },
+      { epoch: 10, includeBlocks: false, beaconUrl: "https://beacon.example" },
       makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }),
     );
 
@@ -96,6 +96,27 @@ describe("fetchEthConsensusRewardsBeacon", () => {
     expect(result.gaps[0]?.code).toBe("beacon_not_configured");
   });
 
+  it("preserves a configured base path and query credential on every official endpoint", async () => {
+    const fetchImpl = finalizedEpochFetch(10);
+    const result = await fetchEthConsensusRewardsBeacon(
+      { epoch: 10, includeBlocks: false, beaconUrl: "https://provider.example/private-token?api_key=credential#discard-me" },
+      makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }),
+    );
+
+    expect(result.status).toBe("verified");
+    for (const [input] of fetchImpl.mock.calls) {
+      const url = new URL(String(input));
+      expect(url.pathname).toMatch(/^\/private-token\/eth\/v1\/beacon\//);
+      expect(url.searchParams.get("api_key")).toBe("credential");
+      expect(url.hash).toBe("");
+    }
+    const headerUrls = fetchImpl.mock.calls
+      .map(([input]) => new URL(String(input)))
+      .filter((url) => url.pathname.endsWith("/headers"));
+    expect(headerUrls.map((url) => url.searchParams.get("slot"))).toEqual(Array.from({ length: 32 }, (_, offset) => String(320 + offset)));
+    expect(JSON.stringify(result)).not.toContain("credential");
+  });
+
   it.each([
     ["requested epoch equals finalized epoch", finality(9)],
     ["optimistic finality evidence", { ...finality(10), execution_optimistic: true }],
@@ -115,7 +136,7 @@ describe("fetchEthConsensusRewardsBeacon", () => {
       if (url.pathname.endsWith("/headers") && url.searchParams.get("slot") === "320") {
         return {
           ...response,
-          data: [{ canonical: false }, ...response.data],
+          data: [nonCanonicalHeader(320), ...response.data],
         };
       }
       return response;
@@ -131,7 +152,7 @@ describe("fetchEthConsensusRewardsBeacon", () => {
 
   it("rejects a non-empty header response without one canonical block", async () => {
     const fetchImpl = finalizedEpochFetch(10, (url, response) => url.pathname.endsWith("/headers") && url.searchParams.get("slot") === "320"
-      ? { ...response, data: [{ canonical: false }] }
+      ? { ...response, data: [nonCanonicalHeader(320)] }
       : response);
     const result = await fetchEthConsensusRewardsBeacon(
       { epoch: 10, includeBlocks: false, beaconUrl: "https://beacon.example/secret" },
@@ -139,6 +160,18 @@ describe("fetchEthConsensusRewardsBeacon", () => {
     );
 
     expect(result.gaps[0]?.code).toBe("beacon_evidence_mismatch");
+  });
+
+  it("rejects malformed non-canonical header candidates as schema drift", async () => {
+    const fetchImpl = finalizedEpochFetch(10, (url, response) => url.pathname.endsWith("/headers") && url.searchParams.get("slot") === "320"
+      ? { ...response, data: [{ canonical: false }] }
+      : response);
+    const result = await fetchEthConsensusRewardsBeacon(
+      { epoch: 10, includeBlocks: false, beaconUrl: "https://beacon.example/secret" },
+      makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }),
+    );
+
+    expect(result.gaps[0]?.code).toBe("beacon_schema_drift");
   });
 
   it.each([
@@ -171,6 +204,38 @@ describe("fetchEthConsensusRewardsBeacon", () => {
 
     expect(result.gaps[0]?.code).toBe(code);
     expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
+  it("accepts and sums a Uint64 inclusion_delay attestation component", async () => {
+    const fetchImpl = finalizedEpochFetch(10, (url, response) => url.pathname.includes("/attestations/")
+      ? { ...response, data: {
+        ...response.data,
+        ideal_rewards: [{ ...response.data.ideal_rewards[0], inclusion_delay: "5" }],
+        total_rewards: [{ ...response.data.total_rewards[0], inclusion_delay: "5" }],
+      } }
+      : response);
+    const result = await fetchEthConsensusRewardsBeacon(
+      { epoch: 10, includeBlocks: false, beaconUrl: "https://beacon.example/secret" },
+      makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }),
+    );
+
+    expect(result.metrics.attestation_net_reward).toEqual({ gwei: "13", eth: "0.000000013" });
+    expect(result.metrics.observed_consensus_reward).toEqual({ gwei: "21", eth: "0.000000021" });
+  });
+
+  it("rejects a negative inclusion_delay as schema drift", async () => {
+    const fetchImpl = finalizedEpochFetch(10, (url, response) => url.pathname.includes("/attestations/")
+      ? { ...response, data: {
+        ...response.data,
+        total_rewards: [{ ...response.data.total_rewards[0], inclusion_delay: "-1" }],
+      } }
+      : response);
+    const result = await fetchEthConsensusRewardsBeacon(
+      { epoch: 10, includeBlocks: false, beaconUrl: "https://beacon.example/secret" },
+      makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }),
+    );
+
+    expect(result.gaps[0]?.code).toBe("beacon_schema_drift");
   });
 
   it.each([
@@ -264,6 +329,14 @@ function header(slot: number) {
       canonical: true,
       header: { message: { slot: String(slot), proposer_index: "7", parent_root: root(5), state_root: root(6), body_root: root(7) }, signature: `0x${"0".repeat(192)}` },
     }],
+  };
+}
+
+function nonCanonicalHeader(slot: number) {
+  return {
+    root: root(8),
+    canonical: false,
+    header: { message: { slot: String(slot), proposer_index: "8", parent_root: root(9), state_root: root(10), body_root: root(11) }, signature: `0x${"1".repeat(192)}` },
   };
 }
 

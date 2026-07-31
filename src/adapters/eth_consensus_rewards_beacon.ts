@@ -164,14 +164,20 @@ function envelope(value: unknown, requireFinalized: boolean): Record<string, unk
   return parsed;
 }
 
-function join(base: string, path: string): string {
-  return new URL(path, base.endsWith("/") ? base : `${base}/`).toString();
+function endpointUrl(base: string, path: string): string {
+  const provider = new URL(base);
+  const endpoint = new URL(path, "https://beacon.invalid");
+  const basePath = provider.pathname.endsWith("/") ? provider.pathname.slice(0, -1) : provider.pathname;
+  provider.pathname = `${basePath}${endpoint.pathname}`;
+  for (const [key, value] of endpoint.searchParams) provider.searchParams.set(key, value);
+  provider.hash = "";
+  return provider.toString();
 }
 
 async function request(ctx: AdapterContext, beaconUrl: string, path: string, method: "GET" | "POST"): Promise<unknown> {
   let response: Response;
   try {
-    response = await ctx.fetch(join(beaconUrl, path), { method });
+    response = await ctx.fetch(endpointUrl(beaconUrl, path), { method });
   } catch {
     throw new BeaconFailure("beacon_access_gap");
   }
@@ -227,14 +233,16 @@ async function attestationRewards(ctx: AdapterContext, beaconUrl: string, epoch:
 function parseCanonicalHeader(value: unknown, expectedSlot: number): NormalizedCanonicalHeaderIdentity | null {
   const candidate = record(value);
   const canonical = boolean(candidate.canonical);
-  if (!canonical) return null;
+  const blockRoot = root(candidate.root);
   const header = record(candidate.header);
   const message = record(header.message);
   signature(header.signature);
   const slot = safeUint64(message.slot);
   if (slot !== expectedSlot) throw new BeaconFailure("beacon_evidence_mismatch");
   root(message.parent_root); root(message.state_root); root(message.body_root);
-  return { slot, blockRoot: root(candidate.root), proposerIndex: safeUint64(message.proposer_index) };
+  const proposerIndex = safeUint64(message.proposer_index);
+  if (!canonical) return null;
+  return { slot, blockRoot, proposerIndex };
 }
 
 async function headerAtSlot(ctx: AdapterContext, beaconUrl: string, slot: number): Promise<{ header?: NormalizedCanonicalHeaderIdentity; missedSlot?: number }> {
