@@ -30,6 +30,7 @@
     "test:live:lido-backing": "RUN_LIVE_LIDO_BACKING=1 vitest run tests/live/lido_pooled_eth_backing.live.test.ts",
     "test:live:sky-eth-custody": "RUN_LIVE_SKY_ETH_CUSTODY=1 vitest run tests/live/sky_eth_collateral_custody.live.test.ts",
     "test:live:eigenlayer-restaking": "RUN_LIVE_EIGENLAYER_ETH_RESTAKING=1 vitest run tests/live/eigenlayer_eth_restaking_exposure.live.test.ts",
+    "test:live:eigenlayer-lst-quotes": "RUN_LIVE_EIGENLAYER_LST_ETH_QUOTES=1 vitest run tests/live/eigenlayer_lst_eth_quotes.live.test.ts",
     "test:live:eth-beacon": "RUN_LIVE_ETH_BEACON=1 vitest run tests/live/eth_consensus_rewards_cross_check.live.test.ts",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run typecheck && npm run test && npm run build"

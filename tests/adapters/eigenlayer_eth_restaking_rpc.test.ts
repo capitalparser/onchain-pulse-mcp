@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { makeContext } from "../../src/adapters/base.js";
-import { fetchEigenLayerEthRestakingExposure } from "../../src/adapters/eigenlayer_eth_restaking_rpc.js";
+import {
+  fetchEigenLayerEthRestakingExposure,
+  fetchFreshEigenLayerEthRestakingExposure,
+} from "../../src/adapters/eigenlayer_eth_restaking_rpc.js";
 import { EIGENLAYER_CORE_CONTRACTS, EIGENLAYER_ETH_LST_STRATEGIES } from "../../src/eigenlayer_eth_restaking/types.js";
 
 const env = { byok: {}, lang: "en" as const, historyPath: "/tmp/history.json" };
@@ -204,6 +207,39 @@ describe("fetchEigenLayerEthRestakingExposure", () => {
     const cached = await fetchEigenLayerEthRestakingExposure({ rpcUrl: RPC_URL }, ctx);
     expect(cached.status).toBe("verified");
     expect(fetchImpl).toHaveBeenCalledTimes(4);
+  });
+
+  it("keeps the shared fresh-only verifier outside the unchanged public cache and stale fallback", async () => {
+    const fetchImpl = finalizedFetch();
+    const ctx = makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect((await fetchEigenLayerEthRestakingExposure({ rpcUrl: RPC_URL }, ctx)).status).toBe("verified");
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+
+    const fresh = await fetchFreshEigenLayerEthRestakingExposure({ rpcUrl: RPC_URL }, ctx);
+    expect(fresh.status).toBe("verified");
+    expect(fresh.source_status[0]?.stale).toBe(false);
+    expect(fetchImpl).toHaveBeenCalledTimes(8);
+
+    const rejectedProvider = await fetchFreshEigenLayerEthRestakingExposure(
+      { rpcUrl: "https://rpc.example/other-secret" },
+      ctx,
+    );
+    expect(rejectedProvider).toMatchObject({ status: "unavailable", strategies: [], native_diagnostics: null });
+    expect(rejectedProvider.gaps[0]?.code).toBe("rpc_access_gap");
+    expect(JSON.stringify(rejectedProvider)).not.toContain("other-secret");
+    expect(fetchImpl).toHaveBeenCalledTimes(8);
+
+    fetchImpl.mockRejectedValueOnce(new Error("private refresh failure"));
+    const failedFresh = await fetchFreshEigenLayerEthRestakingExposure({ rpcUrl: RPC_URL }, ctx);
+    expect(failedFresh).toMatchObject({ status: "unavailable", strategies: [], native_diagnostics: null });
+    expect(failedFresh.gaps[0]?.code).toBe("rpc_access_gap");
+    expect(failedFresh.gaps.some((gap) => gap.code === "source_stale")).toBe(false);
+    expect(fetchImpl).toHaveBeenCalledTimes(9);
+
+    const stillPublicCached = await fetchEigenLayerEthRestakingExposure({ rpcUrl: RPC_URL }, ctx);
+    expect(stillPublicCached.status).toBe("verified");
+    expect(stillPublicCached.source_status[0]?.stale).toBe(false);
+    expect(fetchImpl).toHaveBeenCalledTimes(9);
   });
 
   it("accepts the full canonical uint8 decimals range", async () => {

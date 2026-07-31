@@ -20,6 +20,7 @@ import { fetchEthCollateralSpark } from "./adapters/eth_collateral_spark.js";
 import { fetchLidoPooledEthBacking } from "./adapters/lido_pooled_eth_rpc.js";
 import { fetchSkyEthCollateralCustody } from "./adapters/sky_eth_collateral_rpc.js";
 import { fetchEigenLayerEthRestakingExposure } from "./adapters/eigenlayer_eth_restaking_rpc.js";
+import { fetchEigenLayerLstEthQuotes } from "./adapters/eigenlayer_lst_eth_quotes_rpc.js";
 import type { EnvConfig } from "./env.js";
 import { windowToDays } from "./eth_value_capture/metrics.js";
 import {
@@ -39,6 +40,7 @@ import type { SparkCollateralCapacitySnapshot } from "./spark_collateral_capacit
 import type { LidoPooledEthBackingSnapshot } from "./lido_pooled_eth_backing/types.js";
 import type { SkyEthCollateralCustodySnapshot } from "./sky_eth_collateral_custody/types.js";
 import type { EigenLayerEthRestakingExposureSnapshot } from "./eigenlayer_eth_restaking/types.js";
+import type { EigenLayerLstEthQuotesSnapshot } from "./eigenlayer_lst_eth_quotes/types.js";
 import { fanOutAdapters } from "./pipeline/fanout.js";
 import { toScoreInputs } from "./pipeline/score_inputs.js";
 import { loadPulseConfig } from "./pulse/config.js";
@@ -52,6 +54,7 @@ import { getSparkEthCollateralCapacity } from "./tools/get_spark_eth_collateral_
 import { getLidoPooledEthBacking } from "./tools/get_lido_pooled_eth_backing.js";
 import { getSkyEthCollateralCustody } from "./tools/get_sky_eth_collateral_custody.js";
 import { getEigenLayerEthRestakingExposure } from "./tools/get_eigenlayer_eth_restaking_exposure.js";
+import { getEigenLayerLstEthQuotes } from "./tools/get_eigenlayer_lst_eth_quotes.js";
 import { getFundingOi } from "./tools/get_funding_oi.js";
 import { getKrPremium } from "./tools/get_kr_premium.js";
 import { getMarketPulse } from "./tools/get_market_pulse.js";
@@ -92,7 +95,7 @@ interface ToolDef {
   handler: (
     raw: unknown,
     hc: HandlerContext,
-  ) => Promise<ToolResponse | ForensicsSnapshot | EthValueCaptureSnapshot | EthFeeCrossCheckSnapshot | EthConsensusRewardsCrossCheckSnapshot | EthCollateralDemandSnapshot | SparkCollateralCapacitySnapshot | LidoPooledEthBackingSnapshot | SkyEthCollateralCustodySnapshot | EigenLayerEthRestakingExposureSnapshot>;
+  ) => Promise<ToolResponse | ForensicsSnapshot | EthValueCaptureSnapshot | EthFeeCrossCheckSnapshot | EthConsensusRewardsCrossCheckSnapshot | EthCollateralDemandSnapshot | SparkCollateralCapacitySnapshot | LidoPooledEthBackingSnapshot | SkyEthCollateralCustodySnapshot | EigenLayerEthRestakingExposureSnapshot | EigenLayerLstEthQuotesSnapshot>;
 }
 
 const TOOLS: ToolDef[] = [
@@ -189,6 +192,12 @@ const TOOLS: ToolDef[] = [
     description: "Verified fixed legacy EigenLayer ETH-family LST strategy token-unit exposure and native-restaking diagnostics; broader totals stay null.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     handler: handleEigenLayerEthRestakingExposure,
+  },
+  {
+    name: "get_eigenlayer_lst_eth_quotes",
+    description: "Exact finalized stETH/rETH/cbETH accounting quotes for 3 of 12 fixed legacy EigenLayer strategies; broader totals stay null.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    handler: handleEigenLayerLstEthQuotes,
   },
   {
     name: "get_stablecoin_pulse",
@@ -459,6 +468,15 @@ export async function handleEigenLayerEthRestakingExposure(
   NoArgs.parse(raw);
   const adapterSnapshot = await fetchEigenLayerEthRestakingExposure({ rpcUrl: hc.env.ethereumRpcUrl }, hc.ctx);
   return getEigenLayerEthRestakingExposure({ lang: hc.env.lang, adapterSnapshot });
+}
+
+export async function handleEigenLayerLstEthQuotes(
+  raw: unknown,
+  hc: HandlerContext,
+): Promise<EigenLayerLstEthQuotesSnapshot> {
+  NoArgs.parse(raw);
+  const adapterSnapshot = await fetchEigenLayerLstEthQuotes({ rpcUrl: hc.env.ethereumRpcUrl }, hc.ctx);
+  return getEigenLayerLstEthQuotes({ lang: hc.env.lang, adapterSnapshot });
 }
 
 async function handleStablecoinPulse(raw: unknown, hc: HandlerContext): Promise<ToolResponse> {

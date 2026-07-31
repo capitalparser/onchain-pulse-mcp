@@ -162,6 +162,59 @@ unique or net ETH locked, combined Aave/Spark/Lido/Sky/EigenLayer demand, or a
 rehypothecation ratio; all six broader metrics remain `null` with explicit
 gaps.
 
+**EigenLayer Covered LST ETH Quotes Snapshot**:
+A separate read-only accounting-quote view for exactly 3 of the 12 fixed legacy
+strategies: stETH, rETH, and cbETH. The base authority is EigenLayer release
+`v1.12.0`, commit `d302f65042164c8d8d0a983c1540d85a8710030b`. Exact
+18-decimal token/proxy identities are stETH
+`0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84`, rETH
+`0xae78736Cd615f374D3085123A210448E74Fc6393`, and cbETH
+`0xBe9895146f7AF43049ca1c1AE358B0541Ea49704`. ETHx, ankrETH, oETH, osETH,
+swETH, wBETH, sfrxETH, lsETH, and mETH remain explicitly unquoted.
+
+**Covered share-accounting ETH-equivalent**:
+`covered_share_accounting_eth_equivalent_wei`, the exact partial sum of ETH
+accounting quotes for the three covered strategy share-accounting token
+amounts. It is distinct from custody and is not a full LST, native-restaked, or
+total EigenLayer exposure measurement.
+
+**Covered token-custody ETH-equivalent**:
+`covered_token_custody_eth_equivalent_wei`, the exact partial sum of ETH
+accounting quotes for the three covered token balances held by their
+strategies. It is distinct from share accounting and does not reconcile issuer
+backing or downstream reuse.
+
+**Covered LST quote trust basis**:
+stETH semantics are pinned to Lido core `v4.0.0` commit
+`17005714f151e5502c559932319a3f2f74ac2436`: stETH token wei is already
+pooled-ETH accounting wei and must not be double-converted as Lido shares.
+rETH semantics are pinned to Rocket Pool commit
+`fef41a4f7cf99d7d66313c0ba04deb8ba2dabf88`: selector `0x8b32fa23`
+calls `getEthValue(uint256)` separately for aggregate share accounting and
+custody, preserving both direct floors rather than applying a rounded rate.
+cbETH semantics are pinned to Coinbase `wrapped-tokens-os` commit
+`5697a90f4c47e8d801cedce81444a8464019fe08` and Coinbase's official cbETH
+page/whitepaper: selector `0x3ba0b9a9` returns the upgradeable,
+Coinbase-controlled oracle `exchangeRate()` at `10**18` scale, and each quote
+is `floor(amount * rate / 10**18)`. The contract exposes no rate timestamp, so
+`cbeth_exchange_rate_freshness_not_verified` is permanent.
+
+**Covered LST quote acquisition boundary**:
+One uncached verification is 5 JSON-RPC batches, 94 logical requests, and 92
+`eth_call` requests, all at the same numeric finalized block tag. One combined
+30-minute fresh-only cache owns the path; it does not nest the base public
+cache or accept stale base evidence. A stale public result can come only from
+previously verified combined evidence after refresh failure.
+
+The seven broader fields `lst_restaked_eth_equivalent_wei`,
+`native_restaked_eth_wei`, `eigenlayer_eth_family_exposure_eth_wei`,
+`unique_net_eth_locked`,
+`combined_aave_spark_lido_sky_eigenlayer_demand`, `rehypothecation_ratio`, and
+`executable_withdrawal_capacity_eth_wei` remain `null`. The snapshot does not
+establish full LST/native/EigenLayer totals, unique or net locked ETH, combined
+Aave/Spark/Lido/Sky/EigenLayer demand, rehypothecation, issuer-backing
+reconciliation, rate freshness, or executable withdrawal capacity.
+
 ### Token forensics
 
 **Token Forensics Snapshot**:

@@ -65,7 +65,8 @@ interface VerifiedEvidence {
 function configuredRpcUrl(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
 }
-function bindProvider(ctx: AdapterContext, rpcUrl: string): FailureCode | null {
+/** Internal provider authority shared by public and composed EigenLayer adapters. */
+export function bindEigenLayerEthRestakingProvider(ctx: AdapterContext, rpcUrl: string): "rpc_access_gap" | null {
   const previous = providerByContext.get(ctx);
   if (previous !== undefined && previous !== rpcUrl) return "rpc_access_gap";
   providerByContext.set(ctx, rpcUrl);
@@ -283,13 +284,33 @@ async function fetchVerifiedEvidence(ctx: AdapterContext, rpcUrl: string): Promi
   return evidence;
 }
 
+/** Shared uncached verifier for composed adapters. It never reads or writes the public cache and never returns stale evidence. */
+export async function fetchFreshEigenLayerEthRestakingExposure(
+  input: EigenLayerEthRestakingRpcInput,
+  ctx: AdapterContext,
+): Promise<EigenLayerEthRestakingExposureSnapshot> {
+  const rpcUrl = configuredRpcUrl(input.rpcUrl);
+  if (rpcUrl === null) return unavailable(false, "rpc_not_configured");
+  const binding = bindEigenLayerEthRestakingProvider(ctx, rpcUrl);
+  if (binding !== null) return unavailable(true, binding);
+  try {
+    return verified(await fetchVerifiedEvidence(ctx, rpcUrl), false);
+  } catch (error) {
+    if (error instanceof RpcFailure) return unavailable(true, error.code);
+    if (error instanceof EigenLayerEthRestakingDomainError) {
+      return unavailable(true, error.kind === "schema_drift" ? "rpc_schema_drift" : "rpc_evidence_mismatch");
+    }
+    return unavailable(true, "rpc_access_gap");
+  }
+}
+
 export async function fetchEigenLayerEthRestakingExposure(
   input: EigenLayerEthRestakingRpcInput,
   ctx: AdapterContext,
 ): Promise<EigenLayerEthRestakingExposureSnapshot> {
   const rpcUrl = configuredRpcUrl(input.rpcUrl);
   if (rpcUrl === null) return unavailable(false, "rpc_not_configured");
-  const binding = bindProvider(ctx, rpcUrl);
+  const binding = bindEigenLayerEthRestakingProvider(ctx, rpcUrl);
   if (binding !== null) return unavailable(true, binding);
   const cache = ctx.cacheFor<VerifiedEvidence>(CACHE_SPEC);
   try {
