@@ -15,15 +15,19 @@ const UINT256_MAX = (2n ** 256n) - 1n;
 const WAD = 10n ** 18n;
 
 const PERMANENT_GAP_DETAILS: Record<(typeof EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES)[number], string> = {
-  lst_quote_coverage_partial: "Only three of the twelve fixed legacy EigenLayer LST strategies have bounded ETH accounting quotes.",
+  lst_quote_coverage_partial: "Only five of the twelve fixed legacy EigenLayer LST strategies have bounded ETH accounting quotes.",
   native_restaked_eth_not_measured: "No native-restaked ETH total is measured.",
-  lst_restaked_eth_equivalent_not_measured: "Three covered quotes do not establish a full EigenLayer LST ETH-equivalent total.",
+  lst_restaked_eth_equivalent_not_measured: "Five covered quotes do not establish a full EigenLayer LST ETH-equivalent total.",
   eigenlayer_eth_family_exposure_not_measured: "Native and full LST evidence are not combined into an ETH-family total.",
   unique_net_eth_locked_not_reconciled: "Issuer backing and downstream reuse are not deduplicated or netted.",
   combined_aave_spark_lido_sky_eigenlayer_demand_not_reconciled: "No cross-protocol demand total is reconciled.",
   rehypothecation_ratio_not_measured: "This bounded partial quote snapshot cannot measure rehypothecation.",
   executable_withdrawal_capacity_not_measured: "Accounting quotes are not executable redemption or withdrawal capacity.",
   cbeth_exchange_rate_freshness_not_verified: "The bounded cbETH exchangeRate call exposes no timestamp for independent freshness verification.",
+  oseth_virtual_rewards_freshness_not_verified: "StakeWise controller accounting does not independently verify keeper-set virtual reward freshness.",
+  oseth_backing_not_reconciled: "StakeWise controller accounting is not an independent backing reconciliation.",
+  meth_oracle_record_freshness_not_verified: "Mantle Oracle accounting does not independently verify report-record freshness.",
+  meth_backing_not_reconciled: "Mantle Oracle accounting is not an independent backing reconciliation.",
 };
 const PERMANENT_GAPS: readonly EigenLayerLstEthQuoteGap[] = EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES.map(
   (code) => ({ code, detail: PERMANENT_GAP_DETAILS[code] }),
@@ -92,15 +96,24 @@ function normalizeQuote(input: EigenLayerCoveredLstQuoteInput, index: number): E
     custodyQuote = custodyAmount;
     quoteKind = "steth_token_wei_identity_quote";
     trustBasis = "lido_pooled_eth_accounting";
-  } else if (expected.label === "rETH") {
+  } else if (expected.label === "rETH" || expected.label === "osETH" || expected.label === "mETH") {
     if ("rethExchangeRate" in input
+      || "fabricatedConversionRate" in input
       || (input.cbethExchangeRate !== undefined && input.cbethExchangeRate !== null)) {
-      fail("evidence_mismatch", "rETH accepts direct aggregate quote results, not a rounded rate.");
+      fail("evidence_mismatch", `${expected.label} accepts direct aggregate quote results, not a rounded rate.`);
     }
-    shareQuote = uint(input.directShareAccountingEthQuote, "Direct rETH share-accounting quote");
-    custodyQuote = uint(input.directTokenCustodyEthQuote, "Direct rETH custody quote");
-    quoteKind = "rocket_pool_direct_aggregate_quote";
-    trustBasis = "rocket_pool_network_accounting";
+    shareQuote = uint(input.directShareAccountingEthQuote, `Direct ${expected.label} share-accounting quote`);
+    custodyQuote = uint(input.directTokenCustodyEthQuote, `Direct ${expected.label} custody quote`);
+    if (expected.label === "rETH") {
+      quoteKind = "rocket_pool_direct_aggregate_quote";
+      trustBasis = "rocket_pool_network_accounting";
+    } else if (expected.label === "osETH") {
+      quoteKind = "stakewise_v3_direct_controller_quote";
+      trustBasis = "stakewise_v3_keeper_reward_accounting";
+    } else {
+      quoteKind = "mantle_staking_direct_oracle_quote";
+      trustBasis = "mantle_oracle_reported_accounting";
+    }
   } else {
     if (input.directShareAccountingEthQuote !== undefined || input.directTokenCustodyEthQuote !== undefined) {
       fail("evidence_mismatch", "cbETH accepts one oracle exchange rate and recomputes both floor quotes.");
@@ -129,7 +142,7 @@ export function buildVerifiedEigenLayerLstEthQuotesSnapshot(
   input: BuildVerifiedEigenLayerLstEthQuotesInput,
 ): EigenLayerLstEthQuotesSnapshot {
   if (input.quotes.length !== EIGENLAYER_COVERED_LST_STRATEGIES.length) {
-    fail("evidence_mismatch", "Exactly three ordered covered quote inputs are required.");
+    fail("evidence_mismatch", "Exactly five ordered covered quote inputs are required.");
   }
   const coveredQuotes = input.quotes.map(normalizeQuote);
   let shareSum = 0n;
@@ -141,8 +154,8 @@ export function buildVerifiedEigenLayerLstEthQuotesSnapshot(
   const stale = input.stale === true;
   const snapshot = {
     status: "verified" as const,
-    summary: "Exact finalized stETH, rETH, and cbETH EigenLayer token amounts and bounded ETH accounting quotes cover three of twelve fixed strategies.",
-    methodology: "eigenlayer-covered-lst-eth-quotes-v1" as const,
+    summary: "Exact finalized stETH, rETH, cbETH, osETH, and mETH EigenLayer token amounts and bounded ETH accounting quotes cover five of twelve fixed strategies.",
+    methodology: "eigenlayer-covered-lst-eth-quotes-v2" as const,
     verified_block: input.block,
     covered_quotes: coveredQuotes,
     metrics: {
@@ -164,7 +177,7 @@ export function buildVerifiedEigenLayerLstEthQuotesSnapshot(
       partial_aggregates_only: true as const,
     },
     coverage: {
-      quoted_strategy_count: 3 as const,
+      quoted_strategy_count: 5 as const,
       fixed_strategy_count: 12 as const,
       unquoted_strategy_labels: [...EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS] as const,
     },
@@ -200,7 +213,7 @@ export function buildUnavailableEigenLayerLstEthQuotesSnapshot(input: {
   const snapshot = {
     status: "unavailable" as const,
     summary: input.summary,
-    methodology: "eigenlayer-covered-lst-eth-quotes-v1" as const,
+    methodology: "eigenlayer-covered-lst-eth-quotes-v2" as const,
     verified_block: null,
     covered_quotes: [],
     metrics: {

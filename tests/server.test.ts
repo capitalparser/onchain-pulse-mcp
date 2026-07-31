@@ -161,6 +161,7 @@ describe("server", () => {
     const fetchImpl = vi.fn();
     const hc = { env, ctx: makeContext({ env, fetchImpl: fetchImpl as unknown as typeof fetch }) };
     expect(tool?.inputSchema).toEqual({ type: "object", properties: {}, additionalProperties: false });
+    expect(tool?.description).toBe("Finalized direct protocol-accounting quotes for stETH/rETH/cbETH/osETH/mETH covering only 5 of 12 fixed EigenLayer strategies; broader totals stay null.");
     const output = await tool?.handler({}, hc);
     expect(output).toMatchObject({ status: "unavailable", verified_block: null, covered_quotes: [], identities: null, coverage: null });
     expect((output as { gaps: Array<{ code: string }> }).gaps[0]?.code).toBe("rpc_not_configured");

@@ -23,18 +23,28 @@ export const EIGENLAYER_COVERED_LST_STRATEGIES = [
     underlying_token: "0xBe9895146f7AF43049ca1c1AE358B0541Ea49704",
     decimals: 18,
   },
+  {
+    label: "osETH",
+    strategy: "0x57ba429517c3473B6d34CA9aCd56c0e735b94c02",
+    underlying_token: "0xf1C9acDc66974dFB6dEcB12aA385b9cD01190E38",
+    decimals: 18,
+  },
+  {
+    label: "mETH",
+    strategy: "0x298aFB19A105D59E74658C4C334Ff360BadE6dd2",
+    underlying_token: "0xd5F7838F5C461fefF7FE49ea5ebaF7728bB0ADfa",
+    decimals: 18,
+  },
 ] as const;
 
 export const EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS = [
   "ETHx",
   "ankrETH",
   "oETH",
-  "osETH",
   "swETH",
   "wBETH",
   "sfrxETH",
   "lsETH",
-  "mETH",
 ] as const;
 
 export const EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES = [
@@ -47,6 +57,10 @@ export const EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES = [
   "rehypothecation_ratio_not_measured",
   "executable_withdrawal_capacity_not_measured",
   "cbeth_exchange_rate_freshness_not_verified",
+  "oseth_virtual_rewards_freshness_not_verified",
+  "oseth_backing_not_reconciled",
+  "meth_oracle_record_freshness_not_verified",
+  "meth_backing_not_reconciled",
 ] as const;
 
 const SOURCE_FAILURE_GAP_CODES = new Set([
@@ -69,7 +83,7 @@ const DecimalStringSchema = z.string().max(78).regex(/^(0|[1-9]\d*)$/).refine((v
 }, "must be a uint256");
 
 const QuoteSchema = z.object({
-  label: z.enum(["stETH", "rETH", "cbETH"]),
+  label: z.enum(["stETH", "rETH", "cbETH", "osETH", "mETH"]),
   strategy: z.string(),
   underlying_token: z.string(),
   decimals: z.literal(18),
@@ -79,11 +93,15 @@ const QuoteSchema = z.object({
     "steth_token_wei_identity_quote",
     "rocket_pool_direct_aggregate_quote",
     "coinbase_oracle_accounting_quote",
+    "stakewise_v3_direct_controller_quote",
+    "mantle_staking_direct_oracle_quote",
   ]),
   trust_basis: z.enum([
     "lido_pooled_eth_accounting",
     "rocket_pool_network_accounting",
     "coinbase_oracle_controlled_rate",
+    "stakewise_v3_keeper_reward_accounting",
+    "mantle_oracle_reported_accounting",
   ]),
   share_accounting_eth_quote_wei: DecimalStringSchema,
   token_custody_eth_quote_wei: DecimalStringSchema,
@@ -112,18 +130,16 @@ const IdentitiesSchema = z.object({
 }).strict();
 
 const CoverageSchema = z.object({
-  quoted_strategy_count: z.literal(3),
+  quoted_strategy_count: z.literal(5),
   fixed_strategy_count: z.literal(12),
   unquoted_strategy_labels: z.tuple([
     z.literal("ETHx"),
     z.literal("ankrETH"),
     z.literal("oETH"),
-    z.literal("osETH"),
     z.literal("swETH"),
     z.literal("wBETH"),
     z.literal("sfrxETH"),
     z.literal("lsETH"),
-    z.literal("mETH"),
   ]),
 }).strict();
 
@@ -154,7 +170,7 @@ export type EigenLayerLstEthQuoteSourceStatus = z.infer<typeof EigenLayerLstEthQ
 const SnapshotBaseSchema = z.object({
   status: z.enum(["verified", "unavailable"]),
   summary: z.string().min(1).max(500),
-  methodology: z.literal("eigenlayer-covered-lst-eth-quotes-v1"),
+  methodology: z.literal("eigenlayer-covered-lst-eth-quotes-v2"),
   verified_block: EigenLayerRestakingBlockSchema.nullable(),
   covered_quotes: z.array(QuoteSchema),
   metrics: MetricsSchema,
@@ -246,6 +262,18 @@ export const EigenLayerLstEthQuotesSnapshotSchema = SnapshotBaseSchema.superRefi
           add(context, "cbETH quotes must be exact floor conversions from one nonzero oracle rate");
           return;
         }
+      }
+      if (index === 3 && (quote.quote_kind !== "stakewise_v3_direct_controller_quote"
+        || quote.trust_basis !== "stakewise_v3_keeper_reward_accounting"
+        || quote.cbeth_exchange_rate_wei !== null)) {
+        add(context, "osETH must preserve two direct controller quote results");
+        return;
+      }
+      if (index === 4 && (quote.quote_kind !== "mantle_staking_direct_oracle_quote"
+        || quote.trust_basis !== "mantle_oracle_reported_accounting"
+        || quote.cbeth_exchange_rate_wei !== null)) {
+        add(context, "mETH must preserve two direct oracle quote results");
+        return;
       }
       shareSum += shareQuote;
       custodySum += custodyQuote;
