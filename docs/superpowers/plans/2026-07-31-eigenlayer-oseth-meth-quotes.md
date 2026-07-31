@@ -81,11 +81,16 @@ five-token partial sums, exposes coverage `5/12`, and fails closed otherwise.
   methodology, 5-of-12 coverage, the seven unquoted labels, recalculated
   five-token sums, seven null broader metrics, and all permanent gaps.
 
-  Add failure cases for a reordered/substituted/duplicate osETH or mETH,
-  non-18 decimals, missing or fabricated direct result, zero/overflowed
-  uint256 input or sum, and a public snapshot whose direct quote, sum, gap, or
-  coverage is inconsistent. Assert osETH rejects cbETH rate material and mETH
-  rejects cbETH/rETH rate or fabricated conversion material.
+  Add one coherent all-zero fixture: zero token amounts, zero direct rETH,
+  osETH, and mETH quotes, zero five-token partial sums, and a nonzero cbETH
+  rate must parse as verified evidence. Zero is a valid uint256 accounting
+  value. Add failure cases for a reordered/substituted/duplicate osETH or
+  mETH, non-18 decimals, negative input where the input boundary can represent
+  it, missing, malformed/non-`bigint`, or greater-than-uint256 amount/direct
+  result, checked product or partial-sum overflow, zero cbETH rate, or a public
+  snapshot whose direct quote, sum, gap, or coverage is inconsistent. Assert
+  osETH rejects cbETH rate material and mETH rejects cbETH/rETH rate or
+  fabricated conversion material.
 
 - [ ] **Step 2: Observe RED**
 
@@ -113,10 +118,10 @@ five-token partial sums, exposes coverage `5/12`, and fails closed otherwise.
   ```
 
   Extend `EigenLayerCoveredLstQuoteInput` only with independently supplied
-  direct aggregate osETH/mETH result fields. Validate their uint256 range and
-  preserve them as direct results; do not invent rate math. Recompute both
-  partial sums across exactly five normalized quotes. Require the permanent
-  gaps `oseth_virtual_rewards_freshness_not_verified`,
+  direct aggregate osETH/mETH result fields. Accept zero and validate only the
+  uint256 range; preserve direct results as-is and do not invent rate math.
+  Recompute both partial sums across exactly five normalized quotes. Require
+  the permanent gaps `oseth_virtual_rewards_freshness_not_verified`,
   `oseth_backing_not_reconciled`,
   `meth_oracle_record_freshness_not_verified`, and
   `meth_backing_not_reconciled`, alongside the existing permanent boundaries.
@@ -173,6 +178,36 @@ every transport/domain failure to atomic bounded unavailable output.
     oracle() = 0x7dc0d1d0 -> 0x8735049F496727f824Cc0f2B174d826f5c408192
     mETHToETH(uint256) = 0x5890c11c, twice
   ```
+
+  Give the mock base evidence distinct osETH and mETH share-accounting and
+  custody amounts. Assert the complete `data` field, not only selector and
+  destination, for every direct call:
+
+  ```ts
+  expect(requestById(95).params[0]).toEqual({
+    to: OSETH_CONTROLLER,
+    data: `0x07a2d13a${uint256Word(oseth.share_accounting_underlying)}`,
+  });
+  expect(requestById(96).params[0]).toEqual({
+    to: OSETH_CONTROLLER,
+    data: `0x07a2d13a${uint256Word(oseth.token_custody)}`,
+  });
+  expect(requestById(99).params[0]).toEqual({
+    to: METH_STAKING,
+    data: `0x5890c11c${uint256Word(meth.share_accounting_underlying)}`,
+  });
+  expect(requestById(100).params[0]).toEqual({
+    to: METH_STAKING,
+    data: `0x5890c11c${uint256Word(meth.token_custody)}`,
+  });
+  ```
+
+  `uint256Word` is the exact 64-lowercase-hex-nibble ABI word for the verified
+  nonnegative base `bigint`; use fixture values that make a duplicate, swapped,
+  or wrong amount observably fail. Assert IDs 95/96 and 99/100 decode to their
+  corresponding share-accounting/custody inputs respectively: each returned
+  direct result is bound to its response ID and preserves that per-input floor,
+  never a shared rate or cross-input result.
 
   Assert the PriceFeed `0x8023518b2192FB5384DAdc596765B3dD1cdFe471` and its
   source-pinned `osTokenVaultController()` selector `0xabed451d` do **not**
