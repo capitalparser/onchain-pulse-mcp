@@ -17,6 +17,7 @@ import { fetchEthFeeRpc } from "./adapters/eth_fee_rpc.js";
 import { fetchEthConsensusRewardsBeacon } from "./adapters/eth_consensus_rewards_beacon.js";
 import { fetchEthCollateralAaveV3 } from "./adapters/eth_collateral_aave_v3.js";
 import { fetchEthCollateralSpark } from "./adapters/eth_collateral_spark.js";
+import { fetchLidoPooledEthBacking } from "./adapters/lido_pooled_eth_rpc.js";
 import type { EnvConfig } from "./env.js";
 import { windowToDays } from "./eth_value_capture/metrics.js";
 import {
@@ -33,6 +34,7 @@ import {
 } from "./eth_value_capture/types.js";
 import type { EthCollateralDemandSnapshot } from "./eth_collateral_demand/types.js";
 import type { SparkCollateralCapacitySnapshot } from "./spark_collateral_capacity/types.js";
+import type { LidoPooledEthBackingSnapshot } from "./lido_pooled_eth_backing/types.js";
 import { fanOutAdapters } from "./pipeline/fanout.js";
 import { toScoreInputs } from "./pipeline/score_inputs.js";
 import { loadPulseConfig } from "./pulse/config.js";
@@ -43,6 +45,7 @@ import { getEthFeeCrossCheck } from "./tools/get_eth_fee_cross_check.js";
 import { getEthConsensusRewardsCrossCheck } from "./tools/get_eth_consensus_rewards_cross_check.js";
 import { getEthCollateralDemand } from "./tools/get_eth_collateral_demand.js";
 import { getSparkEthCollateralCapacity } from "./tools/get_spark_eth_collateral_capacity.js";
+import { getLidoPooledEthBacking } from "./tools/get_lido_pooled_eth_backing.js";
 import { getFundingOi } from "./tools/get_funding_oi.js";
 import { getKrPremium } from "./tools/get_kr_premium.js";
 import { getMarketPulse } from "./tools/get_market_pulse.js";
@@ -83,7 +86,7 @@ interface ToolDef {
   handler: (
     raw: unknown,
     hc: HandlerContext,
-  ) => Promise<ToolResponse | ForensicsSnapshot | EthValueCaptureSnapshot | EthFeeCrossCheckSnapshot | EthConsensusRewardsCrossCheckSnapshot | EthCollateralDemandSnapshot | SparkCollateralCapacitySnapshot>;
+  ) => Promise<ToolResponse | ForensicsSnapshot | EthValueCaptureSnapshot | EthFeeCrossCheckSnapshot | EthConsensusRewardsCrossCheckSnapshot | EthCollateralDemandSnapshot | SparkCollateralCapacitySnapshot | LidoPooledEthBackingSnapshot>;
 }
 
 const TOOLS: ToolDef[] = [
@@ -162,6 +165,12 @@ const TOOLS: ToolDef[] = [
     description: "Verified SparkLend ETH-family supplied capacity at one finalized Ethereum block.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     handler: handleSparkEthCollateralCapacity,
+  },
+  {
+    name: "get_lido_pooled_eth_backing",
+    description: "Verified Lido pooled ETH backing at one finalized Ethereum block.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    handler: handleLidoPooledEthBacking,
   },
   {
     name: "get_stablecoin_pulse",
@@ -405,6 +414,15 @@ export async function handleSparkEthCollateralCapacity(
   NoArgs.parse(raw);
   const adapterSnapshot = await fetchEthCollateralSpark({ rpcUrl: hc.env.ethereumRpcUrl }, hc.ctx);
   return getSparkEthCollateralCapacity({ lang: hc.env.lang, adapterSnapshot });
+}
+
+export async function handleLidoPooledEthBacking(
+  raw: unknown,
+  hc: HandlerContext,
+): Promise<LidoPooledEthBackingSnapshot> {
+  NoArgs.parse(raw);
+  const adapterSnapshot = await fetchLidoPooledEthBacking({ rpcUrl: hc.env.ethereumRpcUrl }, hc.ctx);
+  return getLidoPooledEthBacking({ lang: hc.env.lang, adapterSnapshot });
 }
 
 async function handleStablecoinPulse(raw: unknown, hc: HandlerContext): Promise<ToolResponse> {
