@@ -74,3 +74,9 @@ npm test
 Test Files  53 passed | 5 skipped (58)
 Tests       632 passed | 7 skipped (639)
 ```
+
+## QA follow-up — README inventory
+
+The README inventory now states the correct 12-tool count and names SparkLend
+alongside finalized fee and Aave V3 Core as an internal `ETHEREUM_RPC_URL`
+consumer. This was a documentation-only correction; no live check was run.

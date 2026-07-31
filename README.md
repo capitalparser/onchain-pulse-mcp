@@ -14,7 +14,7 @@ Existing onchain intelligence tools (Nansen, Arkham, Coinglass) are dashboards b
 
 - **Read-only · snapshot-oriented**: idempotent MCP responses, no write actions, local-only history materialisation for composite z-scores.
 - **Source adapters**: free and BYOK-backed market, Ethereum, RWA, derivatives, and Korea data paths.
-- **10 MCP tools**: the six original macro tools, token forensics, ETH value capture, and bounded Ethereum execution-fee and consensus-reward cross-checks.
+- **12 MCP tools**: the six original macro tools, token forensics, ETH value capture, bounded Ethereum execution-fee and consensus-reward cross-checks, and finalized Aave V3 Core and SparkLend supplied-capacity views.
 - **BYOK enrichment**: free defaults work out of the box; paid keys (Nansen/Glassnode/Arkham/Coinglass/CryptoQuant/Laevitas) are auto-detected via env vars.
 - **Composite pulse score**: 7-input weighted z-score with weights externalized to `config/pulse.yaml` — tweak to your thesis.
 - **Graceful degradation**: partial source failures yield reduced-confidence answers, never silent failure.
@@ -58,7 +58,7 @@ Set any of these env vars to enrich responses with paid data sources. The server
 | `CRYPTOQUANT_API_KEY` | CryptoQuant | Reserved for v0.2 |
 | `LAEVITAS_API_KEY` | Laevitas | Reserved for v0.2 |
 | `DUNE_API_KEY` | Dune | ETH fee burn and labelled L2 rent through direct SQL execution |
-| `ETHEREUM_RPC_URL` | Ethereum Execution API | Optional finalized-block fee and Aave V3 Core supplied-capacity transport; internal only and never returned |
+| `ETHEREUM_RPC_URL` | Ethereum Execution API | Optional finalized-block fee plus Aave V3 Core and SparkLend supplied-capacity transport; internal only and never returned |
 | `ETHEREUM_BEACON_API_URL` | Ethereum Beacon API | Optional finalized-epoch reward-component cross-check transport; internal only and never returned |
 
 `DUNE_API_KEY` is used only when a caller explicitly selects
