@@ -48,6 +48,7 @@ describe.skipIf(!runLive)("EigenLayer covered LST ETH quotes", () => {
       "coinbase_oracle_accounting_quote",
       "stader_direct_pool_accounting_quote",
       "stakewise_v3_direct_controller_quote",
+      "swell_reprice_rate_floor_quote",
       "liquid_collective_river_direct_share_quote",
       "mantle_staking_direct_oracle_quote",
     ]);
@@ -57,11 +58,12 @@ describe.skipIf(!runLive)("EigenLayer covered LST ETH quotes", () => {
       "coinbase_oracle_controlled_rate",
       "stader_oracle_reported_accounting",
       "stakewise_v3_keeper_reward_accounting",
+      "swell_reprice_role_controlled_rate",
       "liquid_collective_oracle_reported_accounting",
       "mantle_oracle_reported_accounting",
     ]);
 
-    const [steth, reth, cbeth, ethx, oseth, lseth, meth] = snapshot.covered_quotes;
+    const [steth, reth, cbeth, ethx, oseth, sweth, lseth, meth] = snapshot.covered_quotes;
     expect(steth!.share_accounting_eth_quote_wei).toBe(steth!.share_accounting_token_amount);
     expect(steth!.token_custody_eth_quote_wei).toBe(steth!.token_custody_token_amount);
     expect(steth!.cbeth_exchange_rate_wei).toBeNull();
@@ -84,11 +86,18 @@ describe.skipIf(!runLive)("EigenLayer covered LST ETH quotes", () => {
     );
     expect(ethx!.cbeth_exchange_rate_wei).toBeNull();
     expect(oseth!.cbeth_exchange_rate_wei).toBeNull();
+    expect(sweth!.cbeth_exchange_rate_wei).toBeNull();
+    const swethRate = BigInt(sweth!.sweth_to_eth_rate_wei!);
+    expect(swethRate).toBeGreaterThan(0n);
+    expect(BigInt(sweth!.share_accounting_eth_quote_wei)).toBe((BigInt(sweth!.share_accounting_token_amount) * swethRate) / (10n ** 18n));
+    expect(BigInt(sweth!.token_custody_eth_quote_wei)).toBe((BigInt(sweth!.token_custody_token_amount) * swethRate) / (10n ** 18n));
     expect(lseth!.cbeth_exchange_rate_wei).toBeNull();
     expect(meth!.cbeth_exchange_rate_wei).toBeNull();
     for (const directQuote of [
       oseth!.share_accounting_eth_quote_wei,
       oseth!.token_custody_eth_quote_wei,
+      sweth!.share_accounting_eth_quote_wei,
+      sweth!.token_custody_eth_quote_wei,
       lseth!.share_accounting_eth_quote_wei,
       lseth!.token_custody_eth_quote_wei,
       meth!.share_accounting_eth_quote_wei,
@@ -108,7 +117,7 @@ describe.skipIf(!runLive)("EigenLayer covered LST ETH quotes", () => {
     expect(snapshot.metrics.covered_share_accounting_eth_equivalent_wei).toBe(shareSum.toString());
     expect(snapshot.metrics.covered_token_custody_eth_equivalent_wei).toBe(custodySum.toString());
     expect(snapshot.coverage).toEqual({
-      quoted_strategy_count: 7,
+      quoted_strategy_count: 8,
       fixed_strategy_count: 12,
       unquoted_strategy_labels: EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS,
     });
@@ -126,6 +135,9 @@ describe.skipIf(!runLive)("EigenLayer covered LST ETH quotes", () => {
       "cbeth_exchange_rate_freshness_not_verified",
       "oseth_virtual_rewards_freshness_not_verified",
       "oseth_backing_not_reconciled",
+      "sweth_reprice_freshness_not_verified",
+      "sweth_proxy_upgradeability_not_verified",
+      "sweth_backing_not_reconciled",
       "ethx_oracle_report_freshness_not_verified",
       "ethx_proxy_upgradeability_not_verified",
       "ethx_backing_not_reconciled",
@@ -144,7 +156,8 @@ describe.skipIf(!runLive)("EigenLayer covered LST ETH quotes", () => {
     ]));
     expect(snapshot.report_context?.lseth_last_completed_epoch_id).toMatch(/^(0|[1-9]\d*)$/);
     expect(snapshot.report_context?.ethx_oracle_reporting_block_number).toMatch(/^(0|[1-9]\d*)$/);
-    expect(snapshot.gaps).toHaveLength(19);
+    expect(snapshot.report_context?.sweth_last_reprice_unix).toMatch(/^(0|[1-9]\d*)$/);
+    expect(snapshot.gaps).toHaveLength(22);
     expect(snapshot.summary).toContain("executable withdrawal/liquidity");
     expect(snapshot.summary.length).toBeLessThanOrEqual(500);
   }, 30_000);

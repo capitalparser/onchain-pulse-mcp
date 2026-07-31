@@ -8,35 +8,40 @@ import {
 
 const permanentGaps = EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES.map((code) => ({ code, detail: "bounded" }));
 
+function quote(index: number, amounts: readonly [string, string, string, string], quote_kind: string, trust_basis: string, rates = {}) {
+  return {
+    ...EIGENLAYER_COVERED_LST_STRATEGIES[index],
+    share_accounting_token_amount: amounts[0], token_custody_token_amount: amounts[1],
+    quote_kind, trust_basis, share_accounting_eth_quote_wei: amounts[2], token_custody_eth_quote_wei: amounts[3],
+    cbeth_exchange_rate_wei: null, sweth_to_eth_rate_wei: null, ...rates,
+  };
+}
+
 function verified(): any {
   return {
-    status: "verified",
-    summary: "verified",
-    methodology: "eigenlayer-covered-lst-eth-quotes-v4",
+    status: "verified", summary: "verified", methodology: "eigenlayer-covered-lst-eth-quotes-v5",
     verified_block: { number: 1, hash: `0x${"ab".repeat(32)}`, timestamp: 2 },
     covered_quotes: [
-      { ...EIGENLAYER_COVERED_LST_STRATEGIES[0], share_accounting_token_amount: "100", token_custody_token_amount: "90", quote_kind: "steth_token_wei_identity_quote", trust_basis: "lido_pooled_eth_accounting", share_accounting_eth_quote_wei: "100", token_custody_eth_quote_wei: "90", cbeth_exchange_rate_wei: null },
-      { ...EIGENLAYER_COVERED_LST_STRATEGIES[1], share_accounting_token_amount: "200", token_custody_token_amount: "180", quote_kind: "rocket_pool_direct_aggregate_quote", trust_basis: "rocket_pool_network_accounting", share_accounting_eth_quote_wei: "251", token_custody_eth_quote_wei: "226", cbeth_exchange_rate_wei: null },
-      { ...EIGENLAYER_COVERED_LST_STRATEGIES[2], share_accounting_token_amount: "301", token_custody_token_amount: "271", quote_kind: "coinbase_oracle_accounting_quote", trust_basis: "coinbase_oracle_controlled_rate", share_accounting_eth_quote_wei: "451", token_custody_eth_quote_wei: "406", cbeth_exchange_rate_wei: "1500000000000000000" },
-      { ...EIGENLAYER_COVERED_LST_STRATEGIES[3], share_accounting_token_amount: "400", token_custody_token_amount: "380", quote_kind: "stader_direct_pool_accounting_quote", trust_basis: "stader_oracle_reported_accounting", share_accounting_eth_quote_wei: "460", token_custody_eth_quote_wei: "431", cbeth_exchange_rate_wei: null },
-      { ...EIGENLAYER_COVERED_LST_STRATEGIES[4], share_accounting_token_amount: "400", token_custody_token_amount: "380", quote_kind: "stakewise_v3_direct_controller_quote", trust_basis: "stakewise_v3_keeper_reward_accounting", share_accounting_eth_quote_wei: "460", token_custody_eth_quote_wei: "431", cbeth_exchange_rate_wei: null },
-      { ...EIGENLAYER_COVERED_LST_STRATEGIES[5], share_accounting_token_amount: "600", token_custody_token_amount: "570", quote_kind: "liquid_collective_river_direct_share_quote", trust_basis: "liquid_collective_oracle_reported_accounting", share_accounting_eth_quote_wei: "650", token_custody_eth_quote_wei: "620", cbeth_exchange_rate_wei: null },
-      { ...EIGENLAYER_COVERED_LST_STRATEGIES[6], share_accounting_token_amount: "500", token_custody_token_amount: "470", quote_kind: "mantle_staking_direct_oracle_quote", trust_basis: "mantle_oracle_reported_accounting", share_accounting_eth_quote_wei: "555", token_custody_eth_quote_wei: "521", cbeth_exchange_rate_wei: null },
+      quote(0, ["100", "90", "100", "90"], "steth_token_wei_identity_quote", "lido_pooled_eth_accounting"),
+      quote(1, ["200", "180", "251", "226"], "rocket_pool_direct_aggregate_quote", "rocket_pool_network_accounting"),
+      quote(2, ["301", "271", "451", "406"], "coinbase_oracle_accounting_quote", "coinbase_oracle_controlled_rate", { cbeth_exchange_rate_wei: "1500000000000000000" }),
+      quote(3, ["400", "380", "460", "431"], "stader_direct_pool_accounting_quote", "stader_oracle_reported_accounting"),
+      quote(4, ["400", "380", "460", "431"], "stakewise_v3_direct_controller_quote", "stakewise_v3_keeper_reward_accounting"),
+      quote(5, ["700", "650", "700", "650"], "swell_reprice_rate_floor_quote", "swell_reprice_role_controlled_rate", { sweth_to_eth_rate_wei: "1000000000000000000" }),
+      quote(6, ["600", "570", "650", "620"], "liquid_collective_river_direct_share_quote", "liquid_collective_oracle_reported_accounting"),
+      quote(7, ["500", "470", "555", "521"], "mantle_staking_direct_oracle_quote", "mantle_oracle_reported_accounting"),
     ],
-    report_context: { lseth_last_completed_epoch_id: "123", ethx_oracle_reporting_block_number: "1" },
+    report_context: { lseth_last_completed_epoch_id: "123", ethx_oracle_reporting_block_number: "1", sweth_last_reprice_unix: "0" },
     metrics: {
-      covered_share_accounting_eth_equivalent_wei: "2927", covered_token_custody_eth_equivalent_wei: "2725",
-      lst_restaked_eth_equivalent_wei: null, native_restaked_eth_wei: null,
-      eigenlayer_eth_family_exposure_eth_wei: null, unique_net_eth_locked: null,
-      combined_aave_spark_lido_sky_eigenlayer_demand: null, rehypothecation_ratio: null,
+      covered_share_accounting_eth_equivalent_wei: "3627", covered_token_custody_eth_equivalent_wei: "3375",
+      lst_restaked_eth_equivalent_wei: null, native_restaked_eth_wei: null, eigenlayer_eth_family_exposure_eth_wei: null,
+      unique_net_eth_locked: null, combined_aave_spark_lido_sky_eigenlayer_demand: null, rehypothecation_ratio: null,
       executable_withdrawal_capacity_eth_wei: null,
     },
     identities: { covered_strategy_order_verified: true, covered_token_identities_verified: true, covered_token_decimals_verified: true, token_amounts_and_quotes_independent: true, partial_aggregates_only: true },
-    coverage: { quoted_strategy_count: 7, fixed_strategy_count: 12, unquoted_strategy_labels: [...EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS] },
-    sources: ["ethereum_rpc"],
-    source_status: [{ source: "ethereum_rpc", role: "eigenlayer_finalized_lst_eth_quote_evidence", stale: false }],
-    gaps: permanentGaps.map((gap) => ({ ...gap })),
-    capabilities: { ethereum_rpc_active: true },
+    coverage: { quoted_strategy_count: 8, fixed_strategy_count: 12, unquoted_strategy_labels: [...EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS] },
+    sources: ["ethereum_rpc"], source_status: [{ source: "ethereum_rpc", role: "eigenlayer_finalized_lst_eth_quote_evidence", stale: false }],
+    gaps: permanentGaps.map((gap) => ({ ...gap })), capabilities: { ethereum_rpc_active: true },
   };
 }
 
@@ -50,54 +55,43 @@ function unavailable(): any {
 }
 
 describe("EigenLayer covered LST ETH quote domain", () => {
-  it("pins the exact ordered seven-token strategy-token universe", () => {
-    expect(EIGENLAYER_COVERED_LST_STRATEGIES).toEqual([
-      { label: "stETH", strategy: "0x93c4b944D05dfe6df7645A86cd2206016c51564D", underlying_token: "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84", decimals: 18 },
-      { label: "rETH", strategy: "0x1BeE69b7dFFfA4E2d53C2a2Df135C388AD25dCD2", underlying_token: "0xae78736Cd615f374D3085123A210448E74Fc6393", decimals: 18 },
-      { label: "cbETH", strategy: "0x54945180dB7943c0ed0FEE7EdaB2Bd24620256bc", underlying_token: "0xBe9895146f7AF43049ca1c1AE358B0541Ea49704", decimals: 18 },
-      { label: "ETHx", strategy: "0x9d7eD45EE2E8FC5482fa2428f15C971e6369011d", underlying_token: "0xA35b1B31Ce002FBF2058D22F30f95D405200A15b", decimals: 18 },
-      { label: "osETH", strategy: "0x57ba429517c3473B6d34CA9aCd56c0e735b94c02", underlying_token: "0xf1C9acDc66974dFB6dEcB12aA385b9cD01190E38", decimals: 18 },
-      { label: "lsETH", strategy: "0xAe60d8180437b5C34bB956822ac2710972584473", underlying_token: "0x8c1BEd5b9a0928467c9B1341Da1D7BD5e10b6549", decimals: 18 },
-      { label: "mETH", strategy: "0x298aFB19A105D59E74658C4C334Ff360BadE6dd2", underlying_token: "0xd5F7838F5C461fefF7FE49ea5ebaF7728bB0ADfa", decimals: 18 },
-    ]);
+  it("pins the exact ordered eight-token strategy-token universe", () => {
+    expect(EIGENLAYER_COVERED_LST_STRATEGIES.map((strategy) => strategy.label)).toEqual(["stETH", "rETH", "cbETH", "ETHx", "osETH", "swETH", "lsETH", "mETH"]);
+    expect(EIGENLAYER_COVERED_LST_STRATEGIES[5]).toEqual({ label: "swETH", strategy: "0x0Fe4F44beE93503346A3Ac9EE5A26b130a5796d6", underlying_token: "0xf951E335afb289353dc249e82926178EaC7DEd78", decimals: 18 });
+    expect(EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS).toEqual(["ankrETH", "oETH", "wBETH", "sfrxETH"]);
   });
 
-  it("accepts one exact v4 verified 7-of-12 snapshot with direct ETHx conversions and report context", () => {
+  it("accepts one exact v5 verified 8-of-12 snapshot with Swell floor quotes and context", () => {
     const snapshot = verified();
-    expect(EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS).toEqual(["ankrETH", "oETH", "swETH", "wBETH", "sfrxETH"]);
-    expect(snapshot.covered_quotes.map((quote: any) => [quote.label, quote.quote_kind, quote.trust_basis, quote.share_accounting_eth_quote_wei, quote.token_custody_eth_quote_wei])).toEqual([
-      ["stETH", "steth_token_wei_identity_quote", "lido_pooled_eth_accounting", "100", "90"], ["rETH", "rocket_pool_direct_aggregate_quote", "rocket_pool_network_accounting", "251", "226"], ["cbETH", "coinbase_oracle_accounting_quote", "coinbase_oracle_controlled_rate", "451", "406"], ["ETHx", "stader_direct_pool_accounting_quote", "stader_oracle_reported_accounting", "460", "431"], ["osETH", "stakewise_v3_direct_controller_quote", "stakewise_v3_keeper_reward_accounting", "460", "431"], ["lsETH", "liquid_collective_river_direct_share_quote", "liquid_collective_oracle_reported_accounting", "650", "620"], ["mETH", "mantle_staking_direct_oracle_quote", "mantle_oracle_reported_accounting", "555", "521"],
-    ]);
-    expect(snapshot.methodology).toBe("eigenlayer-covered-lst-eth-quotes-v4");
-    expect(snapshot.report_context).toEqual({ lseth_last_completed_epoch_id: "123", ethx_oracle_reporting_block_number: "1" });
-    expect(snapshot.coverage).toEqual({ quoted_strategy_count: 7, fixed_strategy_count: 12, unquoted_strategy_labels: [...EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS] });
-    expect(snapshot.metrics.covered_share_accounting_eth_equivalent_wei).toBe("2927");
-    expect(snapshot.metrics.covered_token_custody_eth_equivalent_wei).toBe("2725");
+    expect(snapshot.covered_quotes[5]).toMatchObject({ label: "swETH", quote_kind: "swell_reprice_rate_floor_quote", trust_basis: "swell_reprice_role_controlled_rate", sweth_to_eth_rate_wei: "1000000000000000000" });
+    expect(snapshot.report_context).toEqual({ lseth_last_completed_epoch_id: "123", ethx_oracle_reporting_block_number: "1", sweth_last_reprice_unix: "0" });
+    expect(snapshot.coverage).toEqual({ quoted_strategy_count: 8, fixed_strategy_count: 12, unquoted_strategy_labels: [...EIGENLAYER_UNQUOTED_LST_STRATEGY_LABELS] });
+    expect(snapshot.metrics).toMatchObject({ covered_share_accounting_eth_equivalent_wei: "3627", covered_token_custody_eth_equivalent_wei: "3375" });
     expect(snapshot.gaps.map((gap: any) => gap.code)).toEqual(EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES);
     expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(snapshot).success).toBe(true);
   });
 
-  it("accepts zero direct lsETH results and epoch zero without inventing a rate", () => {
-    const zero = verified();
-    for (const quote of zero.covered_quotes) {
-      quote.share_accounting_token_amount = "0"; quote.token_custody_token_amount = "0";
-      quote.share_accounting_eth_quote_wei = "0"; quote.token_custody_eth_quote_wei = "0";
-    }
-    zero.covered_quotes[2]!.cbeth_exchange_rate_wei = "1";
-    zero.report_context.lseth_last_completed_epoch_id = "0";
-    zero.metrics.covered_share_accounting_eth_equivalent_wei = "0";
-    zero.metrics.covered_token_custody_eth_equivalent_wei = "0";
-    expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(zero).success).toBe(true);
+  it("accepts the valid swETH default pair and recomputes full-precision floors", () => {
+    const value = verified();
+    value.covered_quotes[5].share_accounting_token_amount = "115792089237316195423570985008687907853269984665640564039457584007913129637008";
+    value.covered_quotes[5].token_custody_token_amount = "0";
+    value.covered_quotes[5].share_accounting_eth_quote_wei = "115792089237316195423570985008687907853269984665640564039457584007913129637008";
+    value.covered_quotes[5].token_custody_eth_quote_wei = "0";
+    value.metrics.covered_share_accounting_eth_equivalent_wei = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+    value.metrics.covered_token_custody_eth_equivalent_wei = "2725";
+    expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(value).success).toBe(true);
   });
 
-  it("rejects reordered, substituted, duplicate, invalid context, non-18-decimal, or fabricated six-token public evidence", () => {
-    const mutations: Array<(value: ReturnType<typeof verified>) => void> = [
-      (value) => { value.covered_quotes.reverse(); }, (value) => { value.covered_quotes[4]!.label = "mETH"; },
-      (value) => { value.covered_quotes[5]!.strategy = value.covered_quotes[4]!.strategy; }, (value) => { value.covered_quotes[4]!.underlying_token = value.covered_quotes[5]!.underlying_token; },
-      (value) => { value.covered_quotes[4]!.decimals = 17; }, (value) => { value.covered_quotes[4]!.cbeth_exchange_rate_wei = "1"; },
-      (value) => { value.covered_quotes[4]!.quote_kind = "rocket_pool_direct_aggregate_quote"; }, (value) => { value.covered_quotes[4]!.direct_share_accounting_eth_quote = "650"; },
-      (value) => { value.report_context.lseth_last_completed_epoch_id = "01"; }, (value) => { value.metrics.covered_share_accounting_eth_equivalent_wei = "2468"; },
-      (value) => { value.coverage.quoted_strategy_count = 5; }, (value) => { value.coverage.unquoted_strategy_labels.reverse(); },
+  it("rejects malformed, inconsistent, future, zero-rate, default-rate, or overflowing swETH evidence", () => {
+    const max = (2n ** 256n) - 1n;
+    const mutations: Array<(value: any) => void> = [
+      (value) => { value.covered_quotes[5].sweth_to_eth_rate_wei = null; },
+      (value) => { value.covered_quotes[5].sweth_to_eth_rate_wei = "0"; },
+      (value) => { value.report_context.sweth_last_reprice_unix = "3"; },
+      (value) => { value.covered_quotes[5].sweth_to_eth_rate_wei = "2"; },
+      (value) => { value.covered_quotes[5].share_accounting_eth_quote_wei = "701"; },
+      (value) => { value.covered_quotes[5].sweth_to_eth_rate_wei = max.toString(); value.covered_quotes[5].share_accounting_token_amount = max.toString(); },
+      (value) => { value.covered_quotes[4].sweth_to_eth_rate_wei = "1"; },
     ];
     for (const mutate of mutations) {
       const value = verified(); mutate(value);
@@ -105,44 +99,26 @@ describe("EigenLayer covered LST ETH quote domain", () => {
     }
   });
 
-  it("rejects negative, missing, malformed, noncanonical, or overflowing public uint256 values", () => {
-    const mutations: Array<(value: ReturnType<typeof verified>) => void> = [
-      (value) => { value.covered_quotes[4]!.share_accounting_eth_quote_wei = "-1"; },
-      (value) => { delete value.covered_quotes[4]!.token_custody_eth_quote_wei; },
-      (value) => { value.covered_quotes[4]!.share_accounting_token_amount = "not-a-number"; },
-      (value) => { value.covered_quotes[5]!.token_custody_token_amount = "01"; },
-      (value) => { value.covered_quotes[4]!.direct_share_accounting_eth_quote = "650"; },
-      (value) => { value.covered_quotes[4]!.share_accounting_eth_quote_wei = (2n ** 256n).toString(); },
-      (value) => { value.covered_quotes[2]!.cbeth_exchange_rate_wei = "0"; },
-      (value) => { value.report_context.lseth_last_completed_epoch_id = (2n ** 256n).toString(); },
-    ];
-    for (const mutate of mutations) {
-      const value = verified(); mutate(value);
-      expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(value).success).toBe(false);
-    }
-  });
-
-  it("requires every v3 permanent gap and a coherent stale marker", () => {
-    const stale = verified(); stale.source_status[0]!.stale = true; stale.gaps.push({ code: "source_stale", detail: "cached" });
-    expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(stale).success).toBe(true);
+  it("requires all 22 permanent gaps and rejects reordered or partial evidence", () => {
+    expect(EIGENLAYER_LST_ETH_QUOTES_PERMANENT_GAP_CODES).toHaveLength(22);
     for (const mutate of [
-      (value: any) => { value.gaps.pop(); }, (value: any) => { value.gaps.push({ ...value.gaps[0] }); },
-      (value: any) => { value.source_status[0].stale = true; }, (value: any) => { value.gaps.push({ code: "rpc_access_gap", detail: "not verified evidence" }); },
+      (value: any) => { value.covered_quotes.reverse(); }, (value: any) => { value.coverage.quoted_strategy_count = 7; },
+      (value: any) => { value.gaps.pop(); }, (value: any) => { value.covered_quotes[5].strategy = value.covered_quotes[4].strategy; },
+      (value: any) => { value.covered_quotes[6].cbeth_exchange_rate_wei = "1"; },
     ]) {
-      const value = verified(); mutate(value); expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(value).success).toBe(false);
+      const value = verified(); mutate(value);
+      expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(value).success).toBe(false);
     }
   });
 
   it("accepts unavailable evidence atomically and rejects every partial-evidence leak", () => {
     expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(unavailable()).success).toBe(true);
-    const noRpc = unavailable(); noRpc.gaps = [{ code: "rpc_not_configured", detail: "not configured" }]; noRpc.sources = []; noRpc.source_status = [];
-    expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(noRpc).success).toBe(true);
     for (const mutate of [
       (value: any) => { value.verified_block = verified().verified_block; }, (value: any) => { value.covered_quotes = verified().covered_quotes; },
       (value: any) => { value.report_context = verified().report_context; }, (value: any) => { value.metrics.covered_share_accounting_eth_equivalent_wei = "1"; },
-      (value: any) => { value.identities = verified().identities; }, (value: any) => { value.coverage = verified().coverage; },
     ]) {
-      const value = unavailable(); mutate(value); expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(value).success).toBe(false);
+      const value = unavailable(); mutate(value);
+      expect(EigenLayerLstEthQuotesSnapshotSchema.safeParse(value).success).toBe(false);
     }
   });
 });
