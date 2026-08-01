@@ -169,23 +169,27 @@ export function createDashboardServer(options: DashboardServerOptions): {
 // Keep the browser copy independent from the TypeScript module wrapper. Using
 // plain function expressions here makes its source safe to embed in static HTML.
 function deriveDashboardSignalClient(snapshot: EthValueCaptureSnapshot) {
-  const direction = function (metric: EthWindowMetric) {
+  const helpers = {
+    direction(metric: EthWindowMetric) {
     if (metric.current === null || metric.previous === null || metric.delta === null) return "unknown";
     if (metric.delta > 0) return "up";
     if (metric.delta < 0) return "down";
     return "flat";
-  };
-  const changeLabel = function (metric: EthWindowMetric) {
+    },
+    changeLabel(metric: EthWindowMetric) {
     if (metric.current === null || metric.previous === null || metric.pct_change === null) return "No comparison";
     const percentage = Math.abs(metric.pct_change * 100).toLocaleString(undefined, { maximumFractionDigits: 1 });
     const sign = metric.pct_change > 0 ? "+" : metric.pct_change < 0 ? "−" : "±";
     return `${sign}${percentage}% vs prior 30D`;
-  };
-  const card = function (key: string, label: string, metric: EthWindowMetric, interpretation: string, tone: string) {
+    },
+    card(key: string, label: string, metric: EthWindowMetric, interpretation: string, tone: string) {
     if (metric.current === null || metric.previous === null || metric.delta === null) {
       return { key, label, value: metric.current, previous: metric.previous, pctChange: metric.pct_change, direction: "unknown", changeLabel: "No comparison", interpretation: "Awaiting data", tone: "warning" };
     }
-    return { key, label, value: metric.current, previous: metric.previous, pctChange: metric.pct_change, direction: direction(metric), changeLabel: changeLabel(metric), interpretation, tone };
+    return { key, label, value: metric.current, previous: metric.previous, pctChange: metric.pct_change, direction: helpers.direction(metric), changeLabel: helpers.changeLabel(metric), interpretation, tone };
+    },
+    increasing(metric: EthWindowMetric) { return metric.delta !== null && metric.delta > 0; },
+    nonIncreasing(metric: EthWindowMetric) { return metric.delta !== null && metric.delta <= 0; },
   };
   const staleSourceCount = snapshot.source_status.filter(function (source) { return source.stale; }).length;
   const hasDataWarning = snapshot.status !== "complete" || snapshot.stale_data.length > 0 || staleSourceCount > 0 || snapshot.gaps.length > 0;
@@ -193,8 +197,6 @@ function deriveDashboardSignalClient(snapshot: EthValueCaptureSnapshot) {
   const blob = snapshot.metrics.blob_fee_burn_eth;
   const rent = snapshot.metrics.l2_rent_paid_eth;
   const issuance = snapshot.metrics.net_issuance_eth;
-  const increasing = function (metric: EthWindowMetric) { return metric.delta !== null && metric.delta > 0; };
-  const nonIncreasing = function (metric: EthWindowMetric) { return metric.delta !== null && metric.delta <= 0; };
   const issuanceImproving = issuance.current !== null && issuance.previous !== null && issuance.current < issuance.previous;
   const issuanceWorsening = issuance.current !== null && issuance.previous !== null && issuance.current > issuance.previous;
   const issuanceCard = issuance.current === null || issuance.delta === null
@@ -205,13 +207,13 @@ function deriveDashboardSignalClient(snapshot: EthValueCaptureSnapshot) {
         ? issuanceWorsening ? { text: "Supply reduction weakening", tone: "negative" } : { text: "Supply decreasing", tone: "positive" }
         : issuanceImproving ? { text: "Supply pressure easing", tone: "positive" } : { text: "Supply increasing", tone: "negative" };
   const cards = [
-    card("total_burn", "30D ETH burn", burn, increasing(burn) ? "Burn increasing" : burn.delta === 0 ? "Burn stable" : "Burn weakening", increasing(burn) ? "positive" : burn.delta === 0 ? "neutral" : "negative"),
-    card("blob_burn", "30D blob burn", blob, increasing(blob) ? "L2 demand strengthening" : blob.delta === 0 ? "L2 demand stable" : "L2 demand weakening", increasing(blob) ? "positive" : blob.delta === 0 ? "neutral" : "negative"),
-    card("l2_rent", "30D L2 rent", rent, increasing(rent) ? "L1 rent improving" : rent.delta === 0 ? "L1 rent stable" : "L1 rent weakening", increasing(rent) ? "positive" : rent.delta === 0 ? "neutral" : "negative"),
-    card("net_issuance", "30D net issuance", issuance, issuanceCard.text, issuanceCard.tone),
+    helpers.card("total_burn", "30D ETH burn", burn, helpers.increasing(burn) ? "Burn increasing" : burn.delta === 0 ? "Burn stable" : "Burn weakening", helpers.increasing(burn) ? "positive" : burn.delta === 0 ? "neutral" : "negative"),
+    helpers.card("blob_burn", "30D blob burn", blob, helpers.increasing(blob) ? "L2 demand strengthening" : blob.delta === 0 ? "L2 demand stable" : "L2 demand weakening", helpers.increasing(blob) ? "positive" : blob.delta === 0 ? "neutral" : "negative"),
+    helpers.card("l2_rent", "30D L2 rent", rent, helpers.increasing(rent) ? "L1 rent improving" : rent.delta === 0 ? "L1 rent stable" : "L1 rent weakening", helpers.increasing(rent) ? "positive" : rent.delta === 0 ? "neutral" : "negative"),
+    helpers.card("net_issuance", "30D net issuance", issuance, issuanceCard.text, issuanceCard.tone),
   ];
-  const structural = increasing(burn) && increasing(blob) && increasing(rent) && issuanceImproving;
-  const flowDriven = nonIncreasing(burn) && nonIncreasing(blob) && nonIncreasing(rent) && issuance.current !== null && issuance.current >= 0;
+  const structural = helpers.increasing(burn) && helpers.increasing(blob) && helpers.increasing(rent) && issuanceImproving;
+  const flowDriven = helpers.nonIncreasing(burn) && helpers.nonIncreasing(blob) && helpers.nonIncreasing(rent) && issuance.current !== null && issuance.current >= 0;
   if (hasDataWarning) {
     const evidence = [
       snapshot.status !== "complete" ? `Snapshot is ${snapshot.status}.` : null,
@@ -227,7 +229,7 @@ function deriveDashboardSignalClient(snapshot: EthValueCaptureSnapshot) {
   if (flowDriven) {
     return { judgment: { key: "flow_driven", label: "Flow-driven / unconfirmed", detail: "Value-capture signals are not confirming a structural improvement.", tone: "negative" }, evidence: ["30D ETH burn did not increase versus the prior 30D period.", "Blob burn did not increase, leaving L2 demand unconfirmed.", "Net issuance is nonnegative, so supply is not decreasing."], cards };
   }
-  return { judgment: { key: "neutral", label: "Neutral / mixed", detail: "Value-capture signals are mixed across demand, rent, and supply.", tone: "neutral" }, evidence: [increasing(burn) ? "30D ETH burn increased versus the prior 30D period." : "30D ETH burn did not increase versus the prior 30D period.", increasing(rent) ? "L2 rent increased, improving Ethereum revenue capture." : "L2 rent did not increase versus the prior 30D period.", issuanceImproving ? "Net issuance is moving lower, reducing ETH supply pressure." : issuance.current !== null && issuance.current < 0 ? "Net issuance is negative, but supply reduction is not improving." : "Net issuance is nonnegative, so supply is not decreasing."], cards };
+    return { judgment: { key: "neutral", label: "Neutral / mixed", detail: "Value-capture signals are mixed across demand, rent, and supply.", tone: "neutral" }, evidence: [helpers.increasing(burn) ? "30D ETH burn increased versus the prior 30D period." : "30D ETH burn did not increase versus the prior 30D period.", helpers.increasing(rent) ? "L2 rent increased, improving Ethereum revenue capture." : "L2 rent did not increase versus the prior 30D period.", issuanceImproving ? "Net issuance is moving lower, reducing ETH supply pressure." : issuance.current !== null && issuance.current < 0 ? "Net issuance is negative, but supply reduction is not improving." : "Net issuance is nonnegative, so supply is not decreasing."], cards };
 }
 
 const DASHBOARD_HTML = `<!doctype html>
