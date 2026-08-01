@@ -70,6 +70,41 @@ execution.
 
 Set `OPM_LANG=ko` for Korean `summary` strings. Default is `en`.
 
+### Read-only dashboard and opt-in Telegram alerts
+
+The default command remains the MCP stdio server. The dashboard is a separate,
+read-only HTTP mode bound to loopback by default:
+
+```bash
+npm run dashboard
+# or: OPM_DASHBOARD_HOST=127.0.0.1 OPM_DASHBOARD_PORT=8787 npx onchain-pulse-mcp dashboard
+```
+
+It serves `GET /`, `GET /api/health`, and
+`GET /api/eth/value-capture?window=7d|30d|90d`. The API accepts only `window`;
+it always requests the shared snapshot with `paid_mode=free_only` and never
+accepts API keys or RPC URLs. It has no write routes or authentication bypass.
+
+Telegram is a one-shot command intended for an external cron or systemd timer;
+this package does not install a scheduler. It is off unless all three values
+are explicitly set:
+
+```bash
+OPM_TELEGRAM_ALERTS_ENABLED=1 \
+TELEGRAM_BOT_TOKEN='...' \
+TELEGRAM_CHAT_ID='...' \
+npm run telegram-alert
+```
+
+When disabled or missing either Telegram credential, the command does not read
+a snapshot or send any network request. When enabled, it obtains only the
+free-only 30-day snapshot and sends Telegram `sendMessage` only for a net
+issuance regime transition, degraded source state, or confidence drop. Tokens,
+chat IDs, API keys, and RPC URLs are internal transport configuration: they are
+never included in dashboard output, alert results, cache keys, or errors.
+Telegram failures are bounded by a 5-second default timeout
+(`OPM_TELEGRAM_TIMEOUT_MS`, maximum 15 seconds) and return generic statuses.
+
 ### Tools
 
 | Tool | Args | Description |

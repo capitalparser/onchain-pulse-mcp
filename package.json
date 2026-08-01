@@ -21,6 +21,8 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsx src/index.ts",
+    "dashboard": "tsx src/index.ts dashboard",
+    "telegram-alert": "tsx src/index.ts telegram-alert",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:live:eth-value": "RUN_LIVE_ETH_VALUE=1 vitest run tests/live/eth_value_capture.live.test.ts",

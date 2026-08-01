@@ -68,4 +68,18 @@ describe("loadEnv", () => {
     const cfg = loadEnv({ HOME: "/home/test", OPM_HISTORY_PATH: "/var/lib/opm/history.json" });
     expect(cfg.historyPath).toBe("/var/lib/opm/history.json");
   });
+
+  it("loads loopback dashboard defaults and keeps Telegram credentials internal", () => {
+    const cfg = loadEnv({
+      OPM_DASHBOARD_HOST: "127.0.0.1",
+      OPM_DASHBOARD_PORT: "9911",
+      OPM_TELEGRAM_ALERTS_ENABLED: "1",
+      TELEGRAM_BOT_TOKEN: "secret-token",
+      TELEGRAM_CHAT_ID: "123",
+    });
+
+    expect(cfg.dashboard).toEqual({ host: "127.0.0.1", port: 9911 });
+    expect(cfg.telegram?.enabled).toBe(true);
+    expect(JSON.stringify({ dashboard: cfg.dashboard, telegram: { enabled: cfg.telegram?.enabled } })).not.toContain("secret-token");
+  });
 });

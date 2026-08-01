@@ -25,6 +25,23 @@ export interface EnvConfig {
    * Non-leading `~` is preserved as a literal character.
    */
   historyPath: string;
+  /** Read-only dashboard binding. Defaults to loopback to avoid public exposure. */
+  dashboard?: {
+    host: string;
+    port: number;
+  };
+  /** Internal-only Telegram transport configuration. Never serialize this object. */
+  telegram?: {
+    enabled: boolean;
+    botToken?: string;
+    chatId?: string;
+    timeoutMs: number;
+  };
+}
+
+function boundedInteger(raw: string | undefined, fallback: number, minimum: number, maximum: number): number {
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= minimum && value <= maximum ? value : fallback;
 }
 
 export function loadEnv(env: NodeJS.ProcessEnv | Record<string, string | undefined>): EnvConfig {
@@ -51,5 +68,15 @@ export function loadEnv(env: NodeJS.ProcessEnv | Record<string, string | undefin
     ethereumRpcUrl: env.ETHEREUM_RPC_URL,
     ethereumBeaconApiUrl: env.ETHEREUM_BEACON_API_URL,
     historyPath,
+    dashboard: {
+      host: env.OPM_DASHBOARD_HOST || "127.0.0.1",
+      port: boundedInteger(env.OPM_DASHBOARD_PORT, 8787, 1, 65_535),
+    },
+    telegram: {
+      enabled: env.OPM_TELEGRAM_ALERTS_ENABLED === "1",
+      botToken: env.TELEGRAM_BOT_TOKEN,
+      chatId: env.TELEGRAM_CHAT_ID,
+      timeoutMs: boundedInteger(env.OPM_TELEGRAM_TIMEOUT_MS, 5_000, 1, 15_000),
+    },
   };
 }
