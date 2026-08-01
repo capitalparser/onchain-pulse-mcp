@@ -79,4 +79,40 @@ describe("deriveDashboardSignal", () => {
 
     expect(result.cards[1]).toMatchObject({ interpretation: "Awaiting data", direction: "unknown", changeLabel: "No comparison" });
   });
+
+  it("does not call a less-negative issuance structural improvement", () => {
+    const weakening = snapshot();
+    weakening.metrics.net_issuance_eth = { current: -1, previous: -2, delta: 1, pct_change: 0.5, unit: "ETH" };
+
+    const result = deriveDashboardSignal(weakening);
+
+    expect(result.judgment.key).toBe("neutral");
+    expect(result.cards[3]).toMatchObject({ interpretation: "Supply reduction weakening", tone: "negative" });
+    expect(result.evidence).toContain("Net issuance is negative, but supply reduction is not improving.");
+  });
+
+  it("surfaces a stale source as a data warning", () => {
+    const staleSource = snapshot();
+    const source = staleSource.source_status[0]!;
+    staleSource.source_status[0] = {
+      source: source.source,
+      role: source.role,
+      as_of: source.as_of,
+      stale: true,
+    };
+
+    const result = deriveDashboardSignal(staleSource);
+
+    expect(result.judgment.key).toBe("data_warning");
+    expect(result.evidence).toContain("1 stale source needs review.");
+  });
+
+  it("renders zero-to-zero issuance as stable rather than increasing", () => {
+    const stable = snapshot();
+    stable.metrics.net_issuance_eth = { current: 0, previous: 0, delta: 0, pct_change: 0, unit: "ETH" };
+
+    const result = deriveDashboardSignal(stable);
+
+    expect(result.cards[3]).toMatchObject({ interpretation: "Supply stable", tone: "neutral" });
+  });
 });
