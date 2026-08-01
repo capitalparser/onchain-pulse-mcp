@@ -36,12 +36,20 @@ export interface EnvConfig {
     botToken?: string;
     chatId?: string;
     timeoutMs: number;
+    snapshotTimeoutMs: number;
   };
 }
 
 function boundedInteger(raw: string | undefined, fallback: number, minimum: number, maximum: number): number {
   const value = Number(raw);
   return Number.isInteger(value) && value >= minimum && value <= maximum ? value : fallback;
+}
+
+function clampedInteger(raw: string | undefined, fallback: number, minimum: number, maximum: number): number {
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value)) return fallback;
+  return Math.min(maximum, Math.max(minimum, value));
 }
 
 export function loadEnv(env: NodeJS.ProcessEnv | Record<string, string | undefined>): EnvConfig {
@@ -77,6 +85,12 @@ export function loadEnv(env: NodeJS.ProcessEnv | Record<string, string | undefin
       botToken: env.TELEGRAM_BOT_TOKEN,
       chatId: env.TELEGRAM_CHAT_ID,
       timeoutMs: boundedInteger(env.OPM_TELEGRAM_TIMEOUT_MS, 5_000, 1, 15_000),
+      snapshotTimeoutMs: clampedInteger(
+        env.OPM_TELEGRAM_SNAPSHOT_TIMEOUT_MS,
+        30_000,
+        1,
+        60_000,
+      ),
     },
   };
 }

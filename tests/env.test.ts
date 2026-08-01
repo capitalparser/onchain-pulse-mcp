@@ -82,4 +82,11 @@ describe("loadEnv", () => {
     expect(cfg.telegram?.enabled).toBe(true);
     expect(JSON.stringify({ dashboard: cfg.dashboard, telegram: { enabled: cfg.telegram?.enabled } })).not.toContain("secret-token");
   });
+
+  it("defaults and clamps the Telegram snapshot timeout", () => {
+    expect(loadEnv({}).telegram?.snapshotTimeoutMs).toBe(30_000);
+    expect(loadEnv({ OPM_TELEGRAM_SNAPSHOT_TIMEOUT_MS: "0" }).telegram?.snapshotTimeoutMs).toBe(1);
+    expect(loadEnv({ OPM_TELEGRAM_SNAPSHOT_TIMEOUT_MS: "70000" }).telegram?.snapshotTimeoutMs).toBe(60_000);
+    expect(loadEnv({ OPM_TELEGRAM_SNAPSHOT_TIMEOUT_MS: "invalid" }).telegram?.snapshotTimeoutMs).toBe(30_000);
+  });
 });

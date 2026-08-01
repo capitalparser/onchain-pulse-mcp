@@ -15,13 +15,33 @@ export type RunTelegramAlertResult = TelegramNotifyResult | {
   reason: "snapshot_unavailable";
 };
 
+async function waitForSnapshot(
+  provider: DashboardSnapshotProvider,
+  timeoutMs: number,
+) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      provider("30d"),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("snapshot_timeout")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export async function runTelegramAlert(options: RunTelegramAlertOptions): Promise<RunTelegramAlertResult> {
   const telegram = options.env.telegram;
   if (!telegram?.enabled || !telegram.botToken || !telegram.chatId) {
     return { status: "disabled", delivered: false };
   }
   try {
-    const current = await options.provider("30d");
+    const current = await waitForSnapshot(
+      options.provider,
+      telegram.snapshotTimeoutMs ?? 30_000,
+    );
     return await notifyTelegram({
       enabled: true,
       token: telegram.botToken,

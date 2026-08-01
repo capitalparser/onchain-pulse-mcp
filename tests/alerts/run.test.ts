@@ -6,7 +6,7 @@ import type { EthValueCaptureSnapshot } from "../../src/eth_value_capture/types.
 const env: EnvConfig = {
   byok: {}, lang: "en", historyPath: "/tmp/history.json",
   dashboard: { host: "127.0.0.1", port: 8787 },
-  telegram: { enabled: false, timeoutMs: 100, botToken: "secret", chatId: "123" },
+  telegram: { enabled: false, timeoutMs: 100, snapshotTimeoutMs: 30_000, botToken: "secret", chatId: "123" },
 };
 
 function snapshot(): EthValueCaptureSnapshot {
@@ -37,6 +37,9 @@ describe("runTelegramAlert", () => {
     expect(provider).toHaveBeenCalledWith("30d");
     expect(result).toMatchObject({ status: "sent", delivered: true });
     expect(JSON.stringify(result)).not.toContain("secret");
+    const requestBody = JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body));
+    expect(requestBody.text).toContain("Net issuance changed from nonnegative to negative.");
+    expect(requestBody.text).not.toContain("confidence");
   });
 
   it("bounds snapshot-provider failures without serializing transport details", async () => {
@@ -47,5 +50,19 @@ describe("runTelegramAlert", () => {
 
     expect(result).toEqual({ status: "failed", delivered: false, reason: "snapshot_unavailable" });
     expect(JSON.stringify(result)).not.toContain("secret-token");
+  });
+
+  it("returns a bounded generic failure when the snapshot provider never settles", async () => {
+    const pending = runTelegramAlert({
+      env: { ...env, telegram: { ...env.telegram!, enabled: true, snapshotTimeoutMs: 5 } },
+      provider: vi.fn(() => new Promise<EthValueCaptureSnapshot>(() => {})),
+    });
+
+    const result = await Promise.race([
+      pending,
+      new Promise<"test_deadline">((resolve) => setTimeout(() => resolve("test_deadline"), 30)),
+    ]);
+
+    expect(result).toEqual({ status: "failed", delivered: false, reason: "snapshot_unavailable" });
   });
 });
