@@ -106,4 +106,16 @@ describe("ETH value-capture Telegram alerts", () => {
 
     expect(result).toEqual({ status: "failed", delivered: false, reason: "invalid_response" });
   });
+
+  it("rejects an object result without an integer message_id", async () => {
+    const result = await notifyTelegram({ enabled: true, token: "token", chatId: "123", alert: evaluateEthValueAlert({ current: snapshot() }), fetchImpl: vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, result: {} }), { status: 200 })) as unknown as typeof fetch });
+
+    expect(result).toEqual({ status: "failed", delivered: false, reason: "invalid_response" });
+  });
+
+  it("rejects an array result even if it carries a message_id property", async () => {
+    const result = await notifyTelegram({ enabled: true, token: "token", chatId: "123", alert: evaluateEthValueAlert({ current: snapshot() }), fetchImpl: vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, result: [] }), { status: 200 })) as unknown as typeof fetch });
+
+    expect(result).toEqual({ status: "failed", delivered: false, reason: "invalid_response" });
+  });
 });

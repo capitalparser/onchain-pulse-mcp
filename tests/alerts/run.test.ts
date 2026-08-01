@@ -30,7 +30,7 @@ describe("runTelegramAlert", () => {
 
   it("uses the shared 30-day snapshot only when enabled", async () => {
     const provider = vi.fn().mockResolvedValue(snapshot());
-    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, result: {} }), { status: 200 }));
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, result: { message_id: 7 } }), { status: 200 }));
 
     const result = await runTelegramAlert({ env: { ...env, telegram: { ...env.telegram!, enabled: true } }, provider, fetchImpl: fetchImpl as unknown as typeof fetch });
 

@@ -44,7 +44,7 @@ export async function notifyTelegram(options: TelegramNotifyOptions): Promise<Te
         signal: controller.signal,
       },
     );
-    if (!response.ok) {
+    if (response.status !== 200) {
       return { status: "failed", delivered: false, reason: "http_error" };
     }
     let payload: unknown;
@@ -53,12 +53,17 @@ export async function notifyTelegram(options: TelegramNotifyOptions): Promise<Te
     } catch {
       return { status: "failed", delivered: false, reason: "invalid_response" };
     }
+    const result = typeof payload === "object" && payload !== null
+      ? (payload as { result?: unknown }).result
+      : undefined;
     if (
       typeof payload !== "object" ||
       payload === null ||
       (payload as { ok?: unknown }).ok !== true ||
-      typeof (payload as { result?: unknown }).result !== "object" ||
-      (payload as { result?: unknown }).result === null
+      typeof result !== "object" ||
+      result === null ||
+      Array.isArray(result) ||
+      !Number.isInteger((result as { message_id?: unknown }).message_id)
     ) {
       return { status: "failed", delivered: false, reason: "invalid_response" };
     }

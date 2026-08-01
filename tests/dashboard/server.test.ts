@@ -8,10 +8,10 @@ import {
 import { createFreeOnlySnapshotProvider } from "../../src/dashboard/provider.js";
 import type { EthValueCaptureSnapshot } from "../../src/eth_value_capture/types.js";
 
-function snapshot(): EthValueCaptureSnapshot {
+function snapshot(window: EthValueCaptureSnapshot["window"] = "30d"): EthValueCaptureSnapshot {
   return {
     summary: "Complete snapshot.",
-    window: "30d",
+    window,
     cutoff_day: "2026-08-01",
     as_of: "2026-08-01T00:00:00.000Z",
     status: "complete",
@@ -79,15 +79,40 @@ describe("dashboard server", () => {
       "/api/eth/value-capture?window=7d&paid_mode=byok_allowed&api_key=secret",
       async (window) => {
         requested.push(window);
-        return snapshot();
+        return snapshot(window);
       },
     );
 
     expect(result.statusCode).toBe(200);
     expect(requested).toEqual(["7d"]);
-    expect(JSON.parse(result.body)).toMatchObject({ window: "30d", status: "complete" });
+    expect(JSON.parse(result.body)).toMatchObject({ window: "7d", status: "complete" });
     expect(result.body).not.toContain("capabilities");
     expect(result.body).not.toContain("secret");
+  });
+
+  it("rejects a valid provider snapshot whose window does not match the request", async () => {
+    const result = await invoke(
+      "/api/eth/value-capture?window=7d",
+      async () => snapshot("30d"),
+    );
+
+    expect(result).toMatchObject({
+      statusCode: 502,
+      body: '{"error":"snapshot_invalid"}',
+    });
+  });
+
+  it("rejects malformed provider metrics with the same bounded generic response", async () => {
+    const malformed = { ...snapshot("7d"), metrics: {} } as EthValueCaptureSnapshot;
+    const result = await invoke(
+      "/api/eth/value-capture?window=7d",
+      async () => malformed,
+    );
+
+    expect(result).toMatchObject({
+      statusCode: 502,
+      body: '{"error":"snapshot_invalid"}',
+    });
   });
 
   it("returns bounded JSON errors for invalid dashboard routes and windows", async () => {

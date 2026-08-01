@@ -4,7 +4,12 @@ import {
   type Server,
   type ServerResponse,
 } from "node:http";
-import { EthWindowSchema, type EthValueCaptureSnapshot, type EthWindow } from "../eth_value_capture/types.js";
+import {
+  EthValueCaptureSnapshotSchema,
+  EthWindowSchema,
+  type EthValueCaptureSnapshot,
+  type EthWindow,
+} from "../eth_value_capture/types.js";
 
 export type DashboardSnapshot = Omit<EthValueCaptureSnapshot, "capabilities">;
 export type DashboardSnapshotProvider = (window: EthWindow) => Promise<EthValueCaptureSnapshot>;
@@ -104,7 +109,12 @@ export function createDashboardHandler(options: Pick<DashboardServerOptions, "pr
 
     try {
       const snapshot = await options.provider(parsedWindow.data);
-      sendJson(response, 200, sanitizeDashboardSnapshot(snapshot));
+      const parsedSnapshot = EthValueCaptureSnapshotSchema.safeParse(snapshot);
+      if (!parsedSnapshot.success || parsedSnapshot.data.window !== parsedWindow.data) {
+        sendJson(response, 502, { error: "snapshot_invalid" });
+        return;
+      }
+      sendJson(response, 200, sanitizeDashboardSnapshot(parsedSnapshot.data));
     } catch {
       sendJson(response, 503, { error: "snapshot_unavailable" });
     }
