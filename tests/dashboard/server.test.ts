@@ -162,6 +162,7 @@ describe("dashboard server", () => {
     expect(result.body).toContain('id="data-quality"');
     expect(result.body).toContain("Value-capture lens; not a price forecast or trade call.");
     expect(result.body).toContain('id="api-failure"');
+    expect(result.body).not.toContain("__name");
   });
 
   it("starts and stops on an injected loopback host and ephemeral port", async () => {

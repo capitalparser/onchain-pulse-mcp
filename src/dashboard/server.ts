@@ -8,9 +8,9 @@ import {
   EthValueCaptureSnapshotSchema,
   EthWindowSchema,
   type EthValueCaptureSnapshot,
+  type EthWindowMetric,
   type EthWindow,
 } from "../eth_value_capture/types.js";
-import { deriveDashboardSignal } from "./signal.js";
 
 export type DashboardSnapshot = Omit<EthValueCaptureSnapshot, "capabilities">;
 export type DashboardSnapshotProvider = (window: EthWindow) => Promise<EthValueCaptureSnapshot>;
@@ -166,6 +166,70 @@ export function createDashboardServer(options: DashboardServerOptions): {
   };
 }
 
+// Keep the browser copy independent from the TypeScript module wrapper. Using
+// plain function expressions here makes its source safe to embed in static HTML.
+function deriveDashboardSignalClient(snapshot: EthValueCaptureSnapshot) {
+  const direction = function (metric: EthWindowMetric) {
+    if (metric.current === null || metric.previous === null || metric.delta === null) return "unknown";
+    if (metric.delta > 0) return "up";
+    if (metric.delta < 0) return "down";
+    return "flat";
+  };
+  const changeLabel = function (metric: EthWindowMetric) {
+    if (metric.current === null || metric.previous === null || metric.pct_change === null) return "No comparison";
+    const percentage = Math.abs(metric.pct_change * 100).toLocaleString(undefined, { maximumFractionDigits: 1 });
+    const sign = metric.pct_change > 0 ? "+" : metric.pct_change < 0 ? "−" : "±";
+    return `${sign}${percentage}% vs prior 30D`;
+  };
+  const card = function (key: string, label: string, metric: EthWindowMetric, interpretation: string, tone: string) {
+    if (metric.current === null || metric.previous === null || metric.delta === null) {
+      return { key, label, value: metric.current, previous: metric.previous, pctChange: metric.pct_change, direction: "unknown", changeLabel: "No comparison", interpretation: "Awaiting data", tone: "warning" };
+    }
+    return { key, label, value: metric.current, previous: metric.previous, pctChange: metric.pct_change, direction: direction(metric), changeLabel: changeLabel(metric), interpretation, tone };
+  };
+  const staleSourceCount = snapshot.source_status.filter(function (source) { return source.stale; }).length;
+  const hasDataWarning = snapshot.status !== "complete" || snapshot.stale_data.length > 0 || staleSourceCount > 0 || snapshot.gaps.length > 0;
+  const burn = snapshot.metrics.total_burn_eth;
+  const blob = snapshot.metrics.blob_fee_burn_eth;
+  const rent = snapshot.metrics.l2_rent_paid_eth;
+  const issuance = snapshot.metrics.net_issuance_eth;
+  const increasing = function (metric: EthWindowMetric) { return metric.delta !== null && metric.delta > 0; };
+  const nonIncreasing = function (metric: EthWindowMetric) { return metric.delta !== null && metric.delta <= 0; };
+  const issuanceImproving = issuance.current !== null && issuance.previous !== null && issuance.current < issuance.previous;
+  const issuanceWorsening = issuance.current !== null && issuance.previous !== null && issuance.current > issuance.previous;
+  const issuanceCard = issuance.current === null || issuance.delta === null
+    ? { text: "Awaiting data", tone: "warning" }
+    : issuance.delta === 0
+      ? { text: issuance.current === 0 ? "Supply stable" : issuance.current < 0 ? "Supply decreasing" : "Supply increasing", tone: issuance.current < 0 ? "positive" : issuance.current === 0 ? "neutral" : "negative" }
+      : issuance.current < 0
+        ? issuanceWorsening ? { text: "Supply reduction weakening", tone: "negative" } : { text: "Supply decreasing", tone: "positive" }
+        : issuanceImproving ? { text: "Supply pressure easing", tone: "positive" } : { text: "Supply increasing", tone: "negative" };
+  const cards = [
+    card("total_burn", "30D ETH burn", burn, increasing(burn) ? "Burn increasing" : burn.delta === 0 ? "Burn stable" : "Burn weakening", increasing(burn) ? "positive" : burn.delta === 0 ? "neutral" : "negative"),
+    card("blob_burn", "30D blob burn", blob, increasing(blob) ? "L2 demand strengthening" : blob.delta === 0 ? "L2 demand stable" : "L2 demand weakening", increasing(blob) ? "positive" : blob.delta === 0 ? "neutral" : "negative"),
+    card("l2_rent", "30D L2 rent", rent, increasing(rent) ? "L1 rent improving" : rent.delta === 0 ? "L1 rent stable" : "L1 rent weakening", increasing(rent) ? "positive" : rent.delta === 0 ? "neutral" : "negative"),
+    card("net_issuance", "30D net issuance", issuance, issuanceCard.text, issuanceCard.tone),
+  ];
+  const structural = increasing(burn) && increasing(blob) && increasing(rent) && issuanceImproving;
+  const flowDriven = nonIncreasing(burn) && nonIncreasing(blob) && nonIncreasing(rent) && issuance.current !== null && issuance.current >= 0;
+  if (hasDataWarning) {
+    const evidence = [
+      snapshot.status !== "complete" ? `Snapshot is ${snapshot.status}.` : null,
+      snapshot.stale_data.length > 0 ? `${snapshot.stale_data.length} stale data field${snapshot.stale_data.length === 1 ? "" : "s"} needs review.` : null,
+      staleSourceCount > 0 ? `${staleSourceCount} stale source${staleSourceCount === 1 ? "" : "s"} needs review.` : null,
+      snapshot.gaps.length > 0 ? `${snapshot.gaps.length} reported data gap${snapshot.gaps.length === 1 ? "" : "s"} needs review.` : null,
+    ].filter(function (item) { return item !== null; }).slice(0, 3);
+    return { judgment: { key: "data_warning", label: "Data warning", detail: "Review data quality before reading the market signal.", tone: "warning" }, evidence, cards };
+  }
+  if (structural) {
+    return { judgment: { key: "structural", label: "Structural value capture", detail: "Demand, L2 rent, and ETH supply are improving together.", tone: "positive" }, evidence: ["30D ETH burn increased versus the prior 30D period.", "Blob burn increased, supporting L2 demand reaching Ethereum.", issuance.current !== null && issuance.current < 0 && issuance.previous !== null && issuance.previous >= 0 ? "Net issuance turned negative, reducing ETH supply." : "Net issuance declined, reducing ETH supply pressure."], cards };
+  }
+  if (flowDriven) {
+    return { judgment: { key: "flow_driven", label: "Flow-driven / unconfirmed", detail: "Value-capture signals are not confirming a structural improvement.", tone: "negative" }, evidence: ["30D ETH burn did not increase versus the prior 30D period.", "Blob burn did not increase, leaving L2 demand unconfirmed.", "Net issuance is nonnegative, so supply is not decreasing."], cards };
+  }
+  return { judgment: { key: "neutral", label: "Neutral / mixed", detail: "Value-capture signals are mixed across demand, rent, and supply.", tone: "neutral" }, evidence: [increasing(burn) ? "30D ETH burn increased versus the prior 30D period." : "30D ETH burn did not increase versus the prior 30D period.", increasing(rent) ? "L2 rent increased, improving Ethereum revenue capture." : "L2 rent did not increase versus the prior 30D period.", issuanceImproving ? "Net issuance is moving lower, reducing ETH supply pressure." : issuance.current !== null && issuance.current < 0 ? "Net issuance is negative, but supply reduction is not improving." : "Net issuance is nonnegative, so supply is not decreasing."], cards };
+}
+
 const DASHBOARD_HTML = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ETH value capture</title>
 <style>
@@ -179,7 +243,7 @@ const DASHBOARD_HTML = `<!doctype html>
 <p class="footer">30D direction compares the current 30D window with the prior 30D window. Value-capture lens; not a price forecast or trade call. Refreshed: <span id="refreshed">—</span></p>
 <script>
 const byId=id=>document.getElementById(id);const eth=value=>value===null?'—':Number(value).toLocaleString(undefined,{maximumFractionDigits:2})+' ETH';const hasMetric=metric=>metric&&metric.current!==null&&metric.previous!==null&&metric.delta!==null;const toneClass=tone=>tone==='positive'||tone==='negative'||tone==='warning'?tone:'neutral';const directionArrow=direction=>direction==='up'?'↑':direction==='down'?'↓':direction==='flat'?'→':'?';
-const deriveSignal=${deriveDashboardSignal.toString()};
+const deriveSignal=${deriveDashboardSignalClient.toString()};
 function renderTrend(id,metric,tone){const root=byId(id);root.replaceChildren();if(!hasMetric(metric)){root.textContent='No comparable period';return}const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 220 38');svg.setAttribute('role','img');svg.setAttribute('aria-label','Current 30D versus prior 30D comparison');const min=Math.min(metric.previous,metric.current),max=Math.max(metric.previous,metric.current),range=max-min||1;const y=value=>30-((value-min)/range)*22;const line=document.createElementNS('http://www.w3.org/2000/svg','line');line.setAttribute('x1','12');line.setAttribute('x2','208');line.setAttribute('y1',''+y(metric.previous));line.setAttribute('y2',''+y(metric.current));line.setAttribute('stroke',tone==='positive'?'#98d68c':tone==='negative'?'#f2ac9a':'#bed0e5');line.setAttribute('stroke-width','2');svg.append(line);[[12,metric.previous],[208,metric.current]].forEach(([x,value])=>{const dot=document.createElementNS('http://www.w3.org/2000/svg','circle');dot.setAttribute('cx',''+x);dot.setAttribute('cy',''+y(value));dot.setAttribute('r','4');dot.setAttribute('fill','#10141a');dot.setAttribute('stroke',tone==='positive'?'#98d68c':tone==='negative'?'#f2ac9a':'#bed0e5');dot.setAttribute('stroke-width','2');svg.append(dot)});const labels=document.createElement('div');labels.className='trend-labels';labels.innerHTML='<span>Prior 30D</span><span>Current 30D</span>';root.append(svg,labels)}
 function renderCard(id,metric,signalCard){byId(id).textContent=eth(metric.current);const badge=byId(id+'-badge');badge.className='badge '+toneClass(signalCard.tone);badge.textContent=directionArrow(signalCard.direction)+' '+signalCard.interpretation;byId(id+'-change').textContent=signalCard.changeLabel;renderTrend(id+'-trend',metric,signalCard.tone)}
 fetch('/api/eth/value-capture?window=30d').then(response=>response.ok?response.json():Promise.reject()).then(s=>{const r=deriveSignal(s);const banner=byId('judgment-banner');banner.className='panel judgment '+toneClass(r.judgment.tone);byId('judgment-title').textContent=r.judgment.label;byId('judgment-detail').textContent=r.judgment.detail;const evidence=byId('evidence-list');evidence.replaceChildren(...r.evidence.slice(0,3).map(text=>{const item=document.createElement('li');item.textContent=text;return item}));renderCard('total-burn',s.metrics.total_burn_eth,r.cards[0]);renderCard('blob-burn',s.metrics.blob_fee_burn_eth,r.cards[1]);renderCard('l2-rent',s.metrics.l2_rent_paid_eth,r.cards[2]);renderCard('net-issuance',s.metrics.net_issuance_eth,r.cards[3]);byId('status').textContent=s.status;byId('confidence').textContent=Math.round(s.confidence*100)+'%';byId('sources').textContent=s.sources.join(', ')||'—';byId('gaps').textContent=s.gaps.map(g=>g.code).join(', ')||'None';byId('refreshed').textContent=s.as_of}).catch(()=>byId('api-failure').classList.remove('hidden'));
