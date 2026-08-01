@@ -139,15 +139,28 @@ describe("dashboard server", () => {
     expect(result).toMatchObject({ statusCode: 200, body: '{"status":"ok"}' });
   });
 
-  it("renders static KPI UI with an explicit API failure state", async () => {
+  it("returns an empty favicon response so opening the dashboard has no avoidable console error", async () => {
+    const result = await invoke("/favicon.ico");
+
+    expect(result).toMatchObject({ statusCode: 204, body: "" });
+  });
+
+  it("renders a decision-oriented UI with judgment, evidence, trend, and data-quality regions", async () => {
     const result = await invoke("/");
 
     expect(result.statusCode).toBe(200);
     expect(result.headers["content-type"]).toContain("text/html");
-    expect(result.body).toContain("30D burn");
-    expect(result.body).toContain("Blob burn");
-    expect(result.body).toContain("L2 rent");
-    expect(result.body).toContain("Net issuance");
+    expect(result.body).toContain('id="judgment-banner"');
+    expect(result.body).toContain('id="judgment-title"');
+    expect(result.body).toContain('id="total-burn-badge"');
+    expect(result.body).toContain('id="blob-burn-badge"');
+    expect(result.body).toContain('id="l2-rent-badge"');
+    expect(result.body).toContain('id="net-issuance-badge"');
+    expect(result.body).toContain('id="total-burn-trend"');
+    expect(result.body).toContain('id="blob-burn-trend"');
+    expect(result.body).toContain('id="evidence-list"');
+    expect(result.body).toContain('id="data-quality"');
+    expect(result.body).toContain("Value-capture lens; not a price forecast or trade call.");
     expect(result.body).toContain('id="api-failure"');
   });
 
