@@ -14,7 +14,7 @@ Existing onchain intelligence tools (Nansen, Arkham, Coinglass) are dashboards b
 
 - **Read-only · snapshot-oriented**: idempotent MCP responses, no write actions, local-only history materialisation for composite z-scores.
 - **Source adapters**: free and BYOK-backed market, Ethereum, RWA, derivatives, and Korea data paths.
-- **16 MCP tools**: the six original macro tools, token forensics, ETH value capture, bounded Ethereum execution-fee and consensus-reward cross-checks, finalized Aave V3 Core and SparkLend supplied-capacity views, Lido pooled ETH backing, legacy Maker/Sky ETH-family adapter-held token custody, fixed legacy EigenLayer ETH-family LST strategy token-unit exposure with native-restaking diagnostics, and bounded quotes for stETH/rETH/cbETH/ETHx/oETH/osETH/swETH/lsETH/mETH.
+- **17 MCP tools**: the six original macro tools, token forensics, ETH value capture, the free/read-only ETH demand compass, bounded Ethereum execution-fee and consensus-reward cross-checks, finalized Aave V3 Core and SparkLend supplied-capacity views, Lido pooled ETH backing, legacy Maker/Sky ETH-family adapter-held token custody, fixed legacy EigenLayer ETH-family LST strategy token-unit exposure with native-restaking diagnostics, and bounded quotes for stETH/rETH/cbETH/ETHx/oETH/osETH/swETH/lsETH/mETH.
 - **BYOK enrichment**: free defaults work out of the box; paid keys (Nansen/Glassnode/Arkham/Coinglass/CryptoQuant/Laevitas) are auto-detected via env vars.
 - **Composite pulse score**: 7-input weighted z-score with weights externalized to `config/pulse.yaml` — tweak to your thesis.
 - **Graceful degradation**: partial source failures yield reduced-confidence answers, never silent failure.
@@ -143,6 +143,7 @@ under your usual process supervisor if it must restart after host failure.
 | `get_rwa_pulse` | `window?` (`1d`, `7d`, `30d`) | RWA TVL pulse |
 | `get_token_forensics` | `chain`, `token_address`, `pool_address?`, `max_wallets?`, `paid_mode?` | Phase 1 token-level forensic snapshot with pool discovery, non-prescriptive flow reading, confidence, and explicit gaps |
 | `get_eth_value_capture` | `window?`, `paid_mode?`, `include_rollups?` | ETH fee burn, execution tips, L2 rent, supply change, and aligned issuance |
+| `get_eth_demand_compass` | none | Free/read-only five-axis ETH demand reading; never treats unavailable sources as positive demand |
 | `get_eth_fee_cross_check` | `start_block`, `end_block`, `include_blocks?` | Exact finalized Ethereum execution-fee and burn verification for a bounded block range |
 | `get_eth_collateral_demand` | none | Exact finalized Aave V3 Core ETH-family supplied capacity; broader collateral and lock metrics stay null |
 | `get_spark_eth_collateral_capacity` | none | Exact finalized SparkLend ETH-family supplied capacity; Aave/Spark overlap and broader collateral metrics stay null |
@@ -155,6 +156,36 @@ under your usual process supervisor if it must restart after host failure.
 `get_token_forensics` is Phase 1. It discovers the best pool through DexScreener
 and returns a `ForensicsSnapshot` with `thin-data` or `unknown` flow reading
 until wallet-flow providers are wired. It does not prescribe trades.
+
+### ETH demand compass
+
+`get_eth_demand_compass` is a read-only, no-argument synthesis surface. It
+always requests the existing 30-day value-capture snapshot in `free_only` mode,
+the 7-day stablecoin pulse, and — only when `ETHEREUM_RPC_URL` is already
+configured internally — finalized Aave V3 Core and Lido point-in-time evidence.
+Callers cannot supply Dune keys, RPC URLs, or a paid mode.
+
+It reports five independent axes: `usage_demand`, `l2_settlement`,
+`supply_absorption`, `collateral_demand`, and `monetary_settlement`. Trend axes
+are only scored when their current and prior inputs are present. Aave and Lido
+are intentionally point-in-time observations in v1, so collateral demand stays
+`unknown` with a `null` score until comparable prior snapshots exist. The
+stablecoin axis is a 7-day liquidity proxy, not Ethereum-only settlement volume.
+
+The top-level judgment is `structural` only when usage, L2 settlement, and
+supply absorption all improve; it is `flow-driven` only when stablecoin
+liquidity improves without broad core confirmation. Any missing core trend
+axis (usage, L2 settlement, or supply absorption), or fewer than three known
+trend-capable axes, produces `data-warning`, never a fabricated composite. Every
+missing or stale input is preserved as an explicit gap. No credentials,
+capabilities, or raw RPC configuration are returned.
+
+```json
+{
+  "name": "get_eth_demand_compass",
+  "arguments": {}
+}
+```
 
 ### ETH value capture
 
