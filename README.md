@@ -131,6 +131,42 @@ Telegram delivery has a separate 5-second default timeout
 The daemon has no authentication, HTTP listener, or deployment manager: run it
 under your usual process supervisor if it must restart after host failure.
 
+### Offline Demand Compass validation
+
+`compass-backtest` is an offline, descriptive validation harness for prior
+Compass observations. It is not a price-prediction model, trading signal, or
+parameter optimizer. It has no default input path, network calls, credential
+use, cache access, or write path: it reads exactly one explicit local regular
+file and writes one JSON report to stdout.
+
+```bash
+npm run compass-backtest -- ./compass-observations.jsonl
+```
+
+The input is bounded JSONL (maximum 5 MiB, 10,000 rows, and 32 KiB per row).
+Each strictly validated row must be chronological and unique by `observed_at`.
+An outcome can only be recorded at or after its observation, preventing future
+outcomes from leaking into a historical judgment.
+
+```json
+{"observed_at":"2026-01-01T00:00:00.000Z","judgment":"structural","confidence":0.82,"outcomes":{"7d":{"outcome_at":"2026-01-08T00:00:00.000Z","eth_return_pct":3.1,"value_capture_delta_pct":1.4},"30d":null,"90d":null}}
+```
+
+For each 7d/30d/90d horizon the report provides outcome coverage, available
+ETH-return average and median, a structural-confirmation rate, and the same
+summary grouped by judgment. `sample_count` is the number of rows with an
+available outcome for that horizon. Missing outcomes remain missing; they do
+not count as negative returns or failed structural confirmations. Structural
+confirmation means a `structural` judgment with an available positive
+`value_capture_delta_pct`; it is not a claim that ETH price should rise.
+
+Interpret the output as an audit of whether past labels were subsequently
+consistent with observed value-capture changes, and keep the observation time,
+source cutoff, and outcome time separate. Do not tune labels or thresholds on
+the same period used to judge them; reserve a later, untouched period for any
+comparison. Small samples, partial source coverage, and changing chain
+economics can make any apparent association unstable.
+
 ### Tools
 
 | Tool | Args | Description |

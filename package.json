@@ -22,6 +22,7 @@
     "build": "tsup",
     "dev": "tsx src/index.ts",
     "dashboard": "tsx src/index.ts dashboard",
+    "compass-backtest": "tsx src/index.ts compass-backtest",
     "telegram-alert": "tsx src/index.ts telegram-alert",
     "telegram-daemon": "tsx src/index.ts telegram-daemon",
     "test": "vitest run",
