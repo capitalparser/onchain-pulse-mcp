@@ -32,7 +32,10 @@ function snapshot(overrides: Partial<EthValueCaptureSnapshot> = {}): EthValueCap
 describe("ETH value-capture Telegram alerts", () => {
   it("evaluates regime, health, and confidence transitions with a timestamp-independent fingerprint", () => {
     const current = snapshot({ status: "partial", stale_data: ["coinmetrics-community:stale"], gaps: [{ code: "partial_result", detail: "Partial result." }], confidence: 0.3 });
-    const previous = snapshot({ confidence: 0.8 });
+    const previous = snapshot({
+      confidence: 0.8,
+      metrics: { ...snapshot().metrics, net_issuance_eth: { current: 2, previous: 2, delta: 0, pct_change: 0, unit: "ETH" } },
+    });
     const later = { ...current, as_of: "2026-08-01T00:05:00.000Z" };
 
     const alert = evaluateEthValueAlert({ current, previous });
@@ -57,6 +60,36 @@ describe("ETH value-capture Telegram alerts", () => {
     expect(alert.events).toEqual([{ kind: "source_health", message: "Snapshot quality is partial, stale, or has reported gaps." }]);
     expect(alert.fingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(alert.fingerprint).not.toBe(differentStaleSource.fingerprint);
+  });
+
+  it("compares a persisted snapshot's current regime rather than its rolling previous window", () => {
+    const current = snapshot({
+      metrics: { ...snapshot().metrics, net_issuance_eth: { current: -1, previous: -1, delta: 0, pct_change: 0, unit: "ETH" } },
+    });
+    const persistedPrevious = snapshot({
+      metrics: { ...snapshot().metrics, net_issuance_eth: { current: 1, previous: 1, delta: 0, pct_change: 0, unit: "ETH" } },
+    });
+
+    const alert = evaluateEthValueAlert({ current, previous: persistedPrevious });
+
+    expect(alert.events.map((event) => event.kind)).toContain("regime_transition");
+    expect(alert.events.find((event) => event.kind === "regime_transition")?.message).toBe("Net issuance changed from nonnegative to negative.");
+  });
+
+  it("keeps a repeated regime transition fingerprint stable across cutoff days", () => {
+    const current = snapshot({
+      cutoff_day: "2026-08-02",
+      metrics: { ...snapshot().metrics, net_issuance_eth: { current: -1, previous: -1, delta: 0, pct_change: 0, unit: "ETH" } },
+    });
+    const persistedPrevious = snapshot({
+      cutoff_day: "2026-08-01",
+      metrics: { ...snapshot().metrics, net_issuance_eth: { current: 1, previous: 1, delta: 0, pct_change: 0, unit: "ETH" } },
+    });
+
+    const alert = evaluateEthValueAlert({ current, previous: persistedPrevious });
+    const later = evaluateEthValueAlert({ current: { ...current, cutoff_day: "2026-08-03" }, previous: persistedPrevious });
+
+    expect(alert.fingerprint).toBe(later.fingerprint);
   });
 
   it("does no network work when Telegram is disabled or unconfigured", async () => {
