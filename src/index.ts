@@ -1,5 +1,6 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { runTelegramAlert } from "./alerts/run.js";
+import { startTelegramAlertDaemon } from "./alerts/daemon.js";
 import { makeContext } from "./adapters/base.js";
 import { realFetcher } from "./cli/fetcher.js";
 import { runWarmup } from "./cli/warmup.js";
@@ -20,7 +21,7 @@ async function main(): Promise<void> {
   }
 
   const mode = process.argv[2];
-  if (mode === "dashboard" || mode === "telegram-alert") {
+  if (mode === "dashboard" || mode === "telegram-alert" || mode === "telegram-daemon") {
     const ctx = makeContext({ env });
     const snapshotProvider = createFreeOnlySnapshotProvider((input) =>
       handleEthValueCapture(input, { env, ctx }),
@@ -36,10 +37,31 @@ async function main(): Promise<void> {
       console.error(JSON.stringify({ mode: "dashboard", ...address }));
       return;
     }
-    const result = await runTelegramAlert({ env, provider: snapshotProvider });
-    // eslint-disable-next-line no-console
-    console.error(JSON.stringify(result));
-    if (result.status === "failed") process.exitCode = 1;
+    if (mode === "telegram-alert") {
+      const result = await runTelegramAlert({ env, provider: snapshotProvider });
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify(result));
+      if (result.status === "failed") process.exitCode = 1;
+      return;
+    }
+
+    const telegram = env.telegram;
+    if (!telegram?.enabled || !telegram.botToken || !telegram.chatId) {
+      const result = await runTelegramAlert({ env, provider: snapshotProvider });
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify(result));
+      return;
+    }
+    const daemon = startTelegramAlertDaemon({
+      intervalMs: telegram.intervalMs,
+      runCycle: () => runTelegramAlert({ env, provider: snapshotProvider }),
+      onCycle: (result) => {
+        // eslint-disable-next-line no-console
+        console.error(JSON.stringify(result));
+      },
+      signalTarget: process,
+    });
+    await daemon.done;
     return;
   }
 

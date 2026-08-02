@@ -37,6 +37,10 @@ export interface EnvConfig {
     chatId?: string;
     timeoutMs: number;
     snapshotTimeoutMs: number;
+    /** Local-only state store for dedupe, retry, and previous-snapshot comparison. */
+    statePath: string;
+    /** Daemon cadence, clamped between one minute and one day. */
+    intervalMs: number;
   };
 }
 
@@ -52,15 +56,17 @@ function clampedInteger(raw: string | undefined, fallback: number, minimum: numb
   return Math.min(maximum, Math.max(minimum, value));
 }
 
+function expandLeadingTilde(raw: string, home: string): string {
+  if (raw.startsWith("~/")) return join(home, raw.slice(2));
+  return raw === "~" ? home : raw;
+}
+
 export function loadEnv(env: NodeJS.ProcessEnv | Record<string, string | undefined>): EnvConfig {
   const langParse = LangSchema.safeParse(env.OPM_LANG);
   const home = env.HOME ?? "";
   const rawHistory = env.OPM_HISTORY_PATH ?? "~/.cache/onchain-pulse-mcp/history.json";
-  const historyPath = rawHistory.startsWith("~/")
-    ? join(home, rawHistory.slice(2))
-    : rawHistory === "~"
-      ? home
-      : rawHistory;
+  const historyPath = expandLeadingTilde(rawHistory, home);
+  const rawTelegramState = env.OPM_TELEGRAM_STATE_PATH ?? "~/.cache/onchain-pulse-mcp/telegram-alert-state.json";
 
   return {
     byok: {
@@ -91,6 +97,8 @@ export function loadEnv(env: NodeJS.ProcessEnv | Record<string, string | undefin
         1,
         60_000,
       ),
+      statePath: expandLeadingTilde(rawTelegramState, home),
+      intervalMs: clampedInteger(env.OPM_TELEGRAM_INTERVAL_MS, 900_000, 60_000, 86_400_000),
     },
   };
 }

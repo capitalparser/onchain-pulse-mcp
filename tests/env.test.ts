@@ -89,4 +89,19 @@ describe("loadEnv", () => {
     expect(loadEnv({ OPM_TELEGRAM_SNAPSHOT_TIMEOUT_MS: "70000" }).telegram?.snapshotTimeoutMs).toBe(60_000);
     expect(loadEnv({ OPM_TELEGRAM_SNAPSHOT_TIMEOUT_MS: "invalid" }).telegram?.snapshotTimeoutMs).toBe(30_000);
   });
+
+  it("uses a tilde-expanded Telegram state path and bounds daemon cadence", () => {
+    const defaults = loadEnv({ HOME: "/home/test" }).telegram;
+    expect(defaults?.statePath).toBe("/home/test/.cache/onchain-pulse-mcp/telegram-alert-state.json");
+    expect(defaults?.intervalMs).toBe(900_000);
+
+    const configured = loadEnv({
+      HOME: "/home/test",
+      OPM_TELEGRAM_STATE_PATH: "~/state/telegram.json",
+      OPM_TELEGRAM_INTERVAL_MS: "1",
+    }).telegram;
+    expect(configured?.statePath).toBe("/home/test/state/telegram.json");
+    expect(configured?.intervalMs).toBe(60_000);
+    expect(loadEnv({ OPM_TELEGRAM_INTERVAL_MS: "999999999" }).telegram?.intervalMs).toBe(86_400_000);
+  });
 });

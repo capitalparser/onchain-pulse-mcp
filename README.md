@@ -85,9 +85,7 @@ It serves `GET /`, `GET /api/health`, and
 it always requests the shared snapshot with `paid_mode=free_only` and never
 accepts API keys or RPC URLs. It has no write routes or authentication bypass.
 
-Telegram is a one-shot command intended for an external cron or systemd timer;
-this package does not install a scheduler. It is off unless all three values
-are explicitly set:
+Telegram is off unless all three values are explicitly set:
 
 ```bash
 OPM_TELEGRAM_ALERTS_ENABLED=1 \
@@ -96,18 +94,42 @@ TELEGRAM_CHAT_ID='...' \
 npm run telegram-alert
 ```
 
-When disabled or missing either Telegram credential, the command does not read
-a snapshot or send any network request. When enabled, it obtains only the
-free-only 30-day snapshot and sends Telegram `sendMessage` only for a net
-issuance regime transition between that snapshot's current and previous metric
-or for degraded source state. The pure evaluator can also detect a confidence
-drop when a prior snapshot is supplied, but this one-shot CLI does not persist
-or supply prior snapshots. Tokens, chat IDs, API keys, and RPC URLs are internal
+When disabled or missing either Telegram credential, neither command reads a
+snapshot nor sends a Telegram request. When enabled, it obtains only the
+free-only 30-day snapshot and sends Telegram `sendMessage` for a net issuance
+regime transition, degraded source state, or a confidence drop from the prior
+persisted snapshot. Tokens, chat IDs, API keys, and RPC URLs are internal
 transport configuration: they are never included in dashboard output, alert
-results, cache keys, or errors. Snapshot acquisition has a 30-second default
-timeout (`OPM_TELEGRAM_SNAPSHOT_TIMEOUT_MS`, clamped to 1–60,000 milliseconds).
+results, cache keys, state, or errors.
+
+`npm run telegram-alert` remains a one-shot command. It is state-aware: by
+default it stores the previous snapshot, the last successfully delivered
+fingerprint, and a failed alert waiting to be retried at
+`~/.cache/onchain-pulse-mcp/telegram-alert-state.json`. Override that local
+path with `OPM_TELEGRAM_STATE_PATH`; a leading `~/` is expanded against `HOME`.
+State is schema-validated and atomically replaced using a temporary file and
+rename. Do not place it on a filesystem that cannot safely rename files.
+
+For a self-contained long-running process, use the daemon mode:
+
+```bash
+OPM_TELEGRAM_ALERTS_ENABLED=1 \
+TELEGRAM_BOT_TOKEN='...' \
+TELEGRAM_CHAT_ID='...' \
+npm run telegram-daemon
+```
+
+It runs one cycle immediately and only schedules the next after the prior
+cycle finishes, so slow source calls cannot overlap. `SIGINT` and `SIGTERM`
+stop future cycles cleanly; an already-running cycle is bounded by its source
+and delivery timeouts. Set `OPM_TELEGRAM_INTERVAL_MS` to change cadence; it
+defaults to 15 minutes and is clamped to 60,000–86,400,000 milliseconds.
+Snapshot acquisition has a 30-second default timeout
+(`OPM_TELEGRAM_SNAPSHOT_TIMEOUT_MS`, clamped to 1–60,000 milliseconds).
 Telegram delivery has a separate 5-second default timeout
 (`OPM_TELEGRAM_TIMEOUT_MS`, maximum 15 seconds); failures return generic statuses.
+The daemon has no authentication, HTTP listener, or deployment manager: run it
+under your usual process supervisor if it must restart after host failure.
 
 ### Tools
 
