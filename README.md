@@ -748,6 +748,31 @@ epoch and verifies no more than one epoch.
 - **v0.3**: A view (timing) — `should_long_short`, `position_health`.
 - **v0.4**: HTTP transport + remote hosting option.
 - **v0.5**: Backtesting harness for the composite pulse score.
+- **v0.6**: Infrastructure Demand Compass — common axes for execution demand, data availability, settlement revenue, security demand, supply absorption, and token-holder value capture. Ethereum remains the reference profile; Solana, Bitcoin, Celestia, and L2s get chain-specific adapters rather than forced metric equivalence.
+- **v0.7**: Historical compass store and dashboard/Telegram integration, with per-axis provenance, comparability, and confidence history.
+
+### Why on-chain analysis is useful (and what it cannot prove)
+
+On-chain analysis is most useful as an observation layer, not as a standalone price
+forecast. It measures state and flow that are difficult to fake at scale: blockspace
+consumption, fees paid to a chain, data-availability demand, token supply changes,
+staking/collateral locks, and settlement activity. These are meaningful because they
+help distinguish usage-led demand from liquidity- or narrative-led price moves.
+
+It is weaker at causal attribution and short-horizon prediction. A fee increase can
+come from temporary congestion, a stablecoin balance can reflect liquidity migration,
+and collateral supplied is not the same as unique net ETH locked. Off-chain flows,
+leverage, governance, and macro conditions still matter.
+
+The product therefore treats every compass reading as three separate claims:
+
+1. **Observed** — what the source actually measured.
+2. **Interpreted** — which direction that measurement points within the chain's economic model.
+3. **Comparable** — whether it can be compared across periods or chains without a semantic mismatch.
+
+Missing, stale, or non-comparable inputs produce `unknown`/`data-warning`; they never
+improve a composite score. A compass reading is an evidence-backed regime indicator,
+not a trade recommendation.
 
 ## License
 
@@ -772,3 +797,15 @@ MIT — see [LICENSE](LICENSE).
 ### v0.1 범위
 
 거시 pulse (D view) 만. 종목 스크리닝(B), 진입·청산 타이밍(A)은 같은 데이터 레이어 위에 v0.2 / v0.3 단계적 추가.
+
+### 기반 인프라 체인 확장 계획
+
+ETH 분석을 기준 프로필로 두고, 이후 Solana·Bitcoin·Celestia·L2를 체인별 경제
+모델에 맞춰 확장한다. 모든 체인에 동일한 숫자를 억지로 적용하지 않고, 실행수요,
+데이터 가용성 수요, 정산수익, 보안수요, 공급흡수, 토큰 보유자 가치귀속을 공통
+축으로 삼되 각 체인의 특수 지표와 비교 가능성을 별도로 기록한다.
+
+온체인 분석은 가격 예측기가 아니라 상태·흐름·가치귀속을 관측하는 계층이다.
+따라서 각 결과를 `관측값`, `해석`, `비교 가능성`으로 나누고, 결측·stale·의미가
+다른 지표는 `unknown`으로 남긴다. 최종 결과는 매매 추천이 아닌 근거 기반 국면
+판정이다.
