@@ -4,14 +4,22 @@ import { startTelegramAlertDaemon } from "./alerts/daemon.js";
 import { makeContext } from "./adapters/base.js";
 import { realFetcher } from "./cli/fetcher.js";
 import { runWarmup } from "./cli/warmup.js";
+import { runCompassBacktestCli } from "./backtest/cli.js";
 import { createFreeOnlySnapshotProvider } from "./dashboard/provider.js";
 import { createDashboardServer } from "./dashboard/server.js";
 import { loadEnv } from "./env.js";
 import { createServer, handleEthValueCapture } from "./server.js";
 
 async function main(): Promise<void> {
+  const mode = process.argv[2];
+  if (mode === "compass-backtest") {
+    const result = await runCompassBacktestCli(process.argv.slice(3));
+    // eslint-disable-next-line no-console
+    console.log(JSON.stringify(result));
+    return;
+  }
   const env = loadEnv(process.env);
-  if (process.argv[2] === "warmup") {
+  if (mode === "warmup") {
     const days = Number(process.env.OPM_WARMUP_DAYS ?? 30);
     const keys = process.env.OPM_WARMUP_KEYS?.split(",").filter(Boolean);
     const result = await runWarmup({ historyPath: env.historyPath, days, keys, fetcher: realFetcher });
@@ -20,7 +28,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  const mode = process.argv[2];
   if (mode === "dashboard" || mode === "telegram-alert" || mode === "telegram-daemon") {
     const ctx = makeContext({ env });
     const snapshotProvider = createFreeOnlySnapshotProvider((input) =>
