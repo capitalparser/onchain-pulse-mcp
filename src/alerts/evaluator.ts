@@ -28,7 +28,11 @@ function issuanceRegime(value: number | null): IssuanceRegime {
 
 export function evaluateEthValueAlert(input: EthValueAlertInput): EthValueAlert {
   const currentRegime = issuanceRegime(input.current.metrics.net_issuance_eth.current);
-  const previousRegime = issuanceRegime(input.current.metrics.net_issuance_eth.previous);
+  // A persisted snapshot represents the last observed state. Fall back to the
+  // rolling comparison only for the stateless one-shot invocation.
+  const previousRegime = issuanceRegime(
+    input.previous?.metrics.net_issuance_eth.current ?? input.current.metrics.net_issuance_eth.previous,
+  );
   const healthDegraded =
     input.current.status !== "complete" ||
     input.current.stale_data.length > 0 ||
@@ -59,7 +63,6 @@ export function evaluateEthValueAlert(input: EthValueAlertInput): EthValueAlert 
 
   const fingerprintInput = JSON.stringify({
     window: input.current.window,
-    cutoff_day: input.current.cutoff_day,
     current_regime: currentRegime,
     previous_regime: previousRegime,
     status: input.current.status,
@@ -70,6 +73,8 @@ export function evaluateEthValueAlert(input: EthValueAlertInput): EthValueAlert 
       .sort(),
     gap_codes: input.current.gaps.map((gap) => gap.code).sort(),
     confidence_dropped: confidenceDropped,
+    confidence_current: confidenceDropped ? input.current.confidence : null,
+    confidence_previous: confidenceDropped ? input.previous?.confidence ?? null : null,
   });
 
   return {

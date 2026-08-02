@@ -100,19 +100,24 @@ describe("runTelegramAlert", () => {
   it("retries a pending failed alert and suppresses a fingerprint after delivery", async () => {
     const statePath = createStatePath("retry");
     const enabledEnv = { ...env, telegram: { ...env.telegram!, enabled: true, statePath } };
+    const degraded = {
+      ...snapshot(),
+      status: "partial" as const,
+      metrics: { ...snapshot().metrics, net_issuance_eth: { current: -1, previous: -1, delta: 0, pct_change: 0, unit: "ETH" } },
+    };
     const unavailable = vi.fn().mockResolvedValue(new Response("no", { status: 503 }));
 
-    await expect(runTelegramAlert({ env: enabledEnv, provider: vi.fn().mockResolvedValue(snapshot()), fetchImpl: unavailable as unknown as typeof fetch })).resolves.toEqual({ status: "failed", delivered: false, reason: "http_error" });
+    await expect(runTelegramAlert({ env: enabledEnv, provider: vi.fn().mockResolvedValue(degraded), fetchImpl: unavailable as unknown as typeof fetch })).resolves.toEqual({ status: "failed", delivered: false, reason: "http_error" });
     const pending = await loadTelegramAlertState(statePath);
     expect(pending?.pendingAlert?.shouldNotify).toBe(true);
 
     const delivered = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, result: { message_id: 8 } }), { status: 200 }));
-    const sent = await runTelegramAlert({ env: enabledEnv, provider: vi.fn().mockResolvedValue(snapshot()), fetchImpl: delivered as unknown as typeof fetch });
+    const sent = await runTelegramAlert({ env: enabledEnv, provider: vi.fn().mockResolvedValue(degraded), fetchImpl: delivered as unknown as typeof fetch });
     expect(sent).toMatchObject({ status: "sent", delivered: true });
     expect((await loadTelegramAlertState(statePath))?.pendingAlert).toBeUndefined();
 
     const suppressedTransport = vi.fn();
-    await expect(runTelegramAlert({ env: enabledEnv, provider: vi.fn().mockResolvedValue(snapshot()), fetchImpl: suppressedTransport as unknown as typeof fetch })).resolves.toMatchObject({ status: "duplicate", delivered: false });
+    await expect(runTelegramAlert({ env: enabledEnv, provider: vi.fn().mockResolvedValue(degraded), fetchImpl: suppressedTransport as unknown as typeof fetch })).resolves.toMatchObject({ status: "duplicate", delivered: false });
     expect(suppressedTransport).not.toHaveBeenCalled();
   });
 

@@ -46,6 +46,9 @@ export async function runTelegramAlert(options: RunTelegramAlertOptions): Promis
   let state: TelegramAlertState;
   try {
     state = await loadTelegramAlertState(telegram.statePath) ?? { version: 1 };
+    // Establish durable state before external work so an unwritable path
+    // fails closed instead of sending an unrecordable Telegram alert.
+    await saveTelegramAlertState(telegram.statePath, state);
   } catch {
     return { status: "failed", delivered: false, reason: "state_unavailable" };
   }
