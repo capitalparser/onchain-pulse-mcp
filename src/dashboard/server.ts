@@ -11,12 +11,23 @@ import {
   type EthWindowMetric,
   type EthWindow,
 } from "../eth_value_capture/types.js";
+import {
+  EthDemandCompassSnapshotSchema,
+  type EthDemandCompassSnapshot,
+} from "../eth_demand_compass/types.js";
 
 export type DashboardSnapshot = Omit<EthValueCaptureSnapshot, "capabilities">;
 export type DashboardSnapshotProvider = (window: EthWindow) => Promise<EthValueCaptureSnapshot>;
+export type DashboardCompassSnapshot = Pick<
+  EthDemandCompassSnapshot,
+  "summary" | "as_of" | "window" | "judgment" | "axes" | "evidence" | "sources" | "confidence" | "gaps" | "methodology_version"
+>;
+export type DashboardCompassProvider = () => Promise<EthDemandCompassSnapshot>;
 
 export interface DashboardServerOptions {
   provider: DashboardSnapshotProvider;
+  /** Optional because the existing dashboard remains useful without Compass inputs. */
+  compassProvider?: DashboardCompassProvider;
   host?: string;
   port?: number;
 }
@@ -75,7 +86,35 @@ export function sanitizeDashboardSnapshot(snapshot: EthValueCaptureSnapshot): Da
   };
 }
 
-export function createDashboardHandler(options: Pick<DashboardServerOptions, "provider">) {
+/** Select the public, schema-validated Compass fields rather than forwarding provider objects. */
+export function sanitizeDashboardCompass(snapshot: EthDemandCompassSnapshot): DashboardCompassSnapshot {
+  const {
+    summary,
+    as_of,
+    window,
+    judgment,
+    axes,
+    evidence,
+    sources,
+    confidence,
+    gaps,
+    methodology_version,
+  } = snapshot;
+  return {
+    summary,
+    as_of,
+    window,
+    judgment,
+    axes,
+    evidence,
+    sources,
+    confidence,
+    gaps,
+    methodology_version,
+  };
+}
+
+export function createDashboardHandler(options: Pick<DashboardServerOptions, "provider" | "compassProvider">) {
   return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     if (request.method !== "GET") {
       sendJson(response, 405, { error: "method_not_allowed" });
@@ -100,6 +139,24 @@ export function createDashboardHandler(options: Pick<DashboardServerOptions, "pr
     }
     if (url.pathname === "/api/health") {
       sendJson(response, 200, { status: "ok" });
+      return;
+    }
+    if (url.pathname === "/api/eth/demand-compass") {
+      if (options.compassProvider === undefined) {
+        sendJson(response, 503, { error: "compass_unavailable" });
+        return;
+      }
+      try {
+        const snapshot = await options.compassProvider();
+        const parsedSnapshot = EthDemandCompassSnapshotSchema.safeParse(snapshot);
+        if (!parsedSnapshot.success) {
+          sendJson(response, 502, { error: "compass_invalid" });
+          return;
+        }
+        sendJson(response, 200, sanitizeDashboardCompass(parsedSnapshot.data));
+      } catch {
+        sendJson(response, 503, { error: "compass_unavailable" });
+      }
       return;
     }
     if (url.pathname !== "/api/eth/value-capture") {
@@ -134,7 +191,10 @@ export function createDashboardServer(options: DashboardServerOptions): {
 } {
   const host = options.host ?? "127.0.0.1";
   const port = options.port ?? 8787;
-  const server = createHttpServer(createDashboardHandler({ provider: options.provider }));
+  const server = createHttpServer(createDashboardHandler({
+    provider: options.provider,
+    compassProvider: options.compassProvider,
+  }));
 
   return {
     server,
@@ -235,10 +295,12 @@ function deriveDashboardSignalClient(snapshot: EthValueCaptureSnapshot) {
 const DASHBOARD_HTML = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ETH value capture</title>
 <style>
-:root{color-scheme:dark;--bg:#10141a;--panel:#1a222d;--border:#34404d;--ink:#f2f5f7;--muted:#aab7c4;--positive:#98d68c;--negative:#f2ac9a;--warning:#f2ce83;--neutral:#bed0e5}*{box-sizing:border-box}body{font:16px/1.45 system-ui,sans-serif;max-width:1080px;margin:2rem auto;padding:0 1rem 3rem;background:var(--bg);color:var(--ink)}h1,h2,p{margin:0}.eyebrow{color:var(--muted);font-size:.85rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase}.lead{max-width:720px;margin-top:.5rem;color:var(--muted)}.panel{background:var(--panel);border:1px solid var(--border);border-radius:.75rem;padding:1.25rem}.hidden{display:none}.error{margin:1rem 0;background:#632b31;border:1px solid #bd6b73;padding:1rem;border-radius:.75rem}.judgment{margin:1.5rem 0;display:flex;gap:1rem;align-items:flex-start;border-left:5px solid var(--neutral)}.judgment.positive{border-color:var(--positive)}.judgment.negative{border-color:var(--negative)}.judgment.warning{border-color:var(--warning)}.judgment h2{font-size:1.55rem}.judgment p{margin-top:.35rem;color:var(--muted)}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1rem}.card{min-height:184px;display:flex;flex-direction:column;gap:.6rem}.card h2{font-size:.95rem;color:var(--muted)}.value{font-size:1.5rem;font-weight:750;letter-spacing:-.02em}.badge{display:inline-flex;align-self:flex-start;gap:.35rem;padding:.22rem .55rem;border:1px solid currentColor;border-radius:999px;font-size:.8rem;font-weight:700}.badge.positive{color:var(--positive)}.badge.negative{color:var(--negative)}.badge.warning{color:var(--warning)}.badge.neutral{color:var(--neutral)}.comparison{font-size:.85rem;color:var(--muted)}.trend{margin-top:auto;padding-top:.5rem}.trend svg{width:100%;height:38px;display:block}.trend-labels{display:flex;justify-content:space-between;color:var(--muted);font-size:.72rem}.details{display:grid;grid-template-columns:1.35fr .65fr;gap:1rem;margin-top:1rem}.details h2{font-size:1rem;margin-bottom:.65rem}.evidence{margin:0;padding-left:1.25rem}.evidence li+li{margin-top:.45rem}.quality{display:grid;gap:.55rem}.quality-row{display:flex;justify-content:space-between;gap:1rem;border-bottom:1px solid var(--border);padding-bottom:.45rem}.quality-row span:last-child{text-align:right;color:var(--muted);overflow-wrap:anywhere}.footer{margin-top:1rem;color:var(--muted);font-size:.82rem}@media(max-width:760px){body{margin:1rem auto}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.details{grid-template-columns:1fr}}@media(max-width:440px){.grid{grid-template-columns:1fr}.judgment{display:block}}
+:root{color-scheme:dark;--bg:#10141a;--panel:#1a222d;--border:#34404d;--ink:#f2f5f7;--muted:#aab7c4;--positive:#98d68c;--negative:#f2ac9a;--warning:#f2ce83;--neutral:#bed0e5}*{box-sizing:border-box}body{font:16px/1.45 system-ui,sans-serif;max-width:1080px;margin:2rem auto;padding:0 1rem 3rem;background:var(--bg);color:var(--ink)}h1,h2,p{margin:0}.eyebrow{color:var(--muted);font-size:.85rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase}.lead{max-width:720px;margin-top:.5rem;color:var(--muted)}.panel{background:var(--panel);border:1px solid var(--border);border-radius:.75rem;padding:1.25rem}.hidden{display:none}.error{margin:1rem 0;background:#632b31;border:1px solid #bd6b73;padding:1rem;border-radius:.75rem}.judgment{margin:1.5rem 0;display:flex;gap:1rem;align-items:flex-start;border-left:5px solid var(--neutral)}.judgment.positive{border-color:var(--positive)}.judgment.negative{border-color:var(--negative)}.judgment.warning{border-color:var(--warning)}.judgment h2{font-size:1.55rem}.judgment p{margin-top:.35rem;color:var(--muted)}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1rem}.card{min-height:184px;display:flex;flex-direction:column;gap:.6rem}.card h2{font-size:.95rem;color:var(--muted)}.value{font-size:1.5rem;font-weight:750;letter-spacing:-.02em}.badge{display:inline-flex;align-self:flex-start;gap:.35rem;padding:.22rem .55rem;border:1px solid currentColor;border-radius:999px;font-size:.8rem;font-weight:700}.badge.positive{color:var(--positive)}.badge.negative{color:var(--negative)}.badge.warning{color:var(--warning)}.badge.neutral{color:var(--neutral)}.comparison{font-size:.85rem;color:var(--muted)}.trend{margin-top:auto;padding-top:.5rem}.trend svg{width:100%;height:38px;display:block}.trend-labels{display:flex;justify-content:space-between;color:var(--muted);font-size:.72rem}.details{display:grid;grid-template-columns:1.35fr .65fr;gap:1rem;margin-top:1rem}.details h2{font-size:1rem;margin-bottom:.65rem}.evidence{margin:0;padding-left:1.25rem}.evidence li+li{margin-top:.45rem}.quality{display:grid;gap:.55rem}.quality-row{display:flex;justify-content:space-between;gap:1rem;border-bottom:1px solid var(--border);padding-bottom:.45rem}.quality-row span:last-child{text-align:right;color:var(--muted);overflow-wrap:anywhere}.compass{margin:1.5rem 0}.compass-heading{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start}.compass-heading h2{font-size:1.3rem;margin-top:.2rem}.compass-summary{color:var(--muted);margin-top:.5rem}.axis-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:.65rem;margin-top:1rem}.axis{border:1px solid var(--border);border-radius:.55rem;padding:.75rem;min-height:104px}.axis h3{font-size:.82rem;margin:0 0 .55rem;color:var(--muted)}.compass-details{display:grid;grid-template-columns:1.35fr .65fr;gap:1rem;margin-top:1rem}.compass-details h3{font-size:.9rem;margin:0 0 .6rem}.footer{margin-top:1rem;color:var(--muted);font-size:.82rem}@media(max-width:900px){.axis-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:760px){body{margin:1rem auto}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.details,.compass-details{grid-template-columns:1fr}}@media(max-width:440px){.grid,.axis-grid{grid-template-columns:1fr}.judgment{display:block}}
 </style></head>
 <body><header><p class="eyebrow">Ethereum value capture · 30D</p><h1>Is ETH value capture improving?</h1><p class="lead">A signal board for demand, L2 rent, and supply—not a raw-data list.</p></header>
 <p id="api-failure" class="error hidden" role="alert">Dashboard data could not be refreshed. Try again later.</p>
+<p id="compass-failure" class="error hidden" role="alert">Demand Compass could not be refreshed. Value-capture indicators remain available.</p>
+<section id="compass-panel" class="panel compass" aria-live="polite"><div class="compass-heading"><div><p class="eyebrow">ETH Demand Compass</p><h2 id="compass-judgment">Loading demand direction…</h2><p id="compass-summary" class="compass-summary">Waiting for the latest five-axis reading.</p></div><span id="compass-confidence" class="badge neutral">Confidence —</span></div><div class="axis-grid" aria-label="Demand Compass axes"><article class="axis"><h3>Usage demand</h3><span id="compass-usage-demand" class="badge neutral">Waiting</span></article><article class="axis"><h3>L2 settlement</h3><span id="compass-l2-settlement" class="badge neutral">Waiting</span></article><article class="axis"><h3>Supply absorption</h3><span id="compass-supply-absorption" class="badge neutral">Waiting</span></article><article class="axis"><h3>Collateral demand</h3><span id="compass-collateral-demand" class="badge neutral">Waiting</span></article><article class="axis"><h3>Monetary settlement</h3><span id="compass-monetary-settlement" class="badge neutral">Waiting</span></article></div><div class="compass-details"><article><h3>What is driving it</h3><ol id="compass-evidence" class="evidence"><li>Waiting for the latest demand evidence.</li></ol></article><aside><h3>Compass data quality</h3><div class="quality"><div class="quality-row"><strong>Gaps</strong><span id="compass-gaps">—</span></div><div class="quality-row"><strong>As of</strong><span id="compass-as-of">—</span></div></div></aside></div></section>
 <section id="judgment-banner" class="panel judgment neutral" aria-live="polite"><div><p class="eyebrow">Current reading</p><h2 id="judgment-title">Loading signal…</h2><p id="judgment-detail">Waiting for the latest snapshot.</p></div></section>
 <section class="grid" aria-label="Key value capture indicators"><article class="panel card"><h2>30D ETH burn</h2><p id="total-burn" class="value">—</p><span id="total-burn-badge" class="badge neutral">Waiting for data</span><p id="total-burn-change" class="comparison">—</p><div id="total-burn-trend" class="trend"></div></article><article class="panel card"><h2>30D blob burn</h2><p id="blob-burn" class="value">—</p><span id="blob-burn-badge" class="badge neutral">Waiting for data</span><p id="blob-burn-change" class="comparison">—</p><div id="blob-burn-trend" class="trend"></div></article><article class="panel card"><h2>30D L2 rent</h2><p id="l2-rent" class="value">—</p><span id="l2-rent-badge" class="badge neutral">Waiting for data</span><p id="l2-rent-change" class="comparison">—</p><div id="l2-rent-trend" class="trend"></div></article><article class="panel card"><h2>30D net issuance</h2><p id="net-issuance" class="value">—</p><span id="net-issuance-badge" class="badge neutral">Waiting for data</span><p id="net-issuance-change" class="comparison">—</p><div id="net-issuance-trend" class="trend"></div></article></section>
 <section class="details"><article class="panel"><h2>Why this reading</h2><ol id="evidence-list" class="evidence"><li>Waiting for the latest snapshot.</li></ol></article><aside id="data-quality" class="panel"><h2>Data quality</h2><div class="quality"><div class="quality-row"><strong>Status</strong><span id="status">—</span></div><div class="quality-row"><strong>Confidence</strong><span id="confidence">—</span></div><div class="quality-row"><strong>Sources</strong><span id="sources">—</span></div><div class="quality-row"><strong>Gaps</strong><span id="gaps">—</span></div></div></aside></section>
@@ -246,7 +308,12 @@ const DASHBOARD_HTML = `<!doctype html>
 <script>
 const byId=id=>document.getElementById(id);const eth=value=>value===null?'—':Number(value).toLocaleString(undefined,{maximumFractionDigits:2})+' ETH';const hasMetric=metric=>metric&&metric.current!==null&&metric.previous!==null&&metric.delta!==null;const toneClass=tone=>tone==='positive'||tone==='negative'||tone==='warning'?tone:'neutral';const directionArrow=direction=>direction==='up'?'↑':direction==='down'?'↓':direction==='flat'?'→':'?';
 const deriveSignal=${deriveDashboardSignalClient.toString()};
-function renderTrend(id,metric,tone){const root=byId(id);root.replaceChildren();if(!hasMetric(metric)){root.textContent='No comparable period';return}const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 220 38');svg.setAttribute('role','img');svg.setAttribute('aria-label','Current 30D versus prior 30D comparison');const min=Math.min(metric.previous,metric.current),max=Math.max(metric.previous,metric.current),range=max-min||1;const y=value=>30-((value-min)/range)*22;const line=document.createElementNS('http://www.w3.org/2000/svg','line');line.setAttribute('x1','12');line.setAttribute('x2','208');line.setAttribute('y1',''+y(metric.previous));line.setAttribute('y2',''+y(metric.current));line.setAttribute('stroke',tone==='positive'?'#98d68c':tone==='negative'?'#f2ac9a':'#bed0e5');line.setAttribute('stroke-width','2');svg.append(line);[[12,metric.previous],[208,metric.current]].forEach(([x,value])=>{const dot=document.createElementNS('http://www.w3.org/2000/svg','circle');dot.setAttribute('cx',''+x);dot.setAttribute('cy',''+y(value));dot.setAttribute('r','4');dot.setAttribute('fill','#10141a');dot.setAttribute('stroke',tone==='positive'?'#98d68c':tone==='negative'?'#f2ac9a':'#bed0e5');dot.setAttribute('stroke-width','2');svg.append(dot)});const labels=document.createElement('div');labels.className='trend-labels';labels.innerHTML='<span>Prior 30D</span><span>Current 30D</span>';root.append(svg,labels)}
+function renderTrend(id,metric,tone){const root=byId(id);root.replaceChildren();if(!hasMetric(metric)){root.textContent='No comparable period';return}const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 220 38');svg.setAttribute('role','img');svg.setAttribute('aria-label','Current 30D versus prior 30D comparison');const min=Math.min(metric.previous,metric.current),max=Math.max(metric.previous,metric.current),range=max-min||1;const y=value=>30-((value-min)/range)*22;const line=document.createElementNS('http://www.w3.org/2000/svg','line');line.setAttribute('x1','12');line.setAttribute('x2','208');line.setAttribute('y1',''+y(metric.previous));line.setAttribute('y2',''+y(metric.current));line.setAttribute('stroke',tone==='positive'?'#98d68c':tone==='negative'?'#f2ac9a':'#bed0e5');line.setAttribute('stroke-width','2');svg.append(line);[[12,metric.previous],[208,metric.current]].forEach(([x,value])=>{const dot=document.createElementNS('http://www.w3.org/2000/svg','circle');dot.setAttribute('cx',''+x);dot.setAttribute('cy',''+y(value));dot.setAttribute('r','4');dot.setAttribute('fill','#10141a');dot.setAttribute('stroke',tone==='positive'?'#98d68c':tone==='negative'?'#f2ac9a':'#bed0e5');dot.setAttribute('stroke-width','2');svg.append(dot)});const labels=document.createElement('div');labels.className='trend-labels';const prior=document.createElement('span');prior.textContent='Prior 30D';const current=document.createElement('span');current.textContent='Current 30D';labels.append(prior,current);root.append(svg,labels)}
 function renderCard(id,metric,signalCard){byId(id).textContent=eth(metric.current);const badge=byId(id+'-badge');badge.className='badge '+toneClass(signalCard.tone);badge.textContent=directionArrow(signalCard.direction)+' '+signalCard.interpretation;byId(id+'-change').textContent=signalCard.changeLabel;renderTrend(id+'-trend',metric,signalCard.tone)}
+function compassTone(status){return status==='improving'?'positive':status==='weakening'?'negative':status==='unknown'?'warning':'neutral'}
+function compassLabel(status){return status==='improving'?'↑ Improving':status==='weakening'?'↓ Weakening':status==='neutral'?'→ Neutral':'? Trend unavailable'}
+function compassJudgment(judgment){return judgment==='structural'?'Structural demand improving':judgment==='flow-driven'?'Liquidity-led / unconfirmed':judgment==='data-warning'?'Demand data warning':'Demand mixed / neutral'}
+function renderCompass(compass){byId('compass-judgment').textContent=compassJudgment(compass.judgment);byId('compass-summary').textContent=compass.summary;const confidence=byId('compass-confidence');confidence.className='badge '+compassTone(compass.judgment==='data-warning'?'unknown':'neutral');confidence.textContent='Confidence '+Math.round(compass.confidence*100)+'%';[['usage_demand','compass-usage-demand'],['l2_settlement','compass-l2-settlement'],['supply_absorption','compass-supply-absorption'],['collateral_demand','compass-collateral-demand'],['monetary_settlement','compass-monetary-settlement']].forEach(([axis,id])=>{const item=compass.axes[axis];const badge=byId(id);badge.className='badge '+compassTone(item.status);badge.textContent=compassLabel(item.status)});const evidence=byId('compass-evidence');evidence.replaceChildren(...compass.evidence.slice(0,3).map(text=>{const item=document.createElement('li');item.textContent=text;return item}));byId('compass-gaps').textContent=compass.gaps.map(gap=>gap.code).join(', ')||'None';byId('compass-as-of').textContent=compass.as_of}
 fetch('/api/eth/value-capture?window=30d').then(response=>response.ok?response.json():Promise.reject()).then(s=>{const r=deriveSignal(s);const banner=byId('judgment-banner');banner.className='panel judgment '+toneClass(r.judgment.tone);byId('judgment-title').textContent=r.judgment.label;byId('judgment-detail').textContent=r.judgment.detail;const evidence=byId('evidence-list');evidence.replaceChildren(...r.evidence.slice(0,3).map(text=>{const item=document.createElement('li');item.textContent=text;return item}));renderCard('total-burn',s.metrics.total_burn_eth,r.cards[0]);renderCard('blob-burn',s.metrics.blob_fee_burn_eth,r.cards[1]);renderCard('l2-rent',s.metrics.l2_rent_paid_eth,r.cards[2]);renderCard('net-issuance',s.metrics.net_issuance_eth,r.cards[3]);byId('status').textContent=s.status;byId('confidence').textContent=Math.round(s.confidence*100)+'%';byId('sources').textContent=s.sources.join(', ')||'—';byId('gaps').textContent=s.gaps.map(g=>g.code).join(', ')||'None';byId('refreshed').textContent=s.as_of}).catch(()=>byId('api-failure').classList.remove('hidden'));
+fetch('/api/eth/demand-compass').then(response=>response.ok?response.json():Promise.reject()).then(renderCompass).catch(()=>byId('compass-failure').classList.remove('hidden'));
 </script></body></html>`;

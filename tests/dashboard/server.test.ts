@@ -1,11 +1,15 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import {
   createDashboardHandler,
   createDashboardServer,
+  type DashboardCompassProvider,
   type DashboardSnapshotProvider,
 } from "../../src/dashboard/server.js";
 import { createFreeOnlySnapshotProvider } from "../../src/dashboard/provider.js";
+import { createFreeOnlyCompassProvider } from "../../src/dashboard/provider.js";
+import type { EthDemandCompassSnapshot } from "../../src/eth_demand_compass/types.js";
 import type { EthValueCaptureSnapshot } from "../../src/eth_value_capture/types.js";
 
 function snapshot(window: EthValueCaptureSnapshot["window"] = "30d"): EthValueCaptureSnapshot {
@@ -44,11 +48,36 @@ function snapshot(window: EthValueCaptureSnapshot["window"] = "30d"): EthValueCa
   };
 }
 
-async function invoke(url: string, provider: DashboardSnapshotProvider = async () => snapshot()) {
+function compassSnapshot(): EthDemandCompassSnapshot {
+  return {
+    summary: "Ethereum demand is improving across core trend axes.",
+    as_of: "2026-08-01T00:00:00.000Z",
+    window: "30d",
+    judgment: "structural",
+    axes: {
+      usage_demand: { status: "improving", score: 1, evidence: ["L1 fees and burn rose."], sources: ["dune"], confidence: 1 },
+      l2_settlement: { status: "improving", score: 1, evidence: ["L2 rent rose."], sources: ["growthepie"], confidence: 1 },
+      supply_absorption: { status: "improving", score: 1, evidence: ["Net issuance declined."], sources: ["coinmetrics"], confidence: 1 },
+      collateral_demand: { status: "unknown", score: null, evidence: ["Point-in-time only."], sources: ["ethereum_rpc"], confidence: 0.5 },
+      monetary_settlement: { status: "improving", score: 1, evidence: ["Stablecoin supply rose."], sources: ["defillama"], confidence: 1 },
+    },
+    evidence: ["usage demand: improving.", "l2 settlement: improving.", "supply absorption: improving."],
+    sources: ["dune", "growthepie", "coinmetrics"],
+    confidence: 0.88,
+    gaps: [{ code: "collateral_trend_not_available", detail: "No comparable collateral history." }],
+    methodology_version: "eth-demand-compass-v1",
+  };
+}
+
+async function invoke(
+  url: string,
+  provider: DashboardSnapshotProvider = async () => snapshot(),
+  compassProvider?: DashboardCompassProvider,
+) {
   let body = "";
   let statusCode = 200;
   const headers: Record<string, string> = {};
-  const handler = createDashboardHandler({ provider });
+  const handler = createDashboardHandler({ provider, compassProvider });
   await handler(
     { method: "GET", url } as IncomingMessage,
     {
@@ -61,6 +90,54 @@ async function invoke(url: string, provider: DashboardSnapshotProvider = async (
   return { body, statusCode, headers };
 }
 
+class FixtureElement {
+  textContent = "";
+  className = "";
+  children: FixtureElement[] = [];
+  readonly classList = {
+    add: (token: string) => { this.className = `${this.className} ${token}`.trim(); },
+    remove: (token: string) => { this.className = this.className.split(" ").filter((item) => item !== token).join(" "); },
+  };
+
+  replaceChildren(...children: FixtureElement[]): void {
+    this.children = children;
+    this.textContent = "";
+  }
+
+  append(...children: FixtureElement[]): void {
+    this.children.push(...children);
+  }
+
+  setAttribute(): void {}
+}
+
+async function runDashboardFixture(html: string, valueCapture: EthValueCaptureSnapshot, compass: EthDemandCompassSnapshot) {
+  const elements = new Map<string, FixtureElement>();
+  for (const match of html.matchAll(/<[^>]*id="([^"]+)"[^>]*>/g)) {
+    const id = match[1];
+    if (id !== undefined) {
+      const element = new FixtureElement();
+      const className = match[0].match(/class="([^"]*)"/)?.[1];
+      if (className !== undefined) element.className = className;
+      elements.set(id, element);
+    }
+  }
+  const script = html.match(/<script>\n([\s\S]*)\n<\/script>/)?.[1];
+  if (script === undefined) throw new Error("dashboard_script_missing");
+  const document = {
+    getElementById(id: string) { return elements.get(id) ?? null; },
+    createElement() { return new FixtureElement(); },
+    createElementNS() { return new FixtureElement(); },
+  };
+  const fetch = async (path: string) => ({
+    ok: true,
+    json: async () => path.includes("demand-compass") ? compass : valueCapture,
+  });
+  runInNewContext(script, { document, fetch, Math, Number, Promise });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  return elements;
+}
+
 describe("dashboard server", () => {
   it("forces the shared snapshot provider into free-only mode", async () => {
     const inputs: Array<{ window: string; paid_mode: string; include_rollups: boolean }> = [];
@@ -71,6 +148,17 @@ describe("dashboard server", () => {
 
     await expect(provider("90d")).resolves.toEqual(snapshot());
     expect(inputs).toEqual([{ window: "90d", paid_mode: "free_only", include_rollups: false }]);
+  });
+
+  it("invokes the Compass handler with its strict empty input", async () => {
+    const inputs: unknown[] = [];
+    const provider = createFreeOnlyCompassProvider(async (input) => {
+      inputs.push(input);
+      return compassSnapshot();
+    });
+
+    await expect(provider()).resolves.toEqual(compassSnapshot());
+    expect(inputs).toEqual([{}]);
   });
 
   it("serves a sanitized free-only snapshot for a whitelisted window", async () => {
@@ -133,6 +221,47 @@ describe("dashboard server", () => {
     expect(writeAttempt).toEqual({ statusCode: 405, body: '{"error":"method_not_allowed"}' });
   });
 
+  it("serves a strict, sanitized demand compass through its dedicated read-only route", async () => {
+    const result = await invoke(
+      "/api/eth/demand-compass?paid_mode=byok_allowed&api_key=secret",
+      async () => snapshot(),
+      async () => compassSnapshot(),
+    );
+
+    expect(result.statusCode).toBe(200);
+    expect(JSON.parse(result.body)).toMatchObject({
+      judgment: "structural",
+      confidence: 0.88,
+      axes: { usage_demand: { status: "improving" } },
+    });
+    expect(result.body).not.toContain("capabilities");
+    expect(result.body).not.toContain("secret");
+  });
+
+  it("keeps the existing dashboard usable when no optional compass provider is configured", async () => {
+    const valueCapture = await invoke("/api/eth/value-capture?window=30d");
+    const compass = await invoke("/api/eth/demand-compass");
+
+    expect(valueCapture.statusCode).toBe(200);
+    expect(compass).toMatchObject({ statusCode: 503, body: '{"error":"compass_unavailable"}' });
+  });
+
+  it("rejects malformed or extra-field compass snapshots with a bounded response", async () => {
+    const malformed = { ...compassSnapshot(), capabilities: { ethereum_rpc_active: true } };
+    const result = await invoke("/api/eth/demand-compass", async () => snapshot(), async () => malformed as EthDemandCompassSnapshot);
+
+    expect(result).toMatchObject({ statusCode: 502, body: '{"error":"compass_invalid"}' });
+  });
+
+  it("returns a bounded unavailable response when the compass provider fails", async () => {
+    const result = await invoke("/api/eth/demand-compass", async () => snapshot(), async () => {
+      throw new Error("internal rpc endpoint must stay private");
+    });
+
+    expect(result).toMatchObject({ statusCode: 503, body: '{"error":"compass_unavailable"}' });
+    expect(result.body).not.toContain("private");
+  });
+
   it("exposes only a read-only health response", async () => {
     const result = await invoke("/api/health");
 
@@ -162,11 +291,40 @@ describe("dashboard server", () => {
     expect(result.body).toContain('id="data-quality"');
     expect(result.body).toContain("Value-capture lens; not a price forecast or trade call.");
     expect(result.body).toContain('id="api-failure"');
+    expect(result.body).toContain('id="compass-panel"');
+    expect(result.body).toContain('id="compass-judgment"');
+    expect(result.body).toContain('id="compass-usage-demand"');
+    expect(result.body).toContain('id="compass-l2-settlement"');
+    expect(result.body).toContain('id="compass-supply-absorption"');
+    expect(result.body).toContain('id="compass-collateral-demand"');
+    expect(result.body).toContain('id="compass-monetary-settlement"');
+    expect(result.body).toContain('id="compass-confidence"');
+    expect(result.body).toContain('id="compass-evidence"');
+    expect(result.body).toContain('id="compass-gaps"');
+    expect(result.body).toContain('id="compass-failure"');
     expect(result.body).not.toContain("__name");
   });
 
+  it("runs the static Compass fixture with hostile evidence as text rather than markup", async () => {
+    const result = await invoke("/");
+    const unsafeCompass = {
+      ...compassSnapshot(),
+      evidence: ["<img src=x onerror=alert(1)>", "L2 rent is improving."],
+      gaps: [{ code: "stale_source" as const, detail: "<b>stale</b>" }],
+    };
+    const elements = await runDashboardFixture(result.body, snapshot(), unsafeCompass);
+
+    expect(result.body).not.toContain("__name");
+    expect(result.body).not.toContain("innerHTML");
+    expect(elements.get("compass-judgment")?.textContent).toBe("Structural demand improving");
+    expect(elements.get("compass-confidence")?.textContent).toBe("Confidence 88%");
+    expect(elements.get("compass-evidence")?.children[0]?.textContent).toBe("<img src=x onerror=alert(1)>");
+    expect(elements.get("compass-gaps")?.textContent).toBe("stale_source");
+    expect(elements.get("compass-failure")?.className).toContain("hidden");
+  });
+
   it("starts and stops on an injected loopback host and ephemeral port", async () => {
-    const dashboard = createDashboardServer({ provider: async () => snapshot(), host: "127.0.0.1", port: 0 });
+    const dashboard = createDashboardServer({ provider: async () => snapshot(), compassProvider: async () => compassSnapshot(), host: "127.0.0.1", port: 0 });
 
     const address = await dashboard.start();
     expect(address.host).toBe("127.0.0.1");
