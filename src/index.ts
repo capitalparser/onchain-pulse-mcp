@@ -5,10 +5,10 @@ import { makeContext } from "./adapters/base.js";
 import { realFetcher } from "./cli/fetcher.js";
 import { runWarmup } from "./cli/warmup.js";
 import { runCompassBacktestCli } from "./backtest/cli.js";
-import { createFreeOnlySnapshotProvider } from "./dashboard/provider.js";
+import { createFreeOnlyCompassProvider, createFreeOnlySnapshotProvider } from "./dashboard/provider.js";
 import { createDashboardServer } from "./dashboard/server.js";
 import { loadEnv } from "./env.js";
-import { createServer, handleEthValueCapture } from "./server.js";
+import { createServer, handleEthDemandCompass, handleEthValueCapture } from "./server.js";
 
 async function main(): Promise<void> {
   const mode = process.argv[2];
@@ -33,9 +33,13 @@ async function main(): Promise<void> {
     const snapshotProvider = createFreeOnlySnapshotProvider((input) =>
       handleEthValueCapture(input, { env, ctx }),
     );
+    const compassProvider = createFreeOnlyCompassProvider((input) =>
+      handleEthDemandCompass(input, { env, ctx }),
+    );
     if (mode === "dashboard") {
       const dashboard = createDashboardServer({
         provider: snapshotProvider,
+        compassProvider,
         host: env.dashboard?.host ?? "127.0.0.1",
         port: env.dashboard?.port ?? 8787,
       });
