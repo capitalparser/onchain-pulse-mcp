@@ -14,6 +14,7 @@ export const MAX_COMPASS_BACKTEST_LINES = 10_000;
 export const MAX_COMPASS_BACKTEST_LINE_BYTES = 32 * 1024;
 
 const HORIZONS: CompassBacktestHorizon[] = ["7d", "30d", "90d"];
+const HORIZON_DAYS: Record<CompassBacktestHorizon, number> = { "7d": 7, "30d": 30, "90d": 90 };
 const JUDGMENTS: DemandCompassJudgment[] = ["structural", "flow-driven", "neutral", "data-warning"];
 
 function rounded(value: number): number {
@@ -112,8 +113,8 @@ export function parseCompassBacktestJsonl(input: string): CompassBacktestRow[] {
     if (previousObservedAt !== null && observedAt < previousObservedAt) throw inputError(lineNumber, "observed_at must be strictly chronological");
     for (const horizon of HORIZONS) {
       const outcome = row.outcomes[horizon];
-      if (outcome !== null && Date.parse(outcome.outcome_at) < observedAt) {
-        throw inputError(lineNumber, `${horizon} outcome_at precedes observed_at`);
+      if (outcome !== null && Date.parse(outcome.outcome_at) < observedAt + HORIZON_DAYS[horizon] * 86_400_000) {
+        throw inputError(lineNumber, `${horizon} outcome_at is before its required forward horizon`);
       }
     }
     observed.add(observedAt);

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -26,5 +26,8 @@ describe("Compass backtest file runner", () => {
     expect(result.observation_count).toBe(1);
     await expect(runCompassBacktestFile("")).rejects.toThrow(/explicit local input/i);
     await expect(runCompassBacktestFile(directory)).rejects.toThrow(/regular file/i);
+    const symlinkPath = join(directory, "input-link.jsonl");
+    symlinkSync(inputPath, symlinkPath);
+    await expect(runCompassBacktestFile(symlinkPath)).rejects.toThrow(/regular file/i);
   });
 });
