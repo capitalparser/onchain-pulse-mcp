@@ -99,8 +99,9 @@ describe("Compass backtest evaluator", () => {
     expect(parseCompassBacktestJsonl(first)).toHaveLength(1);
     expect(() => parseCompassBacktestJsonl("not-json")).toThrow(/line 1/i);
     expect(() => parseCompassBacktestJsonl(`${first}\n${first}`)).toThrow(/duplicate/i);
-    expect(() => parseCompassBacktestJsonl(`${JSON.stringify(row({ observed_at: "2026-01-02T00:00:00.000Z" }))}\n${first}`)).toThrow(/chronological/i);
-    expect(() => parseCompassBacktestJsonl(JSON.stringify(row({ outcomes: { "7d": { outcome_at: "2025-12-31T00:00:00.000Z", eth_return_pct: 1, value_capture_delta_pct: 1 }, "30d": null, "90d": null } })))).toThrow(/precedes/i);
+    expect(() => parseCompassBacktestJsonl(`${JSON.stringify(row({ observed_at: "2026-01-02T00:00:00.000Z", outcomes: { "7d": { outcome_at: "2026-01-09T00:00:00.000Z", eth_return_pct: 1, value_capture_delta_pct: 1 }, "30d": null, "90d": null } }))}\n${first}`)).toThrow(/chronological/i);
+    expect(() => parseCompassBacktestJsonl(JSON.stringify(row({ outcomes: { "7d": { outcome_at: "2025-12-31T00:00:00.000Z", eth_return_pct: 1, value_capture_delta_pct: 1 }, "30d": null, "90d": null } })))).toThrow(/horizon|precedes/i);
+    expect(() => parseCompassBacktestJsonl(JSON.stringify(row({ outcomes: { "7d": null, "30d": null, "90d": { outcome_at: "2026-01-02T00:00:00.000Z", eth_return_pct: 1, value_capture_delta_pct: 1 } } })))).toThrow(/horizon/i);
     expect(() => parseCompassBacktestJsonl(JSON.stringify({ ...row(), unknown: true }))).toThrow(/line 1/i);
     expect(() => parseCompassBacktestJsonl(JSON.stringify(row({ confidence: Infinity })))).toThrow(/line 1/i);
   });
