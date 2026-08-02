@@ -402,9 +402,15 @@ export async function handleEthDemandCompass(
   hc: HandlerContext,
 ): Promise<EthDemandCompassSnapshot> {
   NoArgs.parse(raw ?? {});
+  // Use a dedicated context as well as a redacted env: sharing the adapter
+  // cache could leak a prior BYOK/Nansen result into this free-only tool.
+  const freeOnlyContext = makeContext({
+    env: { ...hc.ctx.env, byok: { ...hc.ctx.env.byok, nansen: undefined } },
+    fetchImpl: hc.ctx.fetch,
+  });
   const [valueCapture, stablecoinResult, aaveSnapshot, lidoSnapshot] = await Promise.all([
     handleEthValueCapture({ window: "30d", paid_mode: "free_only", include_rollups: false }, hc),
-    onchainWallet.fetch(undefined, hc.ctx),
+    onchainWallet.fetch(undefined, freeOnlyContext),
     fetchEthCollateralAaveV3({ rpcUrl: hc.env.ethereumRpcUrl }, hc.ctx),
     fetchLidoPooledEthBacking({ rpcUrl: hc.env.ethereumRpcUrl }, hc.ctx),
   ]);

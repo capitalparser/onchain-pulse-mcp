@@ -57,6 +57,9 @@ function axisForSignals(
 }
 
 function usageAxis(valueCapture: EthValueCaptureSnapshot): DemandCompassAxis {
+  if (valueCapture.status !== "complete" || valueCapture.gaps.length > 0) {
+    return sourceAxis("unknown", null, ["Usage trend is unknown because the value-capture snapshot is partial or gapped."], valueCapture.sources.filter((item) => item.includes("dune")), 0);
+  }
   const metrics = valueCapture.metrics;
   const fees = pairStatus(metrics.gross_l1_fees_eth.current, metrics.gross_l1_fees_eth.previous);
   const burn = pairStatus(metrics.total_burn_eth.current, metrics.total_burn_eth.previous);
@@ -71,6 +74,9 @@ function usageAxis(valueCapture: EthValueCaptureSnapshot): DemandCompassAxis {
 }
 
 function l2Axis(valueCapture: EthValueCaptureSnapshot): DemandCompassAxis {
+  if (valueCapture.status !== "complete" || valueCapture.gaps.length > 0) {
+    return sourceAxis("unknown", null, ["L2 settlement trend is unknown because the value-capture snapshot is partial or gapped."], valueCapture.sources.filter((item) => item.includes("growthepie") || item.includes("rollup")), 0);
+  }
   const metrics = valueCapture.metrics;
   const rent = pairStatus(metrics.l2_rent_paid_eth.current, metrics.l2_rent_paid_eth.previous);
   const blob = pairStatus(metrics.l2_blob_fee_eth.current, metrics.l2_blob_fee_eth.previous);
@@ -84,6 +90,9 @@ function l2Axis(valueCapture: EthValueCaptureSnapshot): DemandCompassAxis {
 }
 
 function supplyAxis(valueCapture: EthValueCaptureSnapshot): DemandCompassAxis {
+  if (valueCapture.status !== "complete" || valueCapture.gaps.length > 0) {
+    return sourceAxis("unknown", null, ["Supply absorption trend is unknown because the value-capture snapshot is partial or gapped."], valueCapture.sources.filter((item) => item.includes("coinmetrics")), 0);
+  }
   const metric = valueCapture.metrics.net_issuance_eth;
   const score = pairStatus(metric.current, metric.previous, true);
   if (score === null) {

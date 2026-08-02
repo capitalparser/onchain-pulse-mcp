@@ -133,9 +133,25 @@ describe("getEthDemandCompass", () => {
     expect(result.judgment).toBe("data-warning");
   });
 
+  it("fails closed when the value-capture snapshot is partial even if values are present", () => {
+    const result = getEthDemandCompass({
+      valueCapture: valueCapture({ status: "partial", gaps: [{ code: "partial_result", detail: "rent delayed" }] }),
+      stablecoin: stablecoin(),
+      aave: aave(),
+      lido: lido(),
+      now: new Date("2026-08-01T01:00:00Z"),
+    });
+
+    expect(result.judgment).toBe("data-warning");
+    expect(result.axes.usage_demand).toMatchObject({ status: "unknown", score: null });
+    expect(result.axes.l2_settlement).toMatchObject({ status: "unknown", score: null });
+    expect(result.axes.supply_absorption).toMatchObject({ status: "unknown", score: null });
+  });
+
   it("rejects unbounded evidence and unknown schema fields", () => {
     const result = getEthDemandCompass({ valueCapture: valueCapture(), stablecoin: stablecoin(), aave: aave(), lido: lido(), now: new Date("2026-08-01T01:00:00Z") });
     expect(() => EthDemandCompassSnapshotSchema.parse({ ...result, unexpected: true })).toThrow();
     expect(() => EthDemandCompassSnapshotSchema.parse({ ...result, evidence: ["a", "b", "c", "d"] })).toThrow();
+    expect(() => EthDemandCompassSnapshotSchema.parse({ ...result, axes: { ...result.axes, usage_demand: { ...result.axes.usage_demand, status: "improving", score: -1 } } })).toThrow();
   });
 });

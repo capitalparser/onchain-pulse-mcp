@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { makeContext } from "../src/adapters/base.js";
+import { onchainWallet } from "../src/adapters/onchain_wallet.js";
 import { EthValueCaptureSnapshotSchema } from "../src/eth_value_capture/types.js";
 import { EthFeeCrossCheckSnapshotSchema } from "../src/eth_fee_cross_check/types.js";
 import { EthConsensusRewardsCrossCheckSnapshotSchema } from "../src/eth_consensus_rewards/types.js";
@@ -62,14 +63,21 @@ describe("server", () => {
       if (url.startsWith("https://community-api.coinmetrics.io/")) return coinMetricsResponse();
       if (url === "https://api.growthepie.com/v1/export/rent_paid.json") return growThePieRentResponse();
       if (url.includes("stablecoincharts/all")) return new Response(JSON.stringify(Array.from({ length: 8 }, (_, index) => ({ date: 1_700_000_000 + index * 86_400, totalCirculating: { peggedUSD: 100 + index } }))), { status: 200 });
+      if (url.includes("api.nansen.ai")) return new Response(JSON.stringify({ data: { net_usd_7d: 1 } }), { status: 200 });
       throw new Error(`unexpected request: ${url}`);
     });
-    const hc = { env, ctx: makeContext({ env, fetchImpl: fetchImpl as typeof fetch }) };
+    const compassEnv = { ...env, byok: { nansen: "should-not-be-used" } };
+    const hc = { env: compassEnv, ctx: makeContext({ env: compassEnv, fetchImpl: fetchImpl as typeof fetch }) };
+
+    await onchainWallet.fetch(undefined, hc.ctx);
+    fetchImpl.mockClear();
 
     expect(tool?.inputSchema).toEqual({ type: "object", properties: {}, additionalProperties: false });
     const output = await tool?.handler({}, hc);
     expect(EthDemandCompassSnapshotSchema.parse(output)).toEqual(output);
     expect(JSON.stringify(output)).not.toMatch(/rpc\.example|dune-key/i);
+    expect(fetchImpl.mock.calls.some(([input]) => String(input).includes("api.nansen.ai"))).toBe(false);
+    expect(JSON.stringify(output)).not.toContain("nansen");
     await expect(handleEthDemandCompass({ rpcUrl: "https://forbidden" }, hc)).rejects.toThrow();
   });
 

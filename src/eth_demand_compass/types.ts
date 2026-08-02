@@ -29,6 +29,11 @@ export const DemandCompassAxisSchema = z.object({
   if (axis.status !== "unknown" && axis.score === null) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "known axes require a score" });
   }
+  if ((axis.status === "improving" && axis.score !== 1)
+    || (axis.status === "weakening" && axis.score !== -1)
+    || (axis.status === "neutral" && axis.score !== 0)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "axis status must match its score" });
+  }
 });
 export type DemandCompassAxis = z.infer<typeof DemandCompassAxisSchema>;
 
