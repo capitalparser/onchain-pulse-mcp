@@ -41,6 +41,7 @@ import type { LidoPooledEthBackingSnapshot } from "./lido_pooled_eth_backing/typ
 import type { SkyEthCollateralCustodySnapshot } from "./sky_eth_collateral_custody/types.js";
 import type { EigenLayerEthRestakingExposureSnapshot } from "./eigenlayer_eth_restaking/types.js";
 import type { EigenLayerLstEthQuotesSnapshot } from "./eigenlayer_lst_eth_quotes/types.js";
+import type { EthDemandCompassSnapshot } from "./eth_demand_compass/types.js";
 import { fanOutAdapters } from "./pipeline/fanout.js";
 import { toScoreInputs } from "./pipeline/score_inputs.js";
 import { loadPulseConfig } from "./pulse/config.js";
@@ -55,6 +56,7 @@ import { getLidoPooledEthBacking } from "./tools/get_lido_pooled_eth_backing.js"
 import { getSkyEthCollateralCustody } from "./tools/get_sky_eth_collateral_custody.js";
 import { getEigenLayerEthRestakingExposure } from "./tools/get_eigenlayer_eth_restaking_exposure.js";
 import { getEigenLayerLstEthQuotes } from "./tools/get_eigenlayer_lst_eth_quotes.js";
+import { getEthDemandCompass } from "./tools/get_eth_demand_compass.js";
 import { getFundingOi } from "./tools/get_funding_oi.js";
 import { getKrPremium } from "./tools/get_kr_premium.js";
 import { getMarketPulse } from "./tools/get_market_pulse.js";
@@ -95,7 +97,7 @@ interface ToolDef {
   handler: (
     raw: unknown,
     hc: HandlerContext,
-  ) => Promise<ToolResponse | ForensicsSnapshot | EthValueCaptureSnapshot | EthFeeCrossCheckSnapshot | EthConsensusRewardsCrossCheckSnapshot | EthCollateralDemandSnapshot | SparkCollateralCapacitySnapshot | LidoPooledEthBackingSnapshot | SkyEthCollateralCustodySnapshot | EigenLayerEthRestakingExposureSnapshot | EigenLayerLstEthQuotesSnapshot>;
+  ) => Promise<ToolResponse | ForensicsSnapshot | EthValueCaptureSnapshot | EthFeeCrossCheckSnapshot | EthConsensusRewardsCrossCheckSnapshot | EthCollateralDemandSnapshot | SparkCollateralCapacitySnapshot | LidoPooledEthBackingSnapshot | SkyEthCollateralCustodySnapshot | EigenLayerEthRestakingExposureSnapshot | EigenLayerLstEthQuotesSnapshot | EthDemandCompassSnapshot>;
 }
 
 const TOOLS: ToolDef[] = [
@@ -135,6 +137,12 @@ const TOOLS: ToolDef[] = [
       },
     },
     handler: handleEthValueCapture,
+  },
+  {
+    name: "get_eth_demand_compass",
+    description: "Read-only ETH demand compass using free value-capture and stablecoin evidence plus optional configured Aave and Lido point-in-time evidence.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    handler: handleEthDemandCompass,
   },
   {
     name: "get_eth_fee_cross_check",
@@ -387,6 +395,35 @@ export async function handleEthValueCapture(
     growthepie,
     now,
   });
+}
+
+export async function handleEthDemandCompass(
+  raw: unknown,
+  hc: HandlerContext,
+): Promise<EthDemandCompassSnapshot> {
+  NoArgs.parse(raw ?? {});
+  // Use a dedicated context as well as a redacted env: sharing the adapter
+  // cache could leak a prior BYOK/Nansen result into this free-only tool.
+  const freeOnlyContext = makeContext({
+    env: { ...hc.ctx.env, byok: { ...hc.ctx.env.byok, nansen: undefined } },
+    fetchImpl: hc.ctx.fetch,
+  });
+  const [valueCapture, stablecoinResult, aaveSnapshot, lidoSnapshot] = await Promise.all([
+    handleEthValueCapture({ window: "30d", paid_mode: "free_only", include_rollups: false }, hc),
+    onchainWallet.fetch(undefined, freeOnlyContext),
+    fetchEthCollateralAaveV3({ rpcUrl: hc.env.ethereumRpcUrl }, hc.ctx),
+    fetchLidoPooledEthBacking({ rpcUrl: hc.env.ethereumRpcUrl }, hc.ctx),
+  ]);
+  const stablecoin = await getStablecoinPulse({
+    window: "7d",
+    adapterResult: stablecoinResult,
+    lang: hc.env.lang,
+    byokActive: [],
+    staleData: stablecoinResult.stale ? ["onchain_wallet:stale_fallback"] : (stablecoinResult.stale_data ?? []),
+  });
+  const aave = getEthCollateralDemand({ lang: hc.env.lang, adapterSnapshot: aaveSnapshot });
+  const lido = getLidoPooledEthBacking({ lang: hc.env.lang, adapterSnapshot: lidoSnapshot });
+  return getEthDemandCompass({ valueCapture, stablecoin, aave, lido, now: new Date() });
 }
 
 export async function handleEthFeeCrossCheck(

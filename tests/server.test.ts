@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { makeContext } from "../src/adapters/base.js";
+import { onchainWallet } from "../src/adapters/onchain_wallet.js";
 import { EthValueCaptureSnapshotSchema } from "../src/eth_value_capture/types.js";
 import { EthFeeCrossCheckSnapshotSchema } from "../src/eth_fee_cross_check/types.js";
 import { EthConsensusRewardsCrossCheckSnapshotSchema } from "../src/eth_consensus_rewards/types.js";
@@ -9,6 +10,7 @@ import { LidoPooledEthBackingSnapshotSchema } from "../src/lido_pooled_eth_backi
 import { SkyEthCollateralCustodySnapshotSchema } from "../src/sky_eth_collateral_custody/types.js";
 import { EigenLayerEthRestakingExposureSnapshotSchema } from "../src/eigenlayer_eth_restaking/types.js";
 import { EigenLayerLstEthQuotesSnapshotSchema } from "../src/eigenlayer_lst_eth_quotes/types.js";
+import { EthDemandCompassSnapshotSchema } from "../src/eth_demand_compass/types.js";
 import {
   createServer,
   handleEthCollateralDemand,
@@ -20,6 +22,7 @@ import {
   handleEthFeeCrossCheck,
   handleEthConsensusRewardsCrossCheck,
   handleEthValueCapture,
+  handleEthDemandCompass,
   listTools,
 } from "../src/server.js";
 import type { EnvConfig } from "../src/env.js";
@@ -27,7 +30,7 @@ import type { EnvConfig } from "../src/env.js";
 const env: EnvConfig = { byok: {}, lang: "en", historyPath: "/tmp/onchain-pulse-mcp-test-history.json", ethereumRpcUrl: undefined, ethereumBeaconApiUrl: undefined };
 
 describe("server", () => {
-  it("registers all sixteen expected tools including EigenLayer covered LST ETH quotes", () => {
+  it("registers all seventeen expected tools including the ETH demand compass", () => {
     const names = listTools()
       .map((t) => t.name)
       .sort();
@@ -38,6 +41,7 @@ describe("server", () => {
       "get_etf_flow",
       "get_eth_collateral_demand",
       "get_eth_consensus_rewards_cross_check",
+      "get_eth_demand_compass",
       "get_eth_fee_cross_check",
       "get_eth_value_capture",
       "get_funding_oi",
@@ -50,6 +54,31 @@ describe("server", () => {
       "get_stablecoin_pulse",
       "get_token_forensics",
     ]);
+  });
+
+  it("registers a strict free-only ETH demand compass without caller-controlled source configuration", async () => {
+    const tool = listTools().find((item) => item.name === "get_eth_demand_compass");
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.startsWith("https://community-api.coinmetrics.io/")) return coinMetricsResponse();
+      if (url === "https://api.growthepie.com/v1/export/rent_paid.json") return growThePieRentResponse();
+      if (url.includes("stablecoincharts/all")) return new Response(JSON.stringify(Array.from({ length: 8 }, (_, index) => ({ date: 1_700_000_000 + index * 86_400, totalCirculating: { peggedUSD: 100 + index } }))), { status: 200 });
+      if (url.includes("api.nansen.ai")) return new Response(JSON.stringify({ data: { net_usd_7d: 1 } }), { status: 200 });
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const compassEnv = { ...env, byok: { nansen: "should-not-be-used" } };
+    const hc = { env: compassEnv, ctx: makeContext({ env: compassEnv, fetchImpl: fetchImpl as typeof fetch }) };
+
+    await onchainWallet.fetch(undefined, hc.ctx);
+    fetchImpl.mockClear();
+
+    expect(tool?.inputSchema).toEqual({ type: "object", properties: {}, additionalProperties: false });
+    const output = await tool?.handler({}, hc);
+    expect(EthDemandCompassSnapshotSchema.parse(output)).toEqual(output);
+    expect(JSON.stringify(output)).not.toMatch(/rpc\.example|dune-key/i);
+    expect(fetchImpl.mock.calls.some(([input]) => String(input).includes("api.nansen.ai"))).toBe(false);
+    expect(JSON.stringify(output)).not.toContain("nansen");
+    await expect(handleEthDemandCompass({ rpcUrl: "https://forbidden" }, hc)).rejects.toThrow();
   });
 
   it("get_eth_consensus_rewards_cross_check advertises its one-epoch reward contract", () => {
