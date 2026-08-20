@@ -133,11 +133,12 @@ export async function exportPointInTime(args: {
   IsoTimestampSchema.parse(args.cutoffAt);
   const observations = await args.store.readAll();
   const metricKeys = args.metricKeys === undefined ? null : new Set(args.metricKeys);
+  const cutoffMs = Date.parse(args.cutoffAt);
   return observations
-    .filter((item) => Date.parse(item.observed_at) <= Date.parse(args.cutoffAt))
+    .filter((item) => Date.parse(item.observed_at) <= cutoffMs && Date.parse(item.ingested_at) <= cutoffMs)
     .filter((item) => metricKeys === null || metricKeys.has(item.metric_key))
     .filter((item) => args.subjectRef === undefined || item.subject_ref === args.subjectRef)
-    .sort((a, b) => a.observed_at.localeCompare(b.observed_at) || a.metric_key.localeCompare(b.metric_key) || a.id.localeCompare(b.id));
+    .sort((a, b) => a.observed_at.localeCompare(b.observed_at) || a.ingested_at.localeCompare(b.ingested_at) || a.metric_key.localeCompare(b.metric_key) || a.id.localeCompare(b.id));
 }
 
 export interface DataQualitySummary {
