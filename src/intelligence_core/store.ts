@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { MetricObservationSchema, type MetricObservation } from "./types.js";
+import { IsoTimestampSchema, MetricObservationSchema, type MetricObservation } from "./types.js";
 
 export interface MetricObservationQuery {
   metricKey?: string;
@@ -79,10 +79,10 @@ export class JsonlMetricObservationStore implements MetricObservationStore {
 
   async query(query: MetricObservationQuery): Promise<MetricObservation[]> {
     if (query.startObservedAt !== undefined) {
-      MetricObservationSchema.shape.observed_at.parse(query.startObservedAt);
+      IsoTimestampSchema.parse(query.startObservedAt);
     }
     if (query.endObservedAt !== undefined) {
-      MetricObservationSchema.shape.observed_at.parse(query.endObservedAt);
+      IsoTimestampSchema.parse(query.endObservedAt);
     }
     if (
       query.startObservedAt !== undefined
