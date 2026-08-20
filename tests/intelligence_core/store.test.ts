@@ -1,6 +1,6 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { JsonlMetricObservationStore } from "../../src/intelligence_core/store.js";
 import { MetricObservationSchema, type MetricObservation } from "../../src/intelligence_core/types.js";
@@ -87,20 +87,18 @@ describe("JsonlMetricObservationStore", () => {
     expect(result.map((item) => item.id)).toEqual(["a"]);
   });
 
-  it("rejects malformed or duplicate persisted rows instead of silently skipping them", async () => {
+  it("rejects malformed persisted rows instead of silently skipping them", async () => {
     const { path, store } = await makeStore();
-    await writeFile(path, `${JSON.stringify(observation())}\nnot-json\n`, { encoding: "utf8", flag: "w" }).catch(async (error: NodeJS.ErrnoException) => {
-      if (error.code !== "ENOENT") throw error;
-    });
-
-    // Parent directory may not exist before the first append. Create it through a valid append, then replace the file.
-    if ((await store.readAll().catch(() => null)) === null) {
-      const { dirname } = await import("node:path");
-      const { mkdir } = await import("node:fs/promises");
-      await mkdir(dirname(path), { recursive: true });
-      await writeFile(path, `${JSON.stringify(observation())}\nnot-json\n`, "utf8");
-    }
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, `${JSON.stringify(observation())}\nnot-json\n`, "utf8");
     await expect(store.readAll()).rejects.toThrow(/invalid JSONL at line 2/);
+  });
+
+  it("rejects duplicate ids already present in persisted data", async () => {
+    const { path, store } = await makeStore();
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, `${JSON.stringify(observation())}\n${JSON.stringify(observation({ value: 1 }))}\n`, "utf8");
+    await expect(store.readAll()).rejects.toThrow(/duplicate metric observation id in persisted data/);
   });
 
   it("rejects inverted query windows", async () => {
