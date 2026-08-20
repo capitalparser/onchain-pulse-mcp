@@ -19,14 +19,19 @@ export const SourceTypeSchema = z.enum([
 ]);
 export type SourceType = z.infer<typeof SourceTypeSchema>;
 
-export const ProvenanceSchema = z.object({
+const ProvenanceObjectSchema = z.object({
   source: z.string().min(1).max(160),
   source_type: SourceTypeSchema,
   source_at: IsoTimestampSchema,
   observed_at: IsoTimestampSchema,
   ingested_at: IsoTimestampSchema,
   methodology_version: z.string().min(1).max(120),
-}).strict().superRefine((value, ctx) => {
+}).strict();
+
+function addTimeOrderIssues(
+  value: { source_at: string; observed_at: string; ingested_at: string },
+  ctx: z.RefinementCtx,
+): void {
   const sourceAt = Date.parse(value.source_at);
   const observedAt = Date.parse(value.observed_at);
   const ingestedAt = Date.parse(value.ingested_at);
@@ -36,10 +41,12 @@ export const ProvenanceSchema = z.object({
   if (observedAt > ingestedAt) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["ingested_at"], message: "ingested_at must be at or after observed_at" });
   }
-});
+}
+
+export const ProvenanceSchema = ProvenanceObjectSchema.superRefine(addTimeOrderIssues);
 export type Provenance = z.infer<typeof ProvenanceSchema>;
 
-export const RawEvidenceSchema = ProvenanceSchema.extend({
+export const RawEvidenceSchema = ProvenanceObjectSchema.extend({
   id: z.string().min(1).max(200),
   subject_refs: z.array(z.string().min(1).max(200)).max(64).default([]),
   evidence_ref: z.string().min(1).max(500),
@@ -47,7 +54,7 @@ export const RawEvidenceSchema = ProvenanceSchema.extend({
   stale: z.boolean(),
   confidence: z.number().finite().min(0).max(1),
   metadata: z.record(z.string(), z.unknown()).default({}),
-}).strict();
+}).strict().superRefine(addTimeOrderIssues);
 export type RawEvidence = z.infer<typeof RawEvidenceSchema>;
 
 export const EntityTypeSchema = z.enum([
@@ -180,14 +187,7 @@ export const EconomicEventSchema = z.object({
   confidence: z.number().finite().min(0).max(1),
   methodology_version: z.string().min(1).max(120),
   metadata: z.record(z.string(), z.unknown()).default({}),
-}).strict().superRefine((value, ctx) => {
-  if (Date.parse(value.source_at) > Date.parse(value.observed_at)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["observed_at"], message: "observed_at must be at or after source_at" });
-  }
-  if (Date.parse(value.observed_at) > Date.parse(value.ingested_at)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["ingested_at"], message: "ingested_at must be at or after observed_at" });
-  }
-});
+}).strict().superRefine(addTimeOrderIssues);
 export type EconomicEvent = z.infer<typeof EconomicEventSchema>;
 
 export const MetricObservationSchema = z.object({
@@ -205,12 +205,5 @@ export const MetricObservationSchema = z.object({
   source_refs: z.array(z.string().min(1).max(200)).min(1).max(64),
   methodology_version: z.string().min(1).max(120),
   dimensions: z.record(z.string(), z.string().max(200)).default({}),
-}).strict().superRefine((value, ctx) => {
-  if (Date.parse(value.source_at) > Date.parse(value.observed_at)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["observed_at"], message: "observed_at must be at or after source_at" });
-  }
-  if (Date.parse(value.observed_at) > Date.parse(value.ingested_at)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["ingested_at"], message: "ingested_at must be at or after observed_at" });
-  }
-});
+}).strict().superRefine(addTimeOrderIssues);
 export type MetricObservation = z.infer<typeof MetricObservationSchema>;
