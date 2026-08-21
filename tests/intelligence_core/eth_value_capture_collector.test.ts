@@ -44,15 +44,16 @@ describe("createEthValueCaptureCollector", () => {
     const result = await collector.collect("2026-08-21T00:06:00.000Z");
     expect(result.observations).toHaveLength(7);
     expect(result.gaps).toContain("partial_result:one optional source missing");
+    expect(result.observations.every((item) => item.ingested_at === "2026-08-21T00:06:00.000Z")).toBe(true);
   });
 
-  it("does not leak a snapshot ingested after the research cutoff", async () => {
+  it("blocks snapshots whose analytical observation time exceeds the collection cutoff", async () => {
     const collector = createEthValueCaptureCollector({
       handlerContext: unusedHandlerContext,
       now: () => new Date("2026-08-21T00:06:00.000Z"),
       fetchSnapshot: async () => snapshot(),
     });
-    const result = await collector.collect("2026-08-21T00:05:30.000Z");
+    const result = await collector.collect("2026-08-21T00:04:59.000Z");
     expect(result.observations).toEqual([]);
     expect(result.gaps).toContain("eth-value-capture:no-observations-at-cutoff");
   });
