@@ -5,3 +5,4 @@ export * from "./eth_value_capture_adapter.js";
 export * from "./eth_value_capture_collector.js";
 export * from "./collection_run.js";
 export * from "./history.js";
+export * from "./source_license.js";
