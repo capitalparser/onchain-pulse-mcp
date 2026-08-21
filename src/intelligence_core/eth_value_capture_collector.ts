@@ -27,10 +27,8 @@ export function createEthValueCaptureCollector(args: {
     sourceFamily: "eth-value-capture",
     async collect(cutoffAt: string) {
       const snapshot = await fetchSnapshot();
-      const ingestedAt = now();
-      const observations = metricObservationsFromEthValueCapture(snapshot, ingestedAt)
-        .filter((item) => Date.parse(item.observed_at) <= Date.parse(cutoffAt))
-        .filter((item) => Date.parse(item.ingested_at) <= Date.parse(cutoffAt));
+      const observations = metricObservationsFromEthValueCapture(snapshot, now())
+        .filter((item) => Date.parse(item.observed_at) <= Date.parse(cutoffAt));
       const gaps = snapshot.gaps.map((gap) => `${gap.code}:${gap.detail}`);
       if (observations.length === 0 && snapshot.sources.length > 0) {
         gaps.push("eth-value-capture:no-observations-at-cutoff");
