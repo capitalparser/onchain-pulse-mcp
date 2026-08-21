@@ -18,13 +18,10 @@ export interface EnvConfig {
   ethereumRpcUrl?: string;
   /** Internal-only Beacon API transport endpoint. Never expose this value. */
   ethereumBeaconApiUrl?: string;
-  /**
-   * Absolute, tilde-expanded path to the history ring buffer JSON file
-   * (Task 8.5). Defaults to `${HOME}/.cache/onchain-pulse-mcp/history.json`;
-   * overridable via `OPM_HISTORY_PATH`. Leading `~` is expanded against `HOME`.
-   * Non-leading `~` is preserved as a literal character.
-   */
+  /** Existing market-pulse history ring buffer. */
   historyPath: string;
+  /** Append-only canonical intelligence history used by research exports. */
+  intelligenceHistoryPath: string;
   /** Read-only dashboard binding. Defaults to loopback to avoid public exposure. */
   dashboard?: {
     host: string;
@@ -37,9 +34,7 @@ export interface EnvConfig {
     chatId?: string;
     timeoutMs: number;
     snapshotTimeoutMs: number;
-    /** Local-only state store for dedupe, retry, and previous-snapshot comparison. */
     statePath: string;
-    /** Daemon cadence, clamped between one minute and one day. */
     intervalMs: number;
   };
 }
@@ -65,7 +60,8 @@ export function loadEnv(env: NodeJS.ProcessEnv | Record<string, string | undefin
   const langParse = LangSchema.safeParse(env.OPM_LANG);
   const home = env.HOME ?? "";
   const rawHistory = env.OPM_HISTORY_PATH ?? "~/.cache/onchain-pulse-mcp/history.json";
-  const historyPath = expandLeadingTilde(rawHistory, home);
+  const rawIntelligenceHistory = env.OPM_INTELLIGENCE_HISTORY_PATH
+    ?? "~/.cache/onchain-pulse-mcp/intelligence-history.jsonl";
   const rawTelegramState = env.OPM_TELEGRAM_STATE_PATH ?? "~/.cache/onchain-pulse-mcp/telegram-alert-state.json";
 
   return {
@@ -81,7 +77,8 @@ export function loadEnv(env: NodeJS.ProcessEnv | Record<string, string | undefin
     lang: langParse.success ? langParse.data : "en",
     ethereumRpcUrl: env.ETHEREUM_RPC_URL,
     ethereumBeaconApiUrl: env.ETHEREUM_BEACON_API_URL,
-    historyPath,
+    historyPath: expandLeadingTilde(rawHistory, home),
+    intelligenceHistoryPath: expandLeadingTilde(rawIntelligenceHistory, home),
     dashboard: {
       host: env.OPM_DASHBOARD_HOST || "127.0.0.1",
       port: boundedInteger(env.OPM_DASHBOARD_PORT, 8787, 1, 65_535),
