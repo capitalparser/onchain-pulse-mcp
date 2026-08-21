@@ -20,8 +20,8 @@ export interface EnvConfig {
   ethereumBeaconApiUrl?: string;
   /** Existing market-pulse history ring buffer. */
   historyPath: string;
-  /** Append-only canonical intelligence history used by research exports. */
-  intelligenceHistoryPath: string;
+  /** Append-only canonical intelligence history used by research exports. loadEnv always sets this. */
+  intelligenceHistoryPath?: string;
   /** Read-only dashboard binding. Defaults to loopback to avoid public exposure. */
   dashboard?: {
     host: string;
