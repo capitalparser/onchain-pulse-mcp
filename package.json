@@ -23,6 +23,7 @@
     "dev": "tsx src/index.ts",
     "dashboard": "tsx src/index.ts dashboard",
     "compass-backtest": "tsx src/index.ts compass-backtest",
+    "intelligence-collect": "tsx src/index.ts intelligence-collect",
     "telegram-alert": "tsx src/index.ts telegram-alert",
     "telegram-daemon": "tsx src/index.ts telegram-daemon",
     "test": "vitest run",
