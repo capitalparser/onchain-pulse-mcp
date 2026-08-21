@@ -6,7 +6,7 @@
   "author": "Kim Kyung-jun <iwbasm92@gmail.com>",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "bin": {
     "onchain-pulse-mcp": "./dist/index.js"
