@@ -80,8 +80,8 @@ export function resolveEntityClaims(args: {
     };
   }
 
-  const agreedClaims = [...groups.values()][0];
-  const first = agreedClaims[0];
+  const agreedClaims = [...groups.values()][0]!;
+  const first = agreedClaims[0]!;
   const identifiers = [...new Map(agreedClaims.map((claim) => {
     const normalized = normalizeEntityIdentifier(claim.identifier_namespace, claim.identifier_value);
     return [`${normalized.namespace}|${normalized.value}`, normalized] as const;
