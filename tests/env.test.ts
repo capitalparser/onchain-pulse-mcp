@@ -11,13 +11,8 @@ describe("loadEnv", () => {
 
   it("captures BYOK keys when present", () => {
     const cfg: EnvConfig = loadEnv({
-      NANSEN_API_KEY: "n-1",
-      GLASSNODE_API_KEY: "g-1",
-      ARKHAM_API_KEY: "a-1",
-      COINGLASS_API_KEY: "c-1",
-      CRYPTOQUANT_API_KEY: "cq-1",
-      LAEVITAS_API_KEY: "l-1",
-      DUNE_API_KEY: "d-1",
+      NANSEN_API_KEY: "n-1", GLASSNODE_API_KEY: "g-1", ARKHAM_API_KEY: "a-1",
+      COINGLASS_API_KEY: "c-1", CRYPTOQUANT_API_KEY: "cq-1", LAEVITAS_API_KEY: "l-1", DUNE_API_KEY: "d-1",
     });
     expect(cfg.byok.nansen).toBe("n-1");
     expect(cfg.byok.glassnode).toBe("g-1");
@@ -30,54 +25,50 @@ describe("loadEnv", () => {
 
   it("loads ETHEREUM_RPC_URL only into the internal Ethereum RPC configuration", () => {
     const cfg = loadEnv({ ETHEREUM_RPC_URL: "https://rpc.example/private-token" });
-
     expect(cfg.ethereumRpcUrl).toBe("https://rpc.example/private-token");
-    expect(JSON.stringify({ byok: cfg.byok, lang: cfg.lang, historyPath: cfg.historyPath })).not.toContain(
-      "private-token",
-    );
+    expect(JSON.stringify({ byok: cfg.byok, lang: cfg.lang, historyPath: cfg.historyPath })).not.toContain("private-token");
   });
 
   it("loads ETHEREUM_BEACON_API_URL only into the internal Beacon configuration", () => {
     const cfg = loadEnv({ ETHEREUM_BEACON_API_URL: "https://beacon.example/private-token" });
-
     expect(cfg.ethereumBeaconApiUrl).toBe("https://beacon.example/private-token");
-    expect(JSON.stringify({ byok: cfg.byok, lang: cfg.lang, historyPath: cfg.historyPath })).not.toContain(
-      "private-token",
-    );
+    expect(JSON.stringify({ byok: cfg.byok, lang: cfg.lang, historyPath: cfg.historyPath })).not.toContain("private-token");
   });
 
-  it("respects OPM_LANG=ko", () => {
-    expect(loadEnv({ OPM_LANG: "ko" }).lang).toBe("ko");
-  });
+  it("respects OPM_LANG=ko", () => { expect(loadEnv({ OPM_LANG: "ko" }).lang).toBe("ko"); });
+  it("falls back to en when OPM_LANG is invalid", () => { expect(loadEnv({ OPM_LANG: "fr" }).lang).toBe("en"); });
 
-  it("falls back to en when OPM_LANG is invalid", () => {
-    expect(loadEnv({ OPM_LANG: "fr" }).lang).toBe("en");
-  });
-
-  it("defaults historyPath to ~/.cache/onchain-pulse-mcp/history.json (tilde expanded)", () => {
+  it("defaults pulse and intelligence history paths with tilde expansion", () => {
     const cfg = loadEnv({ HOME: "/home/test" });
     expect(cfg.historyPath).toBe("/home/test/.cache/onchain-pulse-mcp/history.json");
+    expect(cfg.intelligenceHistoryPath).toBe("/home/test/.cache/onchain-pulse-mcp/intelligence-history.jsonl");
   });
 
-  it("respects OPM_HISTORY_PATH override and expands leading ~", () => {
-    const cfg = loadEnv({ HOME: "/home/test", OPM_HISTORY_PATH: "~/custom/h.json" });
+  it("respects independent history path overrides", () => {
+    const cfg = loadEnv({
+      HOME: "/home/test",
+      OPM_HISTORY_PATH: "~/custom/h.json",
+      OPM_INTELLIGENCE_HISTORY_PATH: "~/custom/intelligence.jsonl",
+    });
     expect(cfg.historyPath).toBe("/home/test/custom/h.json");
+    expect(cfg.intelligenceHistoryPath).toBe("/home/test/custom/intelligence.jsonl");
   });
 
-  it("preserves an absolute OPM_HISTORY_PATH unchanged", () => {
-    const cfg = loadEnv({ HOME: "/home/test", OPM_HISTORY_PATH: "/var/lib/opm/history.json" });
+  it("preserves absolute history paths unchanged", () => {
+    const cfg = loadEnv({
+      HOME: "/home/test",
+      OPM_HISTORY_PATH: "/var/lib/opm/history.json",
+      OPM_INTELLIGENCE_HISTORY_PATH: "/var/lib/opm/intelligence.jsonl",
+    });
     expect(cfg.historyPath).toBe("/var/lib/opm/history.json");
+    expect(cfg.intelligenceHistoryPath).toBe("/var/lib/opm/intelligence.jsonl");
   });
 
   it("loads loopback dashboard defaults and keeps Telegram credentials internal", () => {
     const cfg = loadEnv({
-      OPM_DASHBOARD_HOST: "127.0.0.1",
-      OPM_DASHBOARD_PORT: "9911",
-      OPM_TELEGRAM_ALERTS_ENABLED: "1",
-      TELEGRAM_BOT_TOKEN: "secret-token",
-      TELEGRAM_CHAT_ID: "123",
+      OPM_DASHBOARD_HOST: "127.0.0.1", OPM_DASHBOARD_PORT: "9911",
+      OPM_TELEGRAM_ALERTS_ENABLED: "1", TELEGRAM_BOT_TOKEN: "secret-token", TELEGRAM_CHAT_ID: "123",
     });
-
     expect(cfg.dashboard).toEqual({ host: "127.0.0.1", port: 9911 });
     expect(cfg.telegram?.enabled).toBe(true);
     expect(JSON.stringify({ dashboard: cfg.dashboard, telegram: { enabled: cfg.telegram?.enabled } })).not.toContain("secret-token");
@@ -94,12 +85,7 @@ describe("loadEnv", () => {
     const defaults = loadEnv({ HOME: "/home/test" }).telegram;
     expect(defaults?.statePath).toBe("/home/test/.cache/onchain-pulse-mcp/telegram-alert-state.json");
     expect(defaults?.intervalMs).toBe(900_000);
-
-    const configured = loadEnv({
-      HOME: "/home/test",
-      OPM_TELEGRAM_STATE_PATH: "~/state/telegram.json",
-      OPM_TELEGRAM_INTERVAL_MS: "1",
-    }).telegram;
+    const configured = loadEnv({ HOME: "/home/test", OPM_TELEGRAM_STATE_PATH: "~/state/telegram.json", OPM_TELEGRAM_INTERVAL_MS: "1" }).telegram;
     expect(configured?.statePath).toBe("/home/test/state/telegram.json");
     expect(configured?.intervalMs).toBe(60_000);
     expect(loadEnv({ OPM_TELEGRAM_INTERVAL_MS: "999999999" }).telegram?.intervalMs).toBe(86_400_000);
