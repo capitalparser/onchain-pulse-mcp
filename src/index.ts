@@ -8,6 +8,7 @@ import { runCompassBacktestCli } from "./backtest/cli.js";
 import { createFreeOnlyCompassProvider, createFreeOnlySnapshotProvider } from "./dashboard/provider.js";
 import { createDashboardServer } from "./dashboard/server.js";
 import { loadEnv } from "./env.js";
+import { runIntelligenceCollectCli } from "./intelligence_core/cli.js";
 import { createServer, handleEthDemandCompass, handleEthValueCapture } from "./server.js";
 
 async function main(): Promise<void> {
@@ -23,6 +24,12 @@ async function main(): Promise<void> {
     const days = Number(process.env.OPM_WARMUP_DAYS ?? 30);
     const keys = process.env.OPM_WARMUP_KEYS?.split(",").filter(Boolean);
     const result = await runWarmup({ historyPath: env.historyPath, days, keys, fetcher: realFetcher });
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify(result));
+    return;
+  }
+  if (mode === "intelligence-collect") {
+    const result = await runIntelligenceCollectCli(env);
     // eslint-disable-next-line no-console
     console.error(JSON.stringify(result));
     return;
