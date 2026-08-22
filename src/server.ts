@@ -12,6 +12,7 @@ import { onchainWallet } from "./adapters/onchain_wallet.js";
 import { rpcCrossCheck } from "./adapters/rpc_cross_check.js";
 import { fetchDuneEthValue } from "./adapters/eth_value_dune.js";
 import { fetchGrowThePieRent } from "./adapters/eth_value_growthepie.js";
+import { fetchGrowThePieEcosystemCapture } from "./adapters/eth_ecosystem_growthepie.js";
 import { fetchEthSupplyHistory } from "./adapters/eth_supply_coinmetrics.js";
 import { fetchEthFeeRpc } from "./adapters/eth_fee_rpc.js";
 import { fetchEthConsensusRewardsBeacon } from "./adapters/eth_consensus_rewards_beacon.js";
@@ -35,6 +36,10 @@ import {
   GetEthValueCaptureInputSchema,
   type EthValueCaptureSnapshot,
 } from "./eth_value_capture/types.js";
+import {
+  GetEthEcosystemCaptureInputSchema,
+  type EthEcosystemCaptureSnapshot,
+} from "./eth_ecosystem_capture/types.js";
 import type { EthCollateralDemandSnapshot } from "./eth_collateral_demand/types.js";
 import type { SparkCollateralCapacitySnapshot } from "./spark_collateral_capacity/types.js";
 import type { LidoPooledEthBackingSnapshot } from "./lido_pooled_eth_backing/types.js";
@@ -48,6 +53,7 @@ import { loadPulseConfig } from "./pulse/config.js";
 import { makeFileHistoryStore, computeWindowDelta } from "./pulse/history.js";
 import { getEtfFlow } from "./tools/get_etf_flow.js";
 import { getEthValueCapture } from "./tools/get_eth_value_capture.js";
+import { getEthEcosystemCapture } from "./tools/get_eth_ecosystem_capture.js";
 import { getEthFeeCrossCheck } from "./tools/get_eth_fee_cross_check.js";
 import { getEthConsensusRewardsCrossCheck } from "./tools/get_eth_consensus_rewards_cross_check.js";
 import { getEthCollateralDemand } from "./tools/get_eth_collateral_demand.js";
@@ -97,7 +103,21 @@ interface ToolDef {
   handler: (
     raw: unknown,
     hc: HandlerContext,
-  ) => Promise<ToolResponse | ForensicsSnapshot | EthValueCaptureSnapshot | EthFeeCrossCheckSnapshot | EthConsensusRewardsCrossCheckSnapshot | EthCollateralDemandSnapshot | SparkCollateralCapacitySnapshot | LidoPooledEthBackingSnapshot | SkyEthCollateralCustodySnapshot | EigenLayerEthRestakingExposureSnapshot | EigenLayerLstEthQuotesSnapshot | EthDemandCompassSnapshot>;
+  ) => Promise<
+    | ToolResponse
+    | ForensicsSnapshot
+    | EthValueCaptureSnapshot
+    | EthEcosystemCaptureSnapshot
+    | EthFeeCrossCheckSnapshot
+    | EthConsensusRewardsCrossCheckSnapshot
+    | EthCollateralDemandSnapshot
+    | SparkCollateralCapacitySnapshot
+    | LidoPooledEthBackingSnapshot
+    | SkyEthCollateralCustodySnapshot
+    | EigenLayerEthRestakingExposureSnapshot
+    | EigenLayerLstEthQuotesSnapshot
+    | EthDemandCompassSnapshot
+  >;
 }
 
 const TOOLS: ToolDef[] = [
@@ -116,7 +136,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "get_eth_value_capture",
     description:
-      "Ethereum fee burn, execution tips, L2 rent, supply change, and aligned issuance over completed UTC-day windows.",
+      "Ethereum protocol fee, burn, L2 rent, supply change, and aligned issuance metrics over completed UTC-day windows; collateral and reserve demand are out of scope.",
     inputSchema: {
       type: "object",
       properties: {
@@ -139,8 +159,26 @@ const TOOLS: ToolDef[] = [
     handler: handleEthValueCapture,
   },
   {
+    name: "get_eth_ecosystem_capture",
+    description:
+      "Chain-bounded Ethereum ecosystem growth and ETH settlement-capture metrics: Ethereum-DA L2 user fees, rent paid to Ethereum, settlement-cost share, and Ethereum L1/L2 stablecoin supply.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        window: {
+          type: "string",
+          enum: ["7d", "30d", "90d"],
+          default: "30d",
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: handleEthEcosystemCapture,
+  },
+  {
     name: "get_eth_demand_compass",
-    description: "Read-only ETH demand compass using free value-capture and stablecoin evidence plus optional configured Aave and Lido point-in-time evidence.",
+    description:
+      "Read-only ETH demand compass that separates Ethereum ecosystem growth from ETH fee, settlement, supply, and collateral value accrual.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     handler: handleEthDemandCompass,
   },
@@ -397,33 +435,63 @@ export async function handleEthValueCapture(
   });
 }
 
+async function loadEthEcosystemCapture(
+  window: "7d" | "30d" | "90d",
+  cutoffDay: string,
+  now: Date,
+  hc: HandlerContext,
+): Promise<EthEcosystemCaptureSnapshot> {
+  const adapter = await fetchGrowThePieEcosystemCapture(
+    { cutoffDay, windowDays: windowToDays(window) },
+    hc.ctx,
+  );
+  return getEthEcosystemCapture({
+    window,
+    lang: hc.env.lang,
+    adapter,
+    now,
+  });
+}
+
+export async function handleEthEcosystemCapture(
+  raw: unknown,
+  hc: HandlerContext,
+): Promise<EthEcosystemCaptureSnapshot> {
+  const args = GetEthEcosystemCaptureInputSchema.parse(raw ?? {});
+  const now = new Date();
+  return loadEthEcosystemCapture(
+    args.window,
+    now.toISOString().slice(0, 10),
+    now,
+    hc,
+  );
+}
+
 export async function handleEthDemandCompass(
   raw: unknown,
   hc: HandlerContext,
 ): Promise<EthDemandCompassSnapshot> {
   NoArgs.parse(raw ?? {});
-  // Use a dedicated context as well as a redacted env: sharing the adapter
-  // cache could leak a prior BYOK/Nansen result into this free-only tool.
-  const freeOnlyContext = makeContext({
-    env: { ...hc.ctx.env, byok: { ...hc.ctx.env.byok, nansen: undefined } },
-    fetchImpl: hc.ctx.fetch,
-  });
-  const [valueCapture, stablecoinResult, aaveSnapshot, lidoSnapshot] = await Promise.all([
-    handleEthValueCapture({ window: "30d", paid_mode: "free_only", include_rollups: false }, hc),
-    onchainWallet.fetch(undefined, freeOnlyContext),
+  const now = new Date();
+  const valueCapture = await handleEthValueCapture(
+    { window: "30d", paid_mode: "free_only", include_rollups: false },
+    hc,
+  );
+  const cutoffDay = valueCapture.cutoff_day ?? now.toISOString().slice(0, 10);
+  const [ecosystemCapture, aaveSnapshot, lidoSnapshot] = await Promise.all([
+    loadEthEcosystemCapture("30d", cutoffDay, now, hc),
     fetchEthCollateralAaveV3({ rpcUrl: hc.env.ethereumRpcUrl }, hc.ctx),
     fetchLidoPooledEthBacking({ rpcUrl: hc.env.ethereumRpcUrl }, hc.ctx),
   ]);
-  const stablecoin = await getStablecoinPulse({
-    window: "7d",
-    adapterResult: stablecoinResult,
-    lang: hc.env.lang,
-    byokActive: [],
-    staleData: stablecoinResult.stale ? ["onchain_wallet:stale_fallback"] : (stablecoinResult.stale_data ?? []),
-  });
   const aave = getEthCollateralDemand({ lang: hc.env.lang, adapterSnapshot: aaveSnapshot });
   const lido = getLidoPooledEthBacking({ lang: hc.env.lang, adapterSnapshot: lidoSnapshot });
-  return getEthDemandCompass({ valueCapture, stablecoin, aave, lido, now: new Date() });
+  return getEthDemandCompass({
+    valueCapture,
+    ecosystemCapture,
+    aave,
+    lido,
+    now,
+  });
 }
 
 export async function handleEthFeeCrossCheck(
