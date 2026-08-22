@@ -134,4 +134,30 @@ export const EthDemandCompassSnapshotSchema = z.object({
     });
   }
 });
-export type EthDemandCompassSnapshot = z.infer<typeof EthDemandCompassSnapshotSchema>;
+
+/** Strict runtime output of the V2 builder. */
+export type EthDemandCompassV2Snapshot = z.infer<typeof EthDemandCompassSnapshotSchema>;
+
+type V2Axes = EthDemandCompassV2Snapshot["axes"];
+type LegacyCompatibleAxes = Omit<V2Axes, "ecosystem_activity" | "settlement_capture">
+  & Partial<Pick<V2Axes, "ecosystem_activity" | "settlement_capture">>;
+
+/**
+ * Public TypeScript compatibility type for stored V1 dashboard fixtures and V2 output.
+ * New runtime output is always validated by EthDemandCompassSnapshotSchema as V2.
+ */
+export type EthDemandCompassSnapshot = Omit<
+  EthDemandCompassV2Snapshot,
+  | "ecosystem_state"
+  | "eth_capture_state"
+  | "classification"
+  | "capture_tier"
+  | "axes"
+  | "methodology_version"
+> & Partial<Pick<
+  EthDemandCompassV2Snapshot,
+  "ecosystem_state" | "eth_capture_state" | "classification" | "capture_tier"
+>> & {
+  axes: LegacyCompatibleAxes;
+  methodology_version: "eth-demand-compass-v1" | "eth-demand-compass-v2";
+};
