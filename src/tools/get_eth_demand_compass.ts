@@ -3,8 +3,8 @@ import type { EthEcosystemCaptureSnapshot } from "../eth_ecosystem_capture/types
 import type { EthValueCaptureSnapshot } from "../eth_value_capture/types.js";
 import { buildEthDemandCompass } from "../eth_demand_compass/metrics.js";
 import {
-  EthDemandCompassSnapshotSchema,
-  type EthDemandCompassSnapshot,
+  EthDemandCompassV2SnapshotSchema,
+  type EthDemandCompassV2Snapshot,
 } from "../eth_demand_compass/types.js";
 import type { LidoPooledEthBackingSnapshot } from "../lido_pooled_eth_backing/types.js";
 
@@ -17,6 +17,8 @@ export interface GetEthDemandCompassArgs {
 }
 
 /** Composes sanitized, read-only snapshots; missing source coverage is never inferred as demand. */
-export function getEthDemandCompass(args: GetEthDemandCompassArgs): EthDemandCompassSnapshot {
-  return EthDemandCompassSnapshotSchema.parse(buildEthDemandCompass(args));
+export function getEthDemandCompass(
+  args: GetEthDemandCompassArgs,
+): EthDemandCompassV2Snapshot {
+  return EthDemandCompassV2SnapshotSchema.parse(buildEthDemandCompass(args));
 }
