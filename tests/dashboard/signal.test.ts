@@ -37,20 +37,21 @@ function snapshot(): EthValueCaptureSnapshot {
 }
 
 describe("deriveDashboardSignal", () => {
-  it("identifies structural value-capture improvement and keeps the evidence list to three reasons", () => {
+  it("identifies protocol-capture improvement without claiming collateral or reserve demand", () => {
     const result = deriveDashboardSignal(snapshot());
 
-    expect(result.judgment).toMatchObject({ key: "structural", label: "Structural value capture" });
+    expect(result.judgment).toMatchObject({ key: "structural", label: "Protocol capture improving" });
+    expect(result.judgment.detail).toMatch(/collateral and reserve-asset demand are not evaluated/);
     expect(result.evidence).toEqual([
       "30D ETH burn increased versus the prior 30D period.",
-      "Blob burn increased, supporting L2 demand reaching Ethereum.",
+      "Blob burn increased, supporting more L2 settlement use reaching Ethereum.",
       "Net issuance turned negative, reducing ETH supply.",
     ]);
     expect(result.evidence).toHaveLength(3);
     expect(result.cards.map((card) => card.interpretation)).toEqual([
       "Burn increasing",
-      "L2 demand strengthening",
-      "L1 rent improving",
+      "L2 settlement use strengthening",
+      "Ethereum rent improving",
       "Supply decreasing",
     ]);
   });
