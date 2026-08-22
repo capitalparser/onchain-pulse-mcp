@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { assertCommerciallyRedistributable, assessSourceForCommercialRedistribution } from "../../src/intelligence_core/source_license.js";
+import {
+  assertCommerciallyRedistributable,
+  assessSourceForCommercialRedistribution,
+} from "../../src/intelligence_core/source_license.js";
 import type { MetricObservation } from "../../src/intelligence_core/types.js";
 
 function observation(sourceRefs: string[]): MetricObservation {
@@ -24,14 +27,27 @@ describe("source license commercialization gate", () => {
       .toBe("internal_research_ok");
     expect(assessSourceForCommercialRedistribution("dune:eth-value").policy?.status)
       .toBe("commercial_contract_required");
-    expect(assessSourceForCommercialRedistribution("growthepie:rent_paid_eth").policy?.status)
-      .toBe("commercial_review_required");
+    expect(assessSourceForCommercialRedistribution("growthepie:rent_paid_usd").policy).toMatchObject({
+      status: "commercial_review_required",
+      attributionRequired: true,
+    });
+    expect(assessSourceForCommercialRedistribution("defillama").policy?.status)
+      .toBe("internal_research_ok");
+    expect(assessSourceForCommercialRedistribution("defillama-stablecoins").policy?.status)
+      .toBe("internal_research_ok");
   });
 
   it("fails closed for unknown source refs", () => {
     expect(() => assertCommerciallyRedistributable([observation(["unknown-vendor:metric"])])).toThrow(
       /unknown source licensing status/,
     );
+  });
+
+  it("blocks GrowThePie and DefiLlama observations from commercial redistribution by default", () => {
+    expect(() => assertCommerciallyRedistributable([
+      observation(["growthepie:fees_paid_usd"]),
+      observation(["defillama-stablecoins"]),
+    ])).toThrow(/commercial redistribution blocked/);
   });
 
   it("inherits the most restrictive upstream source for derived observations", () => {
