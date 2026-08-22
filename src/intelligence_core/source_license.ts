@@ -42,8 +42,24 @@ export const SOURCE_LICENSE_POLICIES: readonly SourceLicensePolicy[] = [
     status: "commercial_review_required",
     attributionRequired: true,
     evidenceUrl: "https://docs.growthepie.com/",
-    reviewedAt: "2026-08-21",
-    note: "Public API requires source attribution; recurring commercial redistribution rights are not explicit in public docs.",
+    reviewedAt: "2026-08-23",
+    note: "The public API and open backend support research and require source attribution; recurring commercial redistribution and embedded paid-product rights are not explicit in the public documentation and require review or written permission.",
+  },
+  {
+    sourcePrefix: "defillama",
+    status: "internal_research_ok",
+    attributionRequired: true,
+    evidenceUrl: "https://defillama.com/terms",
+    reviewedAt: "2026-08-23",
+    note: "The official Terms grant personal non-commercial use and prohibit commercial copying, republishing, mirroring, or resale without prior written consent.",
+  },
+  {
+    sourcePrefix: "defillama-stablecoins",
+    status: "internal_research_ok",
+    attributionRequired: true,
+    evidenceUrl: "https://defillama.com/terms",
+    reviewedAt: "2026-08-23",
+    note: "The official public API remains suitable for internal research only under the current registry; commercial copying or republication requires prior written consent.",
   },
 ];
 

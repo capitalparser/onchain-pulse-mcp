@@ -30,7 +30,7 @@ import type { EnvConfig } from "../src/env.js";
 const env: EnvConfig = { byok: {}, lang: "en", historyPath: "/tmp/onchain-pulse-mcp-test-history.json", ethereumRpcUrl: undefined, ethereumBeaconApiUrl: undefined };
 
 describe("server", () => {
-  it("registers all seventeen expected tools including the ETH demand compass", () => {
+  it("registers all eighteen expected tools including the ETH ecosystem and demand compass tools", () => {
     const names = listTools()
       .map((t) => t.name)
       .sort();
@@ -42,6 +42,7 @@ describe("server", () => {
       "get_eth_collateral_demand",
       "get_eth_consensus_rewards_cross_check",
       "get_eth_demand_compass",
+      "get_eth_ecosystem_capture",
       "get_eth_fee_cross_check",
       "get_eth_value_capture",
       "get_funding_oi",
