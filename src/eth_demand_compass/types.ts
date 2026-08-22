@@ -10,7 +10,7 @@ export type DemandCompassAxisStatus = z.infer<typeof DemandCompassAxisStatusSche
 
 /**
  * Kept as a compact compatibility surface for existing dashboard/backtest consumers.
- * V2 adds explicit ecosystem, capture, and leakage semantics below.
+ * V2 adds explicit ecosystem and capture semantics below.
  */
 export const DemandCompassJudgmentSchema = z.enum([
   "structural",
@@ -97,11 +97,19 @@ export const DemandCompassGapSchema = z.object({
 }).strict();
 export type DemandCompassGap = z.infer<typeof DemandCompassGapSchema>;
 
-export const EthDemandCompassSnapshotSchema = z.object({
+const SharedSnapshotFields = {
   summary: z.string().min(1).max(500),
   as_of: z.string().min(1),
   window: z.literal("30d"),
   judgment: DemandCompassJudgmentSchema,
+  evidence: z.array(z.string().min(1).max(240)).max(4),
+  sources: z.array(z.string().min(1).max(160)).max(48),
+  confidence: z.number().finite().min(0).max(1),
+  gaps: z.array(DemandCompassGapSchema).max(24),
+} as const;
+
+export const EthDemandCompassV2SnapshotSchema = z.object({
+  ...SharedSnapshotFields,
   ecosystem_state: EthEcosystemStateSchema,
   eth_capture_state: EthCaptureStateSchema,
   classification: EthValueAccrualClassificationSchema,
@@ -115,10 +123,6 @@ export const EthDemandCompassSnapshotSchema = z.object({
     collateral_demand: DemandCompassAxisSchema,
     monetary_settlement: DemandCompassAxisSchema,
   }).strict(),
-  evidence: z.array(z.string().min(1).max(240)).max(4),
-  sources: z.array(z.string().min(1).max(160)).max(48),
-  confidence: z.number().finite().min(0).max(1),
-  gaps: z.array(DemandCompassGapSchema).max(24),
   methodology_version: z.literal("eth-demand-compass-v2"),
 }).strict().superRefine((snapshot, context) => {
   if (snapshot.judgment === "structural" && snapshot.capture_tier !== "collateral_and_reserve") {
@@ -135,29 +139,31 @@ export const EthDemandCompassSnapshotSchema = z.object({
   }
 });
 
-/** Strict runtime output of the V2 builder. */
-export type EthDemandCompassV2Snapshot = z.infer<typeof EthDemandCompassSnapshotSchema>;
-
-type V2Axes = EthDemandCompassV2Snapshot["axes"];
-type LegacyCompatibleAxes = Omit<V2Axes, "ecosystem_activity" | "settlement_capture">
-  & Partial<Pick<V2Axes, "ecosystem_activity" | "settlement_capture">>;
+/**
+ * Stored dashboard snapshots created before V2 remain readable, but this schema
+ * cannot validate or produce the new ecosystem-versus-capture classification.
+ */
+export const EthDemandCompassV1SnapshotSchema = z.object({
+  ...SharedSnapshotFields,
+  axes: z.object({
+    usage_demand: DemandCompassAxisSchema,
+    l2_settlement: DemandCompassAxisSchema,
+    supply_absorption: DemandCompassAxisSchema,
+    collateral_demand: DemandCompassAxisSchema,
+    monetary_settlement: DemandCompassAxisSchema,
+  }).strict(),
+  methodology_version: z.literal("eth-demand-compass-v1"),
+}).strict();
 
 /**
- * Public TypeScript compatibility type for stored V1 dashboard fixtures and V2 output.
- * New runtime output is always validated by EthDemandCompassSnapshotSchema as V2.
+ * Public read boundary accepts historical V1 snapshots and strict V2 snapshots.
+ * The current builder emits only V2 and validates against the V2 schema.
  */
-export type EthDemandCompassSnapshot = Omit<
-  EthDemandCompassV2Snapshot,
-  | "ecosystem_state"
-  | "eth_capture_state"
-  | "classification"
-  | "capture_tier"
-  | "axes"
-  | "methodology_version"
-> & Partial<Pick<
-  EthDemandCompassV2Snapshot,
-  "ecosystem_state" | "eth_capture_state" | "classification" | "capture_tier"
->> & {
-  axes: LegacyCompatibleAxes;
-  methodology_version: "eth-demand-compass-v1" | "eth-demand-compass-v2";
-};
+export const EthDemandCompassSnapshotSchema = z.union([
+  EthDemandCompassV2SnapshotSchema,
+  EthDemandCompassV1SnapshotSchema,
+]);
+
+export type EthDemandCompassV2Snapshot = z.infer<typeof EthDemandCompassV2SnapshotSchema>;
+export type EthDemandCompassV1Snapshot = z.infer<typeof EthDemandCompassV1SnapshotSchema>;
+export type EthDemandCompassSnapshot = z.infer<typeof EthDemandCompassSnapshotSchema>;
