@@ -9,7 +9,7 @@ import type {
   DemandCompassJudgment,
   EthCaptureState,
   EthCaptureTier,
-  EthDemandCompassSnapshot,
+  EthDemandCompassV2Snapshot,
   EthEcosystemState,
   EthValueAccrualClassification,
 } from "./types.js";
@@ -281,7 +281,7 @@ function ecosystemStateFor(axis: DemandCompassAxis): EthEcosystemState {
   return "stable";
 }
 
-function captureStateFor(axes: EthDemandCompassSnapshot["axes"]): EthCaptureState {
+function captureStateFor(axes: EthDemandCompassV2Snapshot["axes"]): EthCaptureState {
   const required = [
     axes.usage_demand,
     axes.l2_settlement,
@@ -309,7 +309,7 @@ function classificationFor(
 }
 
 function captureTierFor(
-  axes: EthDemandCompassSnapshot["axes"],
+  axes: EthDemandCompassV2Snapshot["axes"],
   captureState: EthCaptureState,
 ): EthCaptureTier {
   if (axes.collateral_demand.status === "improving") return "collateral_and_reserve";
@@ -340,7 +340,7 @@ function judgmentFor(
 
 function evidenceFor(
   classification: EthValueAccrualClassification,
-  axes: EthDemandCompassSnapshot["axes"],
+  axes: EthDemandCompassV2Snapshot["axes"],
 ): string[] {
   const selected = Object.entries(axes)
     .filter(([, axis]) => axis.status === "improving" || axis.status === "weakening")
@@ -365,7 +365,7 @@ function summaryFor(
     return "Ethereum ecosystem activity is expanding without matching ETH fee, settlement-share, or supply-capture confirmation.";
   }
   if (classification === "capture_without_growth") {
-    return "ETH fee, settlement, or supply capture is strengthening without broad Ethereum ecosystem expansion."
+    return "ETH fee, settlement, or supply capture is strengthening without broad Ethereum ecosystem expansion.";
   }
   if (classification === "data_warning") {
     return "Ethereum ecosystem growth and ETH value accrual cannot yet be separated because required bounded trend evidence is missing or stale.";
@@ -383,8 +383,8 @@ function uniqueGaps(gaps: DemandCompassGap[]): DemandCompassGap[] {
   });
 }
 
-export function buildEthDemandCompass(args: BuildEthDemandCompassArgs): EthDemandCompassSnapshot {
-  const axes: EthDemandCompassSnapshot["axes"] = {
+export function buildEthDemandCompass(args: BuildEthDemandCompassArgs): EthDemandCompassV2Snapshot {
+  const axes: EthDemandCompassV2Snapshot["axes"] = {
     ecosystem_activity: ecosystemAxis(args.ecosystemCapture),
     usage_demand: usageAxis(args.valueCapture),
     l2_settlement: l2Axis(args.valueCapture),
