@@ -6,11 +6,13 @@ import { realFetcher } from "./cli/fetcher.js";
 import { runWarmup } from "./cli/warmup.js";
 import { runCompassBacktestCli } from "./backtest/cli.js";
 import { createConsoleGatewayServer } from "./dashboard/console_gateway.js";
+import { createConsoleHistoryProvider } from "./dashboard/console_history_provider.js";
 import { createFreeOnlyCompassProvider, createFreeOnlySnapshotProvider } from "./dashboard/provider.js";
 import { createDashboardServer } from "./dashboard/server.js";
 import { EthDemandCompassV2SnapshotSchema } from "./eth_demand_compass/types.js";
 import { loadEnv } from "./env.js";
 import { runIntelligenceCollectCli } from "./intelligence_core/cli.js";
+import { JsonlMetricObservationStore } from "./intelligence_core/store.js";
 import { runRobinhoodChainPulseCli } from "./robinhood_chain_pulse/cli.js";
 import {
   createServer,
@@ -60,6 +62,9 @@ async function main(): Promise<void> {
 
   if (mode === "console-gateway") {
     const ctx = makeContext({ env });
+    const historyPath = env.intelligenceHistoryPath;
+    if (!historyPath) throw new Error("intelligenceHistoryPath is required for console-gateway history");
+    const historyStore = new JsonlMetricObservationStore(historyPath);
     const gateway = createConsoleGatewayServer({
       valueCaptureProvider: () => handleEthValueCapture(
         { window: "30d", paid_mode: "free_only", include_rollups: false },
@@ -72,6 +77,7 @@ async function main(): Promise<void> {
       compassProvider: async () => EthDemandCompassV2SnapshotSchema.parse(
         await handleEthDemandCompass({}, { env, ctx }),
       ),
+      historyProvider: createConsoleHistoryProvider(historyStore),
       host: process.env.OPM_CONSOLE_GATEWAY_HOST ?? "127.0.0.1",
       port: consoleGatewayPort(),
     });

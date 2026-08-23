@@ -1,6 +1,6 @@
 import { makeContext } from "../adapters/base.js";
 import type { EnvConfig } from "../env.js";
-import { runEthValueCaptureCollectionOnce } from "./collection_run.js";
+import { runEthIntelligenceCollectionOnce } from "./collection_run.js";
 import { JsonlMetricObservationStore } from "./store.js";
 
 export async function runIntelligenceCollectCli(env: EnvConfig): Promise<unknown> {
@@ -8,7 +8,7 @@ export async function runIntelligenceCollectCli(env: EnvConfig): Promise<unknown
   if (!path) throw new Error("intelligenceHistoryPath is required for intelligence-collect");
   const ctx = makeContext({ env });
   const store = new JsonlMetricObservationStore(path);
-  const result = await runEthValueCaptureCollectionOnce({
+  const result = await runEthIntelligenceCollectionOnce({
     handlerContext: { env, ctx },
     store,
   });

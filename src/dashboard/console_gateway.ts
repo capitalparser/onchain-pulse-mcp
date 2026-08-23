@@ -17,10 +17,18 @@ import {
   type EthValueCaptureSnapshot,
 } from "../eth_value_capture/types.js";
 import {
+  buildEthFrontendHistory,
+  EthFrontendHistoryQueryError,
+  EthFrontendHistorySnapshotSchema,
+  parseEthFrontendHistorySearchParams,
+} from "../frontend_contract/eth_history.js";
+import {
   buildEthFrontendOverview,
   EthFrontendOverviewSnapshotSchema,
   type EthFrontendOverviewSnapshot,
 } from "../frontend_contract/eth_overview.js";
+import { MetricObservationSchema, type MetricObservation } from "../intelligence_core/types.js";
+import type { ConsoleHistoryProvider } from "./console_history_provider.js";
 
 export type ConsoleValueCaptureProvider = () => Promise<EthValueCaptureSnapshot>;
 export type ConsoleEcosystemCaptureProvider = () => Promise<EthEcosystemCaptureSnapshot>;
@@ -30,6 +38,8 @@ export interface ConsoleGatewayOptions {
   valueCaptureProvider: ConsoleValueCaptureProvider;
   ecosystemCaptureProvider: ConsoleEcosystemCaptureProvider;
   compassProvider: ConsoleCompassProvider;
+  historyProvider?: ConsoleHistoryProvider;
+  now?: () => Date;
   host?: string;
   port?: number;
 }
@@ -41,7 +51,7 @@ export interface ConsoleGatewayAddress {
 
 type ProviderOptions = Pick<
   ConsoleGatewayOptions,
-  "valueCaptureProvider" | "ecosystemCaptureProvider" | "compassProvider"
+  "valueCaptureProvider" | "ecosystemCaptureProvider" | "compassProvider" | "historyProvider" | "now"
 >;
 
 function sendJson(response: ServerResponse, status: number, value: unknown): void {
@@ -66,12 +76,65 @@ export function createConsoleGatewayHandler(options: ProviderOptions) {
       sendJson(response, 400, { error: "invalid_request" });
       return;
     }
+    const requestNow = options.now?.() ?? new Date();
 
     if (url.pathname === "/api/health") {
       sendJson(response, 200, {
         status: "ok",
         service: "onchain-pulse-console-gateway",
       });
+      return;
+    }
+
+    if (url.pathname === "/api/v1/eth/history") {
+      if (options.historyProvider === undefined) {
+        sendJson(response, 503, { error: "history_unavailable" });
+        return;
+      }
+
+      let query;
+      try {
+        query = parseEthFrontendHistorySearchParams(url.searchParams, requestNow);
+      } catch (error) {
+        if (error instanceof EthFrontendHistoryQueryError) {
+          sendJson(response, 400, { error: "invalid_history_query" });
+          return;
+        }
+        sendJson(response, 400, { error: "invalid_history_query" });
+        return;
+      }
+
+      let rawObservations: unknown;
+      try {
+        rawObservations = await options.historyProvider(query);
+      } catch {
+        sendJson(response, 503, { error: "history_unavailable" });
+        return;
+      }
+      if (!Array.isArray(rawObservations)) {
+        sendJson(response, 502, { error: "history_snapshot_invalid" });
+        return;
+      }
+      const observations: MetricObservation[] = [];
+      for (const rawObservation of rawObservations) {
+        const parsedObservation = MetricObservationSchema.safeParse(rawObservation);
+        if (!parsedObservation.success) {
+          sendJson(response, 502, { error: "history_snapshot_invalid" });
+          return;
+        }
+        observations.push(parsedObservation.data);
+      }
+
+      try {
+        const history = buildEthFrontendHistory({
+          query,
+          observations,
+          generatedAt: requestNow,
+        });
+        sendJson(response, 200, EthFrontendHistorySnapshotSchema.parse(history));
+      } catch {
+        sendJson(response, 502, { error: "history_snapshot_invalid" });
+      }
       return;
     }
 
@@ -98,7 +161,7 @@ export function createConsoleGatewayHandler(options: ProviderOptions) {
         valueCapture: valueCapture.data,
         ecosystemCapture: ecosystemCapture.data,
         compass: compass.data,
-        generatedAt: new Date(),
+        generatedAt: requestNow,
       });
       const validatedOverview: EthFrontendOverviewSnapshot =
         EthFrontendOverviewSnapshotSchema.parse(overview);
