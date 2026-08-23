@@ -74,10 +74,19 @@ export const EthFrontendOverviewSnapshotSchema = z.object({
       demand_compass: z.string().min(1).max(120),
     }).strict(),
   }).strict(),
-  detail_routes: z.object({
-    value_capture: z.literal("/api/eth/value-capture?window=30d"),
-    ecosystem_capture: z.literal("/api/eth/ecosystem-capture?window=30d"),
-    demand_compass: z.literal("/api/eth/demand-compass"),
+  detail_interfaces: z.object({
+    value_capture: z.object({
+      transport: z.literal("dashboard_http"),
+      ref: z.literal("/api/eth/value-capture?window=30d"),
+    }).strict(),
+    ecosystem_capture: z.object({
+      transport: z.literal("mcp_tool"),
+      ref: z.literal("get_eth_ecosystem_capture"),
+    }).strict(),
+    demand_compass: z.object({
+      transport: z.literal("dashboard_http"),
+      ref: z.literal("/api/eth/demand-compass"),
+    }).strict(),
   }).strict(),
   methodology_version: z.literal("eth-frontend-overview-v1"),
 }).strict().superRefine((snapshot, context) => {
@@ -224,10 +233,19 @@ export function buildEthFrontendOverview(args: {
         demand_compass: compass.methodology_version,
       },
     },
-    detail_routes: {
-      value_capture: "/api/eth/value-capture?window=30d",
-      ecosystem_capture: "/api/eth/ecosystem-capture?window=30d",
-      demand_compass: "/api/eth/demand-compass",
+    detail_interfaces: {
+      value_capture: {
+        transport: "dashboard_http",
+        ref: "/api/eth/value-capture?window=30d",
+      },
+      ecosystem_capture: {
+        transport: "mcp_tool",
+        ref: "get_eth_ecosystem_capture",
+      },
+      demand_compass: {
+        transport: "dashboard_http",
+        ref: "/api/eth/demand-compass",
+      },
     },
     methodology_version: "eth-frontend-overview-v1",
   });
