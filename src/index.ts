@@ -5,11 +5,27 @@ import { makeContext } from "./adapters/base.js";
 import { realFetcher } from "./cli/fetcher.js";
 import { runWarmup } from "./cli/warmup.js";
 import { runCompassBacktestCli } from "./backtest/cli.js";
+import { createConsoleGatewayServer } from "./dashboard/console_gateway.js";
 import { createFreeOnlyCompassProvider, createFreeOnlySnapshotProvider } from "./dashboard/provider.js";
 import { createDashboardServer } from "./dashboard/server.js";
+import { EthDemandCompassV2SnapshotSchema } from "./eth_demand_compass/types.js";
 import { loadEnv } from "./env.js";
 import { runIntelligenceCollectCli } from "./intelligence_core/cli.js";
-import { createServer, handleEthDemandCompass, handleEthValueCapture } from "./server.js";
+import {
+  createServer,
+  handleEthDemandCompass,
+  handleEthEcosystemCapture,
+  handleEthValueCapture,
+} from "./server.js";
+
+function consoleGatewayPort(): number {
+  const raw = process.env.OPM_CONSOLE_GATEWAY_PORT ?? "8788";
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65_535) {
+    throw new Error("OPM_CONSOLE_GATEWAY_PORT must be an integer between 0 and 65535");
+  }
+  return parsed;
+}
 
 async function main(): Promise<void> {
   const mode = process.argv[2];
@@ -32,6 +48,29 @@ async function main(): Promise<void> {
     const result = await runIntelligenceCollectCli(env);
     // eslint-disable-next-line no-console
     console.error(JSON.stringify(result));
+    return;
+  }
+
+  if (mode === "console-gateway") {
+    const ctx = makeContext({ env });
+    const gateway = createConsoleGatewayServer({
+      valueCaptureProvider: () => handleEthValueCapture(
+        { window: "30d", paid_mode: "free_only", include_rollups: false },
+        { env, ctx },
+      ),
+      ecosystemCaptureProvider: () => handleEthEcosystemCapture(
+        { window: "30d" },
+        { env, ctx },
+      ),
+      compassProvider: async () => EthDemandCompassV2SnapshotSchema.parse(
+        await handleEthDemandCompass({}, { env, ctx }),
+      ),
+      host: process.env.OPM_CONSOLE_GATEWAY_HOST ?? "127.0.0.1",
+      port: consoleGatewayPort(),
+    });
+    const address = await gateway.start();
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify({ mode: "console-gateway", ...address }));
     return;
   }
 
