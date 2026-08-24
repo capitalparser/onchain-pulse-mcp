@@ -52,7 +52,7 @@ Unknown and duplicate parameters fail with `400 invalid_history_query`.
 
 The first browser-safe set is restricted to daily, point-in-time-safe ETH features already registered in the Intelligence Core. It includes protocol fees and supply, L2 rent, L2 user fees, settlement-cost share, and Ethereum L1/L2 stablecoin supply.
 
-Arbitrary metric keys, entity labels, wallet histories, and raw evidence are not queryable through this route.
+Arbitrary metric keys, entity labels, wallet histories, and raw evidence are not queryable through this route. The current JSONL provider reads the store once per request, prefilters to the bounded query, and rejects more than 20,000 candidate revisions before response construction. A storage migration is still required when the append-only file becomes too large for one bounded in-memory read.
 
 ## Point-in-time rules
 

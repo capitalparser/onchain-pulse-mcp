@@ -18,6 +18,7 @@ export interface EthCollectionRunResult {
 
 export interface EthIntelligenceSourceCollectionResult {
   status: "collected" | "failed";
+  snapshot_status: "complete" | "partial" | "unavailable" | null;
   snapshot_as_of: string | null;
   emitted_observation_count: number;
   skipped_duplicate_count: number;
@@ -113,20 +114,36 @@ export async function runEthIntelligenceCollectionOnce(args: {
   const skippedDuplicateIds: string[] = [];
   const gaps: string[] = [];
 
-  const valueCapture: EthIntelligenceSourceCollectionResult = await (async () => {
-    if (valueCaptureResult.status === "rejected") {
-      const sourceGap = "value_capture:collection_failed";
+  let valueCapture: EthIntelligenceSourceCollectionResult | undefined;
+  if (valueCaptureResult.status === "rejected") {
+    const sourceGap = "value_capture:collection_failed";
+    gaps.push(sourceGap);
+    valueCapture = {
+      status: "failed",
+      snapshot_status: null,
+      snapshot_as_of: null,
+      emitted_observation_count: 0,
+      skipped_duplicate_count: 0,
+      gaps: [sourceGap],
+    };
+  } else {
+    let observations: MetricObservation[];
+    try {
+      observations = metricObservationsFromEthValueCapture(valueCaptureResult.value, ingestedAt);
+    } catch {
+      const sourceGap = "value_capture:normalization_failed";
       gaps.push(sourceGap);
-      return {
+      valueCapture = {
         status: "failed",
-        snapshot_as_of: null,
+        snapshot_status: valueCaptureResult.value.status,
+        snapshot_as_of: valueCaptureResult.value.as_of,
         emitted_observation_count: 0,
         skipped_duplicate_count: 0,
         gaps: [sourceGap],
       };
+      observations = [];
     }
-    try {
-      const observations = metricObservationsFromEthValueCapture(valueCaptureResult.value, ingestedAt);
+    if (valueCapture === undefined) {
       const persisted = await appendUniqueObservations({ store: args.store, observations, existingIds });
       emittedObservationIds.push(...persisted.emitted);
       skippedDuplicateIds.push(...persisted.skipped);
@@ -134,40 +151,47 @@ export async function runEthIntelligenceCollectionOnce(args: {
         `value_capture:${gap.code}:${gap.detail}`
       );
       gaps.push(...sourceGaps);
-      return {
+      valueCapture = {
         status: "collected",
+        snapshot_status: valueCaptureResult.value.status,
         snapshot_as_of: valueCaptureResult.value.as_of,
         emitted_observation_count: persisted.emitted.length,
         skipped_duplicate_count: persisted.skipped.length,
         gaps: sourceGaps,
       };
-    } catch {
-      const sourceGap = "value_capture:normalization_failed";
-      gaps.push(sourceGap);
-      return {
-        status: "failed",
-        snapshot_as_of: valueCaptureResult.value.as_of,
-        emitted_observation_count: 0,
-        skipped_duplicate_count: 0,
-        gaps: [sourceGap],
-      };
     }
-  })();
+  }
 
-  const ecosystemCapture: EthIntelligenceSourceCollectionResult = await (async () => {
-    if (ecosystemCaptureResult.status === "rejected") {
-      const sourceGap = "ecosystem_capture:collection_failed";
+  let ecosystemCapture: EthIntelligenceSourceCollectionResult | undefined;
+  if (ecosystemCaptureResult.status === "rejected") {
+    const sourceGap = "ecosystem_capture:collection_failed";
+    gaps.push(sourceGap);
+    ecosystemCapture = {
+      status: "failed",
+      snapshot_status: null,
+      snapshot_as_of: null,
+      emitted_observation_count: 0,
+      skipped_duplicate_count: 0,
+      gaps: [sourceGap],
+    };
+  } else {
+    let observations: MetricObservation[];
+    try {
+      observations = metricObservationsFromEthEcosystemCapture(ecosystemCaptureResult.value, ingestedAt);
+    } catch {
+      const sourceGap = "ecosystem_capture:normalization_failed";
       gaps.push(sourceGap);
-      return {
+      ecosystemCapture = {
         status: "failed",
-        snapshot_as_of: null,
+        snapshot_status: ecosystemCaptureResult.value.status,
+        snapshot_as_of: ecosystemCaptureResult.value.as_of,
         emitted_observation_count: 0,
         skipped_duplicate_count: 0,
         gaps: [sourceGap],
       };
+      observations = [];
     }
-    try {
-      const observations = metricObservationsFromEthEcosystemCapture(ecosystemCaptureResult.value, ingestedAt);
+    if (ecosystemCapture === undefined) {
       const persisted = await appendUniqueObservations({ store: args.store, observations, existingIds });
       emittedObservationIds.push(...persisted.emitted);
       skippedDuplicateIds.push(...persisted.skipped);
@@ -175,31 +199,27 @@ export async function runEthIntelligenceCollectionOnce(args: {
         `ecosystem_capture:${gap.code}:${gap.detail}`
       );
       gaps.push(...sourceGaps);
-      return {
+      ecosystemCapture = {
         status: "collected",
+        snapshot_status: ecosystemCaptureResult.value.status,
         snapshot_as_of: ecosystemCaptureResult.value.as_of,
         emitted_observation_count: persisted.emitted.length,
         skipped_duplicate_count: persisted.skipped.length,
         gaps: sourceGaps,
       };
-    } catch {
-      const sourceGap = "ecosystem_capture:normalization_failed";
-      gaps.push(sourceGap);
-      return {
-        status: "failed",
-        snapshot_as_of: ecosystemCaptureResult.value.as_of,
-        emitted_observation_count: 0,
-        skipped_duplicate_count: 0,
-        gaps: [sourceGap],
-      };
     }
-  })();
+  }
 
-  const collectedCount = [valueCapture, ecosystemCapture]
-    .filter((result) => result.status === "collected").length;
+  if (valueCapture === undefined || ecosystemCapture === undefined) {
+    throw new Error("ETH intelligence collection did not resolve all source states");
+  }
+  const collected = [valueCapture, ecosystemCapture]
+    .filter((result) => result.status === "collected");
+  const complete = collected.length === 2
+    && collected.every((result) => result.snapshot_status === "complete");
   return {
     collector_id: "eth-intelligence:30d",
-    status: collectedCount === 2 ? "complete" : collectedCount === 1 ? "partial" : "failed",
+    status: complete ? "complete" : collected.length > 0 ? "partial" : "failed",
     fetched_at: ingestedAt.toISOString(),
     sources: {
       value_capture: valueCapture,

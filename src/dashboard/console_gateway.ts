@@ -20,6 +20,7 @@ import {
   buildEthFrontendHistory,
   EthFrontendHistoryQueryError,
   EthFrontendHistorySnapshotSchema,
+  type EthFrontendHistoryQuery,
   parseEthFrontendHistorySearchParams,
 } from "../frontend_contract/eth_history.js";
 import {
@@ -92,7 +93,7 @@ export function createConsoleGatewayHandler(options: ProviderOptions) {
         return;
       }
 
-      let query;
+      let query: EthFrontendHistoryQuery;
       try {
         query = parseEthFrontendHistorySearchParams(url.searchParams, requestNow);
       } catch (error) {
