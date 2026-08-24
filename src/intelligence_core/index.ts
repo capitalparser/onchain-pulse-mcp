@@ -1,6 +1,7 @@
 export * from "./types.js";
 export * from "./store.js";
 export * from "./feature_registry.js";
+export * from "./observation_id.js";
 export * from "./eth_value_capture_adapter.js";
 export * from "./eth_ecosystem_capture_adapter.js";
 export * from "./eth_value_capture_collector.js";
@@ -8,3 +9,5 @@ export * from "./collection_run.js";
 export * from "./history.js";
 export * from "./research_export.js";
 export * from "./source_license.js";
+export * from "./backfill.js";
+export * from "./backfill_cli.js";
