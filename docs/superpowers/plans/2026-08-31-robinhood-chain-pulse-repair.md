@@ -30,10 +30,10 @@
 - Consumes: `robinhood-chain-pulse.patch` with SHA-256 `0925e32670826f76227dd6b2810a7fe9fde104a00df57cef75bd48a91d9d2165`
 - Produces: the reviewed CLI, adapters, domain types, tests, and validation prompt
 
-- [ ] Verify the clean base and ZIP/patch hashes.
-- [ ] Run the pre-patch full test suite and record the baseline.
-- [ ] Apply the patch and run `git diff --check`.
-- [ ] Run focused tests and confirm the known Morpho sort failure.
+- [x] Verify the clean base and ZIP/patch hashes.
+- [x] Run the pre-patch full test suite and record the baseline.
+- [x] Apply the patch and run `git diff --check`.
+- [x] Run focused tests and confirm the known Morpho sort failure.
 
 ### Task 2: Repair deterministic symbol ordering
 
@@ -44,9 +44,9 @@
 **Interfaces:**
 - Produces: case-folded deterministic symbol ordering with literal result `["USDe", "USDG"]`
 
-- [ ] Preserve the existing failing assertion as the red test.
-- [ ] Add a deterministic comparator using case-folded keys and an exact-value tie-breaker.
-- [ ] Run the focused Morpho test to green.
+- [x] Preserve the existing failing assertion as the red test.
+- [x] Add a deterministic comparator using case-folded keys and an exact-value tie-breaker.
+- [x] Run the focused Morpho test to green.
 
 ### Task 3: Restore stale-cache fallback for all adapters
 
@@ -61,9 +61,9 @@
 **Interfaces:**
 - Produces: refresh failure throws inside each cache loader; cache hit returns `partial`, `stale: true`, bounded stale gap; no-cache failure returns bounded `unavailable`
 
-- [ ] Add one TTL-expiry stale fallback regression test per adapter and verify all three fail for the expected reason.
-- [ ] Separate throwing loaders from bounded public adapter fallbacks without weakening per-source partial results.
-- [ ] Run all three adapter test files to green.
+- [x] Add one TTL-expiry stale fallback regression test per adapter and verify all three fail for the expected reason.
+- [x] Separate throwing loaders from bounded public adapter fallbacks without weakening per-source partial results.
+- [x] Run all three adapter test files to green.
 
 ### Task 4: Preserve missing Morpho collateral as unknown
 
@@ -74,9 +74,9 @@
 **Interfaces:**
 - Produces: missing `collateralAssetsUsd` leaves `collateral_usd: null`, sets `status: partial`, and adds `morpho-api:collateral_value_gap`; valid supply, borrow, and liquidity remain aggregated
 
-- [ ] Add a missing-collateral regression test and verify red.
-- [ ] Track collateral completeness separately from the other aggregates.
-- [ ] Run the Morpho tests to green.
+- [x] Add a missing-collateral regression test and verify red.
+- [x] Track collateral completeness separately from the other aggregates.
+- [x] Run the Morpho tests to green.
 
 ### Task 5: Require explorer verification for breadth
 
@@ -88,10 +88,10 @@
 **Interfaces:**
 - Produces: Blockscout unavailable or schema drift keeps holder count null, sets partial data, and makes the token ineligible; an eligible universe below three cannot classify as diffusion
 
-- [ ] Change/add the Blockscout failure regression test and verify red.
-- [ ] Require `metadata.status === "ok"` and exact symbol agreement in breadth eligibility.
-- [ ] Add a classification regression proving two eligible tokens cannot produce `leader_beta_diffusion`.
-- [ ] Run community and metrics tests to green.
+- [x] Change/add the Blockscout failure regression test and verify red.
+- [x] Require `metadata.status === "ok"` and exact symbol agreement in breadth eligibility.
+- [x] Add a classification regression proving two eligible tokens cannot produce `leader_beta_diffusion`.
+- [x] Run community and metrics tests to green.
 
 ### Task 6: Paginate and bound Morpho markets
 
@@ -102,10 +102,10 @@
 **Interfaces:**
 - Produces: `first: 100`, `skip: 0, 100, 200...`; validates `pageInfo.countTotal`; rejects duplicate market IDs and inconsistent totals; caps total rows; emits `pagination_limit` on overflow
 
-- [ ] Add a 101-market/two-call aggregation test and verify red.
-- [ ] Add duplicate-ID, inconsistent-count, and limit-overflow regression tests and verify red.
-- [ ] Implement bounded page collection before normalization.
-- [ ] Run Morpho tests to green.
+- [x] Add a 101-market/two-call aggregation test and verify red.
+- [x] Add duplicate-ID, inconsistent-count, and limit-overflow regression tests and verify red.
+- [x] Implement bounded page collection before normalization.
+- [x] Run Morpho tests to green.
 
 ### Task 7: Register the strict MCP tool
 
@@ -117,10 +117,10 @@
 **Interfaces:**
 - Produces: MCP tool `get_robinhood_chain_pulse` with JSON Schema `{ "type": "object", "properties": {}, "additionalProperties": false }`
 
-- [ ] Add registration, success-shape, and extra-input rejection tests and verify red.
-- [ ] Register the tool using the existing server/context pattern and strict Zod empty-object schema.
-- [ ] Verify errors remain bounded and no caller-controlled source/universe fields exist.
-- [ ] Run server tests to green.
+- [x] Add registration, success-shape, and extra-input rejection tests and verify red.
+- [x] Register the tool using the existing server/context pattern and strict Zod empty-object schema.
+- [x] Verify errors remain bounded and no caller-controlled source/universe fields exist.
+- [x] Run server tests to green.
 
 ### Task 8: Validate, document, and publish
 
@@ -131,8 +131,8 @@
 **Interfaces:**
 - Produces: one `ready_for_owner_review` or `not_ready` report with exact evidence
 
-- [ ] Run Node 24 `npm ci`, `npm run typecheck`, full `npm test`, and `npm run build`.
-- [ ] Run focused pagination, collateral, stale fallback, explorer-gating, MCP strict-input, leakage, and CLI/live smoke checks.
-- [ ] Write the validation report with exact commands, results, unresolved risks, and final status.
-- [ ] Re-run complete verification after the report.
-- [ ] Commit the source, tests, docs, and report; push `feat/robinhood-chain-pulse`; create a PR to `main`; do not merge or run Actions.
+- [x] Run Node 24 `npm ci`, `npm run typecheck`, full `npm test`, and `npm run build`.
+- [x] Run focused pagination, collateral, stale fallback, explorer-gating, MCP strict-input, leakage, and CLI/live smoke checks.
+- [x] Write the validation report with exact commands, results, unresolved risks, and final status.
+- [x] Re-run complete verification after the report.
+- [x] Commit the source, tests, docs, and report; push `feat/robinhood-chain-pulse`; create a PR to `main`; do not merge or run Actions.
