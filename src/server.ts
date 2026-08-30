@@ -22,6 +22,9 @@ import { fetchLidoPooledEthBacking } from "./adapters/lido_pooled_eth_rpc.js";
 import { fetchSkyEthCollateralCustody } from "./adapters/sky_eth_collateral_rpc.js";
 import { fetchEigenLayerEthRestakingExposure } from "./adapters/eigenlayer_eth_restaking_rpc.js";
 import { fetchEigenLayerLstEthQuotes } from "./adapters/eigenlayer_lst_eth_quotes_rpc.js";
+import { fetchRobinhoodChainCommunity } from "./adapters/robinhood_chain_community.js";
+import { fetchRobinhoodChainDefiLlama } from "./adapters/robinhood_chain_defillama.js";
+import { fetchRobinhoodChainMorpho } from "./adapters/robinhood_chain_morpho.js";
 import type { EnvConfig } from "./env.js";
 import { windowToDays } from "./eth_value_capture/metrics.js";
 import {
@@ -47,6 +50,7 @@ import type { SkyEthCollateralCustodySnapshot } from "./sky_eth_collateral_custo
 import type { EigenLayerEthRestakingExposureSnapshot } from "./eigenlayer_eth_restaking/types.js";
 import type { EigenLayerLstEthQuotesSnapshot } from "./eigenlayer_lst_eth_quotes/types.js";
 import type { EthDemandCompassSnapshot } from "./eth_demand_compass/types.js";
+import type { RobinhoodChainPulseSnapshot } from "./robinhood_chain_pulse/types.js";
 import { fanOutAdapters } from "./pipeline/fanout.js";
 import { toScoreInputs } from "./pipeline/score_inputs.js";
 import { loadPulseConfig } from "./pulse/config.js";
@@ -63,6 +67,7 @@ import { getSkyEthCollateralCustody } from "./tools/get_sky_eth_collateral_custo
 import { getEigenLayerEthRestakingExposure } from "./tools/get_eigenlayer_eth_restaking_exposure.js";
 import { getEigenLayerLstEthQuotes } from "./tools/get_eigenlayer_lst_eth_quotes.js";
 import { getEthDemandCompass } from "./tools/get_eth_demand_compass.js";
+import { getRobinhoodChainPulse } from "./tools/get_robinhood_chain_pulse.js";
 import { getFundingOi } from "./tools/get_funding_oi.js";
 import { getKrPremium } from "./tools/get_kr_premium.js";
 import { getMarketPulse } from "./tools/get_market_pulse.js";
@@ -117,6 +122,7 @@ interface ToolDef {
     | EigenLayerEthRestakingExposureSnapshot
     | EigenLayerLstEthQuotesSnapshot
     | EthDemandCompassSnapshot
+    | RobinhoodChainPulseSnapshot
   >;
 }
 
@@ -181,6 +187,13 @@ const TOOLS: ToolDef[] = [
       "Read-only ETH demand compass that separates Ethereum ecosystem growth from ETH fee, settlement, supply, and collateral value accrual.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     handler: handleEthDemandCompass,
+  },
+  {
+    name: "get_robinhood_chain_pulse",
+    description:
+      "Read-only Robinhood Chain capital, credit, exact-address community breadth, fragility, and unquantified ETH-link diagnostic.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    handler: handleRobinhoodChainPulse,
   },
   {
     name: "get_eth_fee_cross_check",
@@ -490,6 +503,26 @@ export async function handleEthDemandCompass(
     ecosystemCapture,
     aave,
     lido,
+    now,
+  });
+}
+
+export async function handleRobinhoodChainPulse(
+  raw: unknown,
+  hc: HandlerContext,
+): Promise<RobinhoodChainPulseSnapshot> {
+  NoArgs.parse(raw);
+  const now = new Date();
+  const [fundamentals, credit, community] = await Promise.all([
+    fetchRobinhoodChainDefiLlama(hc.ctx, now),
+    fetchRobinhoodChainMorpho(hc.ctx, now),
+    fetchRobinhoodChainCommunity(hc.ctx, now),
+  ]);
+  return getRobinhoodChainPulse({
+    lang: hc.env.lang,
+    fundamentals,
+    credit,
+    community,
     now,
   });
 }

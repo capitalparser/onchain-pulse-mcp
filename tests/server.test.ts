@@ -11,6 +11,7 @@ import { SkyEthCollateralCustodySnapshotSchema } from "../src/sky_eth_collateral
 import { EigenLayerEthRestakingExposureSnapshotSchema } from "../src/eigenlayer_eth_restaking/types.js";
 import { EigenLayerLstEthQuotesSnapshotSchema } from "../src/eigenlayer_lst_eth_quotes/types.js";
 import { EthDemandCompassSnapshotSchema } from "../src/eth_demand_compass/types.js";
+import { RobinhoodChainPulseSnapshotSchema } from "../src/robinhood_chain_pulse/types.js";
 import {
   createServer,
   handleEthCollateralDemand,
@@ -30,7 +31,7 @@ import type { EnvConfig } from "../src/env.js";
 const env: EnvConfig = { byok: {}, lang: "en", historyPath: "/tmp/onchain-pulse-mcp-test-history.json", ethereumRpcUrl: undefined, ethereumBeaconApiUrl: undefined };
 
 describe("server", () => {
-  it("registers all eighteen expected tools including the ETH ecosystem and demand compass tools", () => {
+  it("registers all nineteen expected tools including the Robinhood Chain pulse", () => {
     const names = listTools()
       .map((t) => t.name)
       .sort();
@@ -49,12 +50,35 @@ describe("server", () => {
       "get_kr_premium",
       "get_lido_pooled_eth_backing",
       "get_market_pulse",
+      "get_robinhood_chain_pulse",
       "get_rwa_pulse",
       "get_sky_eth_collateral_custody",
       "get_spark_eth_collateral_capacity",
       "get_stablecoin_pulse",
       "get_token_forensics",
     ]);
+  });
+
+  it("registers a strict empty-input Robinhood Chain pulse without caller-controlled sources", async () => {
+    const tool = listTools().find((item) => item.name === "get_robinhood_chain_pulse");
+    const fetchImpl = vi.fn(async () => new Response("unavailable", { status: 503 }));
+    const hc = { env, ctx: makeContext({ env, fetchImpl: fetchImpl as typeof fetch }) };
+
+    expect(tool).toBeDefined();
+    expect(tool?.inputSchema).toEqual({ type: "object", properties: {}, additionalProperties: false });
+    const output = await tool!.handler({}, hc);
+    expect(RobinhoodChainPulseSnapshotSchema.parse(output)).toEqual(output);
+    expect(output).toMatchObject({
+      phase: "unavailable",
+      chain: { community_tokens_are_unaffiliated: true },
+      axes: { eth_capture: { status: "protocol_link_present_unquantified" } },
+    });
+    expect(JSON.stringify(output)).not.toMatch(/credential|raw provider|api[_-]?key/i);
+    await expect(tool!.handler({
+      source_mode: "caller-controlled",
+      token_address: "0x0000000000000000000000000000000000000000",
+      threshold: 0,
+    }, hc)).rejects.toThrow();
   });
 
   it("registers a strict free-only ETH demand compass without caller-controlled source configuration", async () => {
