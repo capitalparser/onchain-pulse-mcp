@@ -197,4 +197,34 @@ describe("Robinhood Chain community-token adapter", () => {
       vi.useRealTimers();
     }
   });
+
+  it("preserves cached explorer failure while marking cached successful sources stale", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-08-30T00:00:00.000Z"));
+      const base = fetchFixture();
+      const cashcat = ROBINHOOD_COMMUNITY_TOKEN_UNIVERSE.find((token) => token.symbol === "CASHCAT")!;
+      let refreshFails = false;
+      const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+        if (refreshFails || String(input).toLowerCase().endsWith(cashcat.address.toLowerCase())) {
+          return response({}, 503);
+        }
+        return base(input);
+      });
+      const ctx = makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch });
+
+      const partial = await fetchRobinhoodChainCommunity(ctx, new Date());
+      const cashcatSource = partial.sourceStatus.find((source) => source.role.startsWith("CASHCAT"));
+      expect(cashcatSource?.status).toBe("unavailable");
+
+      refreshFails = true;
+      vi.advanceTimersByTime(5 * 60_000 + 1);
+      const stale = await fetchRobinhoodChainCommunity(ctx, new Date());
+
+      expect(stale.sourceStatus.find((source) => source.role.startsWith("CASHCAT"))?.status).toBe("unavailable");
+      expect(stale.sourceStatus.find((source) => source.source.startsWith("dexscreener:"))?.status).toBe("stale");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

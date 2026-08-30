@@ -200,4 +200,35 @@ describe("Robinhood Chain Pulse classification", () => {
     expect(snapshot.axes.credit_activation.status).toBe("inactive");
     expect(snapshot.phase).toBe("capital_formation");
   });
+
+  it("accepts bounded 101-market symbol coverage and one aggregate collateral gap", () => {
+    const symbols = Array.from({ length: 101 }, (_, index) => `ASSET${String(index).padStart(3, "0")}`);
+    const creditResult = credit({
+      listed_market_count: 101,
+      active_market_count: 101,
+      supply_usd: 101,
+      borrow_usd: 50.5,
+      liquidity_usd: 50.5,
+      collateral_usd: null,
+      loan_asset_symbols: symbols,
+      collateral_asset_symbols: symbols,
+    });
+    creditResult.status = "partial";
+    creditResult.gaps = [{
+      code: "morpho-api:collateral_value_gap",
+      detail: "101 market rows had no valid collateral USD value; aggregate collateral remains unknown.",
+    }];
+
+    const snapshot = buildRobinhoodChainPulse({
+      lang: "en",
+      fundamentals: fundamentals(),
+      credit: creditResult,
+      community: community([]),
+      now: new Date("2026-08-30T00:00:00.000Z"),
+    });
+
+    expect(snapshot.credit.loan_asset_symbols).toHaveLength(101);
+    expect(snapshot.credit.collateral_usd).toBeNull();
+    expect(snapshot.gaps.filter((gap) => gap.code === "morpho-api:collateral_value_gap")).toHaveLength(1);
+  });
 });

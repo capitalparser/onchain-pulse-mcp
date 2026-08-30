@@ -327,14 +327,15 @@ export function createServer(opts: { env: EnvConfig; fetchImpl?: typeof fetch })
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const def = TOOLS.find((t) => t.name === req.params.name);
     if (!def) {
-      return { content: [{ type: "text", text: JSON.stringify({ error: `unknown tool: ${req.params.name}` }) }], isError: true };
+      return { content: [{ type: "text", text: JSON.stringify({ error: "unknown_tool" }) }], isError: true };
     }
 
     try {
       const out = await def.handler(req.params.arguments ?? {}, { env: opts.env, ctx });
       return { content: [{ type: "text", text: JSON.stringify(out) }] };
     } catch (err) {
-      return { content: [{ type: "text", text: JSON.stringify({ error: (err as Error).message }) }], isError: true };
+      const error = err instanceof z.ZodError ? "invalid_arguments" : "tool_execution_failed";
+      return { content: [{ type: "text", text: JSON.stringify({ error }) }], isError: true };
     }
   });
 

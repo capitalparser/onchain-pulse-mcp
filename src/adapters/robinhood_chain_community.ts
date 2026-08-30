@@ -386,7 +386,10 @@ function markStale(result: RobinhoodCommunityResult): RobinhoodCommunityResult {
     status: result.status === "valid" ? "partial" : result.status,
     stale: true,
     staleData: [...new Set([...result.staleData, "robinhood-community:stale_cache"])],
-    sourceStatus: result.sourceStatus.map((source) => ({ ...source, status: "stale" })),
+    sourceStatus: result.sourceStatus.map((source) => ({
+      ...source,
+      status: source.status === "ok" ? "stale" : source.status,
+    })),
     gaps: [
       ...result.gaps,
       { code: "robinhood-community:stale_cache", detail: "Live refresh failed and cached community-token market data was used." },

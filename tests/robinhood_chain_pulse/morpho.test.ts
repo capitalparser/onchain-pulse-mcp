@@ -183,6 +183,90 @@ describe("Robinhood Chain Morpho adapter", () => {
     expect(result.metrics.collateral_usd).toBe(202);
   });
 
+  it("keeps 101 unique asset symbols within the explicit market bound", async () => {
+    const rows = Array.from({ length: 101 }, (_, index) => ({
+      ...market(index),
+      loanAsset: { address: `0xloan${index}`, symbol: `LOAN${String(index).padStart(3, "0")}` },
+      collateralAsset: { address: `0xcollateral${index}`, symbol: `COLLATERAL${String(index).padStart(3, "0")}` },
+    }));
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const offset = variablesFrom(init).skip ?? 0;
+      const items = rows.slice(offset, offset + 100);
+      return response({
+        data: {
+          markets: {
+            items,
+            pageInfo: { count: items.length, countTotal: rows.length, limit: 100, skip: offset },
+          },
+        },
+      });
+    });
+
+    const result = await fetchRobinhoodChainMorpho(
+      makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch }),
+      new Date("2026-08-30T00:00:00.000Z"),
+    );
+
+    expect(result.status).toBe("valid");
+    expect(result.metrics.loan_asset_symbols).toHaveLength(101);
+    expect(result.metrics.collateral_asset_symbols).toHaveLength(101);
+  });
+
+  it("aggregates collateral gaps across 101 markets without overflowing the snapshot bound", async () => {
+    const rows = Array.from({ length: 101 }, (_, index) => {
+      const row = market(index);
+      const { collateralAssetsUsd: _missing, ...state } = row.state;
+      return { ...row, state };
+    });
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const offset = variablesFrom(init).skip ?? 0;
+      const items = rows.slice(offset, offset + 100);
+      return response({
+        data: {
+          markets: {
+            items,
+            pageInfo: { count: items.length, countTotal: rows.length, limit: 100, skip: offset },
+          },
+        },
+      });
+    });
+
+    const result = await fetchRobinhoodChainMorpho(
+      makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch }),
+      new Date("2026-08-30T00:00:00.000Z"),
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.metrics.supply_usd).toBe(101);
+    expect(result.metrics.collateral_usd).toBeNull();
+    expect(result.gaps.filter((gap) => gap.code === "morpho-api:collateral_value_gap")).toHaveLength(1);
+    expect(result.gaps.find((gap) => gap.code === "morpho-api:collateral_value_gap")?.detail).toContain("101");
+  });
+
+  it("rejects a page that exceeds the requested first=100 bound", async () => {
+    const rows = Array.from({ length: 101 }, (_, index) => market(index));
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const offset = variablesFrom(init).skip ?? 0;
+      return response({
+        data: {
+          markets: {
+            items: rows,
+            pageInfo: { count: rows.length, countTotal: rows.length, limit: 100, skip: offset },
+          },
+        },
+      });
+    });
+
+    const result = await fetchRobinhoodChainMorpho(
+      makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch }),
+      new Date("2026-08-30T00:00:00.000Z"),
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("unavailable");
+    expect(result.gaps.map((gap) => gap.code)).toContain("morpho-api:pagination_page_invalid");
+  });
+
   it("fails closed when a market ID repeats across pages", async () => {
     const firstPage = Array.from({ length: 100 }, (_, index) => market(index));
     const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {

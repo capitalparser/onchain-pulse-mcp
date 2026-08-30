@@ -175,6 +175,7 @@ async function fetchMarketPage(
     || limit !== MORPHO_MARKET_PAGE_SIZE
     || responseSkip !== skip
     || count !== items.length
+    || count > MORPHO_MARKET_PAGE_SIZE
   ) {
     return failRefresh(unavailable(
       asOf,
@@ -275,15 +276,18 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodMorphoResu
   let active = 0;
   let highUtilisation = 0;
   let parsedRows = 0;
+  let missingStateRows = 0;
+  let invalidUsdRows = 0;
+  let missingCollateralRows = 0;
   const loanSymbols = new Set<string>();
   const collateralSymbols = new Set<string>();
   const gaps: RobinhoodPulseGap[] = [];
 
-  for (const [index, raw] of items.entries()) {
+  for (const raw of items) {
     const row = record(raw);
     const state = row === null ? null : record(row.state);
     if (row === null || state === null) {
-      gaps.push({ code: "morpho-api:row_schema_gap", detail: `Market row ${index} was skipped because state fields were missing.` });
+      missingStateRows += 1;
       continue;
     }
     const rowSupply = nonnegative(state.supplyAssetsUsd);
@@ -291,7 +295,7 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodMorphoResu
     const rowLiquidity = nonnegative(state.liquidityAssetsUsd);
     const rowCollateral = nonnegative(state.collateralAssetsUsd);
     if (rowSupply === null || rowBorrow === null || rowLiquidity === null) {
-      gaps.push({ code: "morpho-api:row_schema_gap", detail: `Market row ${index} was skipped because USD state fields were invalid.` });
+      invalidUsdRows += 1;
       continue;
     }
     parsedRows += 1;
@@ -300,10 +304,7 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodMorphoResu
     liquidity += rowLiquidity;
     if (rowCollateral === null) {
       collateralComplete = false;
-      gaps.push({
-        code: "morpho-api:collateral_value_gap",
-        detail: `Market row ${index} had no valid collateral USD value; aggregate collateral remains unknown.`,
-      });
+      missingCollateralRows += 1;
     } else {
       collateral += rowCollateral;
     }
@@ -314,6 +315,25 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodMorphoResu
     const collateralSymbol = tokenSymbol(row.collateralAsset);
     if (loan !== null) loanSymbols.add(loan);
     if (collateralSymbol !== null) collateralSymbols.add(collateralSymbol);
+  }
+
+  if (missingStateRows > 0) {
+    gaps.push({
+      code: "morpho-api:row_schema_gap",
+      detail: `${missingStateRows} Morpho market row(s) were skipped because state fields were missing.`,
+    });
+  }
+  if (invalidUsdRows > 0) {
+    gaps.push({
+      code: "morpho-api:row_schema_gap",
+      detail: `${invalidUsdRows} Morpho market row(s) were skipped because supply, borrow, or liquidity USD fields were invalid.`,
+    });
+  }
+  if (missingCollateralRows > 0) {
+    gaps.push({
+      code: "morpho-api:collateral_value_gap",
+      detail: `${missingCollateralRows} Morpho market row(s) had no valid collateral USD value; aggregate collateral remains unknown.`,
+    });
   }
 
   if (parsedRows === 0) {

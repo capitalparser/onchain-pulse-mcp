@@ -287,7 +287,10 @@ function markStale(result: RobinhoodDefiLlamaResult): RobinhoodDefiLlamaResult {
     status: result.status === "valid" ? "partial" : result.status,
     stale: true,
     staleData: [...new Set([...result.staleData, "defillama:stale_cache"])],
-    sourceStatus: result.sourceStatus.map((source) => ({ ...source, status: "stale" })),
+    sourceStatus: result.sourceStatus.map((source) => ({
+      ...source,
+      status: source.status === "ok" ? "stale" : source.status,
+    })),
     gaps: [
       ...result.gaps,
       { code: "defillama:stale_cache", detail: "Live refresh failed and cached Robinhood Chain fundamentals were used." },

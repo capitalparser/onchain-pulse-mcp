@@ -89,8 +89,8 @@ export const RobinhoodCreditMetricsSchema = z.object({
   collateral_usd: NullableNonnegative,
   utilisation: z.number().finite().min(0).max(1).nullable(),
   high_utilisation_market_count: z.number().int().nonnegative().nullable(),
-  loan_asset_symbols: z.array(z.string().min(1).max(64)).max(100),
-  collateral_asset_symbols: z.array(z.string().min(1).max(64)).max(100),
+  loan_asset_symbols: z.array(z.string().min(1).max(64)).max(1_000),
+  collateral_asset_symbols: z.array(z.string().min(1).max(64)).max(1_000),
   stock_token_collateral_market_count: z.null(),
 }).strict();
 export type RobinhoodCreditMetrics = z.infer<typeof RobinhoodCreditMetricsSchema>;

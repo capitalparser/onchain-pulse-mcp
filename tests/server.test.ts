@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { makeContext } from "../src/adapters/base.js";
 import { onchainWallet } from "../src/adapters/onchain_wallet.js";
 import { EthValueCaptureSnapshotSchema } from "../src/eth_value_capture/types.js";
@@ -79,6 +81,37 @@ describe("server", () => {
       token_address: "0x0000000000000000000000000000000000000000",
       threshold: 0,
     }, hc)).rejects.toThrow();
+  });
+
+  it("enforces the Robinhood Chain pulse empty input over the MCP transport", async () => {
+    const { server } = createServer({
+      env,
+      fetchImpl: vi.fn(async () => new Response("unavailable", { status: 503 })) as typeof fetch,
+    });
+    const client = new Client({ name: "robinhood-chain-pulse-test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      const tools = await client.listTools();
+      const tool = tools.tools.find((item) => item.name === "get_robinhood_chain_pulse");
+      expect(tool?.inputSchema).toEqual({ type: "object", properties: {}, additionalProperties: false });
+
+      const invalid = await client.callTool({
+        name: "get_robinhood_chain_pulse",
+        arguments: { source_mode: "caller-controlled" },
+      });
+      const invalidContent = (invalid as { content: Array<{ text?: string }> }).content;
+      expect(invalid.isError).toBe(true);
+      expect(invalidContent[0]?.text).toBeDefined();
+      expect(JSON.parse(invalidContent[0]!.text!)).toEqual({ error: "invalid_arguments" });
+      expect(JSON.stringify(invalid)).not.toContain("source_mode");
+      expect(JSON.stringify(invalid)).not.toContain("unrecognized_keys");
+      expect(JSON.stringify(invalid)).not.toMatch(/credential|raw provider|api[_-]?key/i);
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 
   it("registers a strict free-only ETH demand compass without caller-controlled source configuration", async () => {

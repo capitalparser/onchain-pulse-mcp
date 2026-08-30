@@ -121,4 +121,32 @@ describe("Robinhood Chain DefiLlama adapter", () => {
       vi.useRealTimers();
     }
   });
+
+  it("preserves cached unavailable source statuses while marking cached valid sources stale", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-08-30T00:00:00.000Z"));
+      let refreshFails = false;
+      const partialFetch = fetchFixture();
+      const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+        if (refreshFails || String(input) === ROBINHOOD_DEFILLAMA_URLS.dexOverview) {
+          return response({}, 503);
+        }
+        return partialFetch(input);
+      });
+      const ctx = makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch });
+
+      const partial = await fetchRobinhoodChainDefiLlama(ctx, new Date());
+      expect(partial.sourceStatus.find((source) => source.source.includes("dexs:"))?.status).toBe("unavailable");
+
+      refreshFails = true;
+      vi.advanceTimersByTime(15 * 60_000 + 1);
+      const stale = await fetchRobinhoodChainDefiLlama(ctx, new Date());
+
+      expect(stale.sourceStatus.find((source) => source.source.includes("dexs:"))?.status).toBe("unavailable");
+      expect(stale.sourceStatus.find((source) => source.source === "defillama:chains")?.status).toBe("stale");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
