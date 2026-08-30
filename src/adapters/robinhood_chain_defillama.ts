@@ -175,14 +175,17 @@ function parseStablecoinHistory(body: unknown, now: Date): {
   if (!Array.isArray(body) || body.length === 0 || body.length > MAX_STABLECOIN_HISTORY_ROWS) {
     throw new SchemaDriftError();
   }
+  const currentCutoff = Math.floor(now.getTime() / 1_000);
   const observations = body.map((raw) => {
     const item = record(raw);
     const timestamp = item === null ? null : nonnegativeInteger(item.date);
-    const supply = item === null ? null : usdValue(item.totalCirculatingUSD);
-    if (timestamp === null || supply === null) throw new SchemaDriftError();
+    if (item === null || timestamp === null) throw new SchemaDriftError();
+    return { item, timestamp };
+  }).filter(({ timestamp }) => timestamp <= currentCutoff).map(({ item, timestamp }) => {
+    const supply = usdValue(item.totalCirculatingUSD);
+    if (supply === null) throw new SchemaDriftError();
     return { timestamp, supply };
   });
-  const currentCutoff = Math.floor(now.getTime() / 1_000);
   const baselineCutoff = currentCutoff - 7 * DAY_SECONDS;
   const latestAtOrBefore = (cutoff: number) => observations
     .filter((observation) => observation.timestamp <= cutoff)

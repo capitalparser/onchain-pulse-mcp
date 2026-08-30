@@ -144,6 +144,29 @@ describe("Robinhood Chain DefiLlama adapter", () => {
     expect(result.metrics.stablecoin_change_7d_pct).toBe(-100);
   });
 
+  it("ignores a malformed future history row before validating its supply", async () => {
+    const now = unix(FIXTURE_NOW);
+    const base = fetchFixture();
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => (
+      String(input) === STABLECOIN_HISTORY_URL
+        ? response([
+          { date: String(now - 7 * DAY_SECONDS), totalCirculatingUSD: { peggedUSD: 100 } },
+          { date: String(now), totalCirculatingUSD: { peggedUSD: 110 } },
+          { date: String(now + DAY_SECONDS), totalCirculatingUSD: {} },
+        ])
+        : base(input)
+    ));
+
+    const result = await fetchRobinhoodChainDefiLlama(
+      makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch }),
+      FIXTURE_NOW,
+    );
+
+    expect(result.status).toBe("valid");
+    expect(result.metrics.stablecoin_change_7d_pct).toBeCloseTo(10);
+    expect(result.gaps.map((gap) => gap.code)).not.toContain("defillama-stablecoins:history:schema_drift");
+  });
+
   it("returns partial without filling a failed source with zero", async () => {
     const fetchImpl = fetchFixture({ dexOverview: null });
     fetchImpl.mockImplementation(async (input: string | URL | Request) => {
