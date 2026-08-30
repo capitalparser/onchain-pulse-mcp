@@ -86,6 +86,10 @@ Confirm:
 Confirm:
 
 - TVL, stablecoin supply, DEX volume, and application fees are independently parsed;
+- the current stablecoin row matches the real `stablecoinchains` shape and does not invent a `change_7d` field;
+- stablecoin 7-day change uses `stablecoincharts/Robinhood%20Chain`, exact UTC cutoffs, and ignores future observations;
+- a missing 7-day observation or zero baseline leaves change null, while an observed current zero remains zero;
+- history failure preserves current stablecoin supply and marks the adapter partial;
 - one failed endpoint produces `partial`, not zero-filled `valid` data;
 - missing Robinhood Chain rows fail closed;
 - stale-cache fallback is marked stale and reduces confidence.
@@ -98,6 +102,9 @@ Confirm:
 - supply, borrow, liquidity, collateral, and utilisation aggregate correctly;
 - zero listed markets is distinct from provider failure;
 - invalid rows do not silently become zero;
+- provider utilisation outside `[0,1]` makes aggregate utilisation null and partial;
+- borrow above supply beyond the explicit rounding tolerance, including zero supply with positive borrow, emits `utilisation_inconsistent` and cannot activate credit;
+- a small positive-supply rounding difference within tolerance remains valid;
 - `first: 100` / `skip: 0, 100, ...` collects all pages and validates a stable `pageInfo.countTotal`;
 - duplicate market IDs and totals above the explicit 1,000-market limit fail closed;
 - missing `collateralAssetsUsd` leaves aggregate collateral null with a partial result while preserving valid supply, borrow, and liquidity;
@@ -136,6 +143,9 @@ Confirm:
 
 - capital formation is distinct from credit activation;
 - stablecoin growth alone cannot create `credit_activation`;
+- `capital_base=unknown` or `stable` plus current credit `active` cannot create `credit_activation`;
+- `capital_base=expanding` plus current credit `active` can create `credit_activation`, but the summary must not claim credit growth without history;
+- two unavailable source families produce `data_warning` before any surviving active-credit signal;
 - leader-only and leader-beta diffusion are distinct;
 - high fragility overrides diffusion into `fragile_blowoff`;
 - ETH capture remains `protocol_link_present_unquantified` until chain-specific L1 rent and collateral use are measured;

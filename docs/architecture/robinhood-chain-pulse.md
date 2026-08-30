@@ -76,6 +76,13 @@ Used for current chain capital and activity:
 
 Missing endpoints remain null. A failed source is not replaced with zero.
 
+Current stablecoin supply comes from `stablecoinchains`. The 7-day change does not read a synthetic field from that current-stock response. It uses `stablecoincharts/Robinhood%20Chain` and selects:
+
+- the latest valid observation whose Unix timestamp is at or before the current UTC cutoff;
+- the latest valid observation whose Unix timestamp is at or before the cutoff minus exactly 604,800 seconds.
+
+Future observations are ignored. A missing cutoff observation or zero baseline leaves the change null. If history fails, current supply is preserved while the adapter becomes partial; an observed current value of zero remains a real zero rather than a missing value.
+
 ```text
 source prefixes: defillama, defillama-stablecoins
 commercial status: internal_research_ok
@@ -86,6 +93,8 @@ commercial status: internal_research_ok
 Used for chain-id-4663 listed-market supply, borrow, liquidity, collateral, and utilisation.
 
 The adapter collects all listed markets in bounded pages of 100 using `first` and `skip`. It validates `pageInfo.countTotal` across pages, rejects duplicate market IDs, and fails closed above the explicit 1,000-market limit. Missing collateral USD on any otherwise valid row leaves aggregate collateral null and marks the result partial while preserving valid supply, borrow, and liquidity totals.
+
+Provider utilisation must be in the inclusive `[0, 1]` range. Borrow may exceed positive supply only within the explicit rounding tolerance `max(USD 0.01, supply × 1e-9)`; zero supply with positive borrow is always inconsistent. Out-of-range provider utilisation or inconsistent balances make aggregate utilisation and the high-utilisation count null, mark the result partial, and prevent those values from activating the credit axis. Materially inconsistent values are never clamped to 100%.
 
 Stock-token collateral classification is deliberately null until an effective-dated official stock-token registry is consumed. Symbol heuristics are not used to call a collateral token an equity token.
 
@@ -136,7 +145,9 @@ unknown     fewer than two signals
 
 These thresholds are research parameters and must be backtested before being treated as predictive.
 
-### Credit activation
+### Current credit state
+
+The public axis key remains `credit_activation` for compatibility, but its axis status describes the current Morpho credit state, not a measured credit-growth trend.
 
 ```text
 active
@@ -155,6 +166,8 @@ unknown
 ```
 
 Stablecoin supply alone is capital base, not credit activation.
+
+The overall `credit_activation` phase requires both an `expanding` capital-base trend and an `active` current credit state. Its summary explicitly states that credit growth itself still requires historical confirmation.
 
 ### Leader-beta breadth
 
@@ -207,12 +220,12 @@ unavailable
 Precedence:
 
 1. no core evidence -> `unavailable`;
-2. diffusion plus high fragility -> `fragile_blowoff`;
-3. diffusion -> `leader_beta_diffusion`;
-4. leader-only -> `leader_concentration`;
-5. active credit without capital contraction -> `credit_activation`;
-6. expanding capital -> `capital_formation`;
-7. two or more unavailable source families -> `data_warning`;
+2. two or more unavailable source families -> `data_warning`;
+3. diffusion plus high fragility -> `fragile_blowoff`;
+4. diffusion -> `leader_beta_diffusion`;
+5. leader-only -> `leader_concentration`;
+6. expanding capital plus active current credit -> `credit_activation`;
+7. expanding capital -> `capital_formation`;
 8. otherwise -> `mixed`.
 
 ## Interfaces
@@ -226,6 +239,8 @@ The MCP server registers `get_robinhood_chain_pulse` with a strict empty-object 
   "additionalProperties": false
 }
 ```
+
+Compatibility note: the shared low-level MCP dispatcher now returns stable bounded error codes for every tool: `unknown_tool`, `invalid_arguments`, or `tool_execution_failed`. Consumers that previously parsed raw exception text must migrate to these codes.
 
 ### CLI
 

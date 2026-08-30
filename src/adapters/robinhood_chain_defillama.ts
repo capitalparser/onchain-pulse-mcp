@@ -9,11 +9,15 @@ import { RobinhoodChainFundamentalsSchema } from "../robinhood_chain_pulse/types
 export const ROBINHOOD_DEFILLAMA_URLS = {
   chains: "https://api.llama.fi/v2/chains",
   stablecoinChains: "https://stablecoins.llama.fi/stablecoinchains",
+  stablecoinHistory: "https://stablecoins.llama.fi/stablecoincharts/Robinhood%20Chain",
   dexOverview:
     "https://api.llama.fi/overview/dexs/Robinhood%20Chain?excludeTotalDataChart=true&excludeTotalDataChartBreakdown=true&dataType=dailyVolume",
   feeOverview:
     "https://api.llama.fi/overview/fees/Robinhood%20Chain?excludeTotalDataChart=true&excludeTotalDataChartBreakdown=true&dataType=dailyFees",
 } as const;
+
+const DAY_SECONDS = 86_400;
+const MAX_STABLECOIN_HISTORY_ROWS = 10_000;
 
 const CACHE_SPEC = {
   name: "robinhood_chain_defillama",
@@ -79,6 +83,11 @@ function nonnegative(value: unknown): number | null {
   return parsed !== null && parsed >= 0 ? parsed : null;
 }
 
+function nonnegativeInteger(value: unknown): number | null {
+  const parsed = nonnegative(value);
+  return parsed !== null && Number.isInteger(parsed) ? parsed : null;
+}
+
 function usdValue(value: unknown): number | null {
   const direct = nonnegative(value);
   if (direct !== null) return direct;
@@ -140,7 +149,6 @@ function parseChain(body: unknown): {
 
 function parseStablecoinChain(body: unknown): {
   supply: number;
-  change7d: number | null;
 } {
   if (!Array.isArray(body)) throw new SchemaDriftError();
   const candidate = body.find((row) => {
@@ -157,7 +165,35 @@ function parseStablecoinChain(body: unknown): {
   if (supply === null) throw new SchemaDriftError();
   return {
     supply,
-    change7d: finite(item.change_7d ?? item.change7d),
+  };
+}
+
+function parseStablecoinHistory(body: unknown, now: Date): {
+  change7d: number | null;
+  gap: "baseline_gap" | "baseline_zero" | null;
+} {
+  if (!Array.isArray(body) || body.length === 0 || body.length > MAX_STABLECOIN_HISTORY_ROWS) {
+    throw new SchemaDriftError();
+  }
+  const observations = body.map((raw) => {
+    const item = record(raw);
+    const timestamp = item === null ? null : nonnegativeInteger(item.date);
+    const supply = item === null ? null : usdValue(item.totalCirculatingUSD);
+    if (timestamp === null || supply === null) throw new SchemaDriftError();
+    return { timestamp, supply };
+  });
+  const currentCutoff = Math.floor(now.getTime() / 1_000);
+  const baselineCutoff = currentCutoff - 7 * DAY_SECONDS;
+  const latestAtOrBefore = (cutoff: number) => observations
+    .filter((observation) => observation.timestamp <= cutoff)
+    .sort((left, right) => right.timestamp - left.timestamp)[0] ?? null;
+  const current = latestAtOrBefore(currentCutoff);
+  const baseline = latestAtOrBefore(baselineCutoff);
+  if (current === null || baseline === null) return { change7d: null, gap: "baseline_gap" };
+  if (baseline.supply === 0) return { change7d: null, gap: "baseline_zero" };
+  return {
+    change7d: ((current.supply - baseline.supply) / baseline.supply) * 100,
+    gap: null,
   };
 }
 
@@ -199,6 +235,7 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodDefiLlamaR
   const tasks = await Promise.allSettled([
     fetchJson(ctx.fetch, ROBINHOOD_DEFILLAMA_URLS.chains),
     fetchJson(ctx.fetch, ROBINHOOD_DEFILLAMA_URLS.stablecoinChains),
+    fetchJson(ctx.fetch, ROBINHOOD_DEFILLAMA_URLS.stablecoinHistory),
     fetchJson(ctx.fetch, ROBINHOOD_DEFILLAMA_URLS.dexOverview),
     fetchJson(ctx.fetch, ROBINHOOD_DEFILLAMA_URLS.feeOverview),
   ]);
@@ -206,6 +243,7 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodDefiLlamaR
   const sourceDefs = [
     { ref: "defillama:chains", role: "Robinhood Chain TVL and daily change" },
     { ref: "defillama-stablecoins:chains", role: "Robinhood Chain stablecoin supply" },
+    { ref: "defillama-stablecoins:history", role: "Robinhood Chain stablecoin supply history" },
     { ref: "defillama:dexs:robinhood-chain", role: "Robinhood Chain DEX activity" },
     { ref: "defillama:fees:robinhood-chain", role: "Robinhood Chain application fees" },
   ] as const;
@@ -238,15 +276,28 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodDefiLlamaR
   });
   parseTask(1, parseStablecoinChain, (value) => {
     metrics.stablecoin_supply_usd = value.supply;
-    metrics.stablecoin_change_7d_pct = value.change7d;
   });
-  parseTask(2, parseOverview, (value) => {
+  parseTask(2, (body) => parseStablecoinHistory(body, now), (value) => {
+    metrics.stablecoin_change_7d_pct = value.change7d;
+    if (value.gap === "baseline_gap") {
+      gaps.push({
+        code: "defillama-stablecoins:history:baseline_gap",
+        detail: "No stablecoin supply observation existed at or before both UTC cutoffs required for the 7-day change.",
+      });
+    } else if (value.gap === "baseline_zero") {
+      gaps.push({
+        code: "defillama-stablecoins:history:baseline_zero",
+        detail: "The stablecoin supply observation at the 7-day UTC baseline was zero, so percentage change is undefined.",
+      });
+    }
+  });
+  parseTask(3, parseOverview, (value) => {
     metrics.dex_volume_24h_usd = value.total24h;
     metrics.dex_volume_7d_usd = value.total7d;
     metrics.dex_change_7d_pct = value.change7d;
     metrics.dex_protocol_count = value.protocolCount;
   });
-  parseTask(3, parseOverview, (value) => {
+  parseTask(4, parseOverview, (value) => {
     metrics.app_fees_24h_usd = value.total24h;
     metrics.app_fees_7d_usd = value.total7d;
     metrics.app_fees_change_7d_pct = value.change7d;
@@ -260,7 +311,8 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodDefiLlamaR
     metrics.app_fees_24h_usd,
   ];
   const available = primary.filter((value) => value !== null).length;
-  const status: RobinhoodDefiLlamaResult["status"] = available === primary.length
+  const historyAvailable = metrics.stablecoin_change_7d_pct !== null;
+  const status: RobinhoodDefiLlamaResult["status"] = available === primary.length && historyAvailable
     ? "valid"
     : available > 0
       ? "partial"
@@ -274,7 +326,7 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodDefiLlamaR
     stale: false,
     staleData: [],
     gaps,
-    confidence: Number((available / primary.length).toFixed(2)),
+    confidence: Number(((available + (historyAvailable ? 1 : 0)) / (primary.length + 1)).toFixed(2)),
     asOf,
   };
   if (status === "unavailable") throw new RobinhoodDefiLlamaRefreshError(result);

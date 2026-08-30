@@ -9,6 +9,8 @@ import { RobinhoodCreditMetricsSchema } from "../robinhood_chain_pulse/types.js"
 export const MORPHO_GRAPHQL_URL = "https://api.morpho.org/graphql";
 export const MORPHO_MARKET_PAGE_SIZE = 100;
 export const MORPHO_MAX_MARKETS = 1_000;
+export const MORPHO_BORROW_ROUNDING_ABSOLUTE_USD = 0.01;
+export const MORPHO_BORROW_ROUNDING_RELATIVE = 1e-9;
 
 const CACHE_SPEC = {
   name: "robinhood_chain_morpho",
@@ -114,6 +116,22 @@ function tokenSymbol(value: unknown): string | null {
   return item !== null && typeof item.symbol === "string" && item.symbol.trim() !== ""
     ? item.symbol.trim()
     : null;
+}
+
+function borrowWithinSupplyTolerance(supply: number, borrow: number): boolean {
+  if (borrow <= supply) return true;
+  if (supply === 0) return false;
+  const tolerance = Math.max(
+    MORPHO_BORROW_ROUNDING_ABSOLUTE_USD,
+    supply * MORPHO_BORROW_ROUNDING_RELATIVE,
+  );
+  return borrow - supply <= tolerance;
+}
+
+function utilisationFromBalances(supply: number, borrow: number): number {
+  if (supply === 0) return 0;
+  if (borrow > supply) return 1;
+  return borrow / supply;
 }
 
 function compareSymbols(left: string, right: string): number {
@@ -279,6 +297,8 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodMorphoResu
   let missingStateRows = 0;
   let invalidUsdRows = 0;
   let missingCollateralRows = 0;
+  let invalidProviderUtilisationRows = 0;
+  let inconsistentBorrowRows = 0;
   const loanSymbols = new Set<string>();
   const collateralSymbols = new Set<string>();
   const gaps: RobinhoodPulseGap[] = [];
@@ -309,8 +329,18 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodMorphoResu
       collateral += rowCollateral;
     }
     if (rowSupply > 0 || rowBorrow > 0) active += 1;
-    const rowUtilisation = finite(state.utilization) ?? (rowSupply > 0 ? rowBorrow / rowSupply : 0);
-    if (rowUtilisation >= 0.85) highUtilisation += 1;
+    const rawProviderUtilisation = state.utilization;
+    const providerUtilisation = finite(rawProviderUtilisation);
+    const providerUtilisationPresent = rawProviderUtilisation !== undefined && rawProviderUtilisation !== null;
+    const providerUtilisationValid = !providerUtilisationPresent
+      || (providerUtilisation !== null && providerUtilisation >= 0 && providerUtilisation <= 1);
+    const balancesConsistent = borrowWithinSupplyTolerance(rowSupply, rowBorrow);
+    if (!providerUtilisationValid) invalidProviderUtilisationRows += 1;
+    if (!balancesConsistent) inconsistentBorrowRows += 1;
+    if (providerUtilisationValid && balancesConsistent) {
+      const rowUtilisation = providerUtilisation ?? utilisationFromBalances(rowSupply, rowBorrow);
+      if (rowUtilisation >= 0.85) highUtilisation += 1;
+    }
     const loan = tokenSymbol(row.loanAsset);
     const collateralSymbol = tokenSymbol(row.collateralAsset);
     if (loan !== null) loanSymbols.add(loan);
@@ -335,11 +365,27 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodMorphoResu
       detail: `${missingCollateralRows} Morpho market row(s) had no valid collateral USD value; aggregate collateral remains unknown.`,
     });
   }
+  if (invalidProviderUtilisationRows > 0) {
+    gaps.push({
+      code: "morpho-api:utilisation_out_of_range",
+      detail: `${invalidProviderUtilisationRows} Morpho market row(s) reported utilisation outside the inclusive [0, 1] range.`,
+    });
+  }
 
   if (parsedRows === 0) {
     return failRefresh(unavailable(asOf, "morpho-api:schema_drift", "No Morpho market row could be normalized."));
   }
-  const utilisation = supply > 0 ? Math.min(1, borrow / supply) : 0;
+  const aggregateBalancesConsistent = borrowWithinSupplyTolerance(supply, borrow);
+  if (inconsistentBorrowRows > 0 || !aggregateBalancesConsistent) {
+    gaps.push({
+      code: "morpho-api:utilisation_inconsistent",
+      detail: `${inconsistentBorrowRows} Morpho market row(s) or their aggregate had borrow above supply beyond the explicit USD rounding tolerance.`,
+    });
+  }
+  const utilisationComplete = invalidProviderUtilisationRows === 0
+    && inconsistentBorrowRows === 0
+    && aggregateBalancesConsistent;
+  const utilisation = utilisationComplete ? utilisationFromBalances(supply, borrow) : null;
   const metrics = RobinhoodCreditMetricsSchema.parse({
     listed_market_count: items.length,
     active_market_count: active,
@@ -348,7 +394,7 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodMorphoResu
     liquidity_usd: liquidity,
     collateral_usd: collateralComplete ? collateral : null,
     utilisation,
-    high_utilisation_market_count: highUtilisation,
+    high_utilisation_market_count: utilisationComplete ? highUtilisation : null,
     loan_asset_symbols: [...loanSymbols].sort(compareSymbols),
     collateral_asset_symbols: [...collateralSymbols].sort(compareSymbols),
     stock_token_collateral_market_count: null,

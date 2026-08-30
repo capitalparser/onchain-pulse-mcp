@@ -13,6 +13,24 @@ function response(body: unknown, status = 200): Response {
   });
 }
 
+const STABLECOIN_HISTORY_URL = "https://stablecoins.llama.fi/stablecoincharts/Robinhood%20Chain";
+const FIXTURE_NOW = new Date("2026-08-30T12:00:00.000Z");
+const DAY_SECONDS = 86_400;
+
+function unix(date: Date): number {
+  return Math.floor(date.getTime() / 1_000);
+}
+
+function stablecoinHistoryFixture() {
+  const now = unix(FIXTURE_NOW);
+  return [
+    { date: String(now - 8 * DAY_SECONDS), totalCirculatingUSD: { peggedUSD: 680_000_000 } },
+    { date: String(now - 7 * DAY_SECONDS), totalCirculatingUSD: { peggedUSD: 700_000_000 } },
+    { date: String(now - DAY_SECONDS), totalCirculatingUSD: { peggedUSD: 750_000_000 } },
+    { date: String(now + DAY_SECONDS), totalCirculatingUSD: { peggedUSD: 9_999_000_000 } },
+  ];
+}
+
 function fetchFixture(overrides: Partial<Record<keyof typeof ROBINHOOD_DEFILLAMA_URLS, unknown>> = {}) {
   return vi.fn(async (input: string | URL | Request) => {
     const url = String(input);
@@ -23,8 +41,10 @@ function fetchFixture(overrides: Partial<Record<keyof typeof ROBINHOOD_DEFILLAMA
       return response(overrides.stablecoinChains ?? [{
         name: "Robinhood Chain",
         totalCirculatingUSD: { peggedUSD: 750_000_000 },
-        change_7d: 3.2,
       }]);
+    }
+    if (url === STABLECOIN_HISTORY_URL) {
+      return response(stablecoinHistoryFixture());
     }
     if (url === ROBINHOOD_DEFILLAMA_URLS.dexOverview) {
       return response(overrides.dexOverview ?? {
@@ -51,15 +71,77 @@ describe("Robinhood Chain DefiLlama adapter", () => {
     const fetchImpl = fetchFixture();
     const result = await fetchRobinhoodChainDefiLlama(
       makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch }),
-      new Date("2026-08-30T00:00:00.000Z"),
+      FIXTURE_NOW,
     );
     expect(result.status).toBe("valid");
     expect(result.metrics.tvl_usd).toBe(700_000_000);
     expect(result.metrics.stablecoin_supply_usd).toBe(750_000_000);
+    expect(result.metrics.stablecoin_change_7d_pct).toBeCloseTo((50_000_000 / 700_000_000) * 100);
     expect(result.metrics.dex_volume_24h_usd).toBe(900_000_000);
     expect(result.metrics.app_fees_24h_usd).toBe(5_000_000);
     expect(result.confidence).toBe(1);
-    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
+  });
+
+  it("keeps current stablecoin supply but returns partial when chain history is unavailable", async () => {
+    const base = fetchFixture();
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => (
+      String(input) === STABLECOIN_HISTORY_URL ? response({}, 503) : base(input)
+    ));
+
+    const result = await fetchRobinhoodChainDefiLlama(
+      makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch }),
+      FIXTURE_NOW,
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.metrics.stablecoin_supply_usd).toBe(750_000_000);
+    expect(result.metrics.stablecoin_change_7d_pct).toBeNull();
+    expect(result.gaps.map((gap) => gap.code)).toContain("defillama-stablecoins:history:source_access_gap");
+  });
+
+  it("keeps 7d change null when no observation exists at or before the UTC baseline cutoff", async () => {
+    const now = unix(FIXTURE_NOW);
+    const base = fetchFixture();
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => (
+      String(input) === STABLECOIN_HISTORY_URL
+        ? response([{ date: String(now - DAY_SECONDS), totalCirculatingUSD: { peggedUSD: 10 } }])
+        : base(input)
+    ));
+
+    const result = await fetchRobinhoodChainDefiLlama(
+      makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch }),
+      FIXTURE_NOW,
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.metrics.stablecoin_change_7d_pct).toBeNull();
+    expect(result.gaps.map((gap) => gap.code)).toContain("defillama-stablecoins:history:baseline_gap");
+  });
+
+  it("distinguishes a current zero observation from missing history", async () => {
+    const now = unix(FIXTURE_NOW);
+    const base = fetchFixture({ stablecoinChains: [{
+      name: "Robinhood Chain",
+      totalCirculatingUSD: { peggedUSD: 0 },
+    }] });
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => (
+      String(input) === STABLECOIN_HISTORY_URL
+        ? response([
+          { date: String(now - 7 * DAY_SECONDS), totalCirculatingUSD: { peggedUSD: 100 } },
+          { date: String(now), totalCirculatingUSD: { peggedUSD: 0 } },
+        ])
+        : base(input)
+    ));
+
+    const result = await fetchRobinhoodChainDefiLlama(
+      makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch }),
+      FIXTURE_NOW,
+    );
+
+    expect(result.status).toBe("valid");
+    expect(result.metrics.stablecoin_supply_usd).toBe(0);
+    expect(result.metrics.stablecoin_change_7d_pct).toBe(-100);
   });
 
   it("returns partial without filling a failed source with zero", async () => {
@@ -69,6 +151,7 @@ describe("Robinhood Chain DefiLlama adapter", () => {
       if (url === ROBINHOOD_DEFILLAMA_URLS.dexOverview) return response({}, 503);
       if (url === ROBINHOOD_DEFILLAMA_URLS.chains) return response([{ name: "Robinhood Chain", tvl: 100, change_1d: 0 }]);
       if (url === ROBINHOOD_DEFILLAMA_URLS.stablecoinChains) return response([{ name: "Robinhood Chain", totalCirculatingUSD: 90 }]);
+      if (url === STABLECOIN_HISTORY_URL) return response(stablecoinHistoryFixture());
       if (url === ROBINHOOD_DEFILLAMA_URLS.feeOverview) return response({ total24h: 5, protocols: [] });
       return response({}, 404);
     });

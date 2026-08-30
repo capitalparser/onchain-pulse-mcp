@@ -201,6 +201,76 @@ describe("Robinhood Chain Pulse classification", () => {
     expect(snapshot.phase).toBe("capital_formation");
   });
 
+  it("does not classify credit activation when capital trend is unknown", () => {
+    const snapshot = buildRobinhoodChainPulse({
+      lang: "en",
+      fundamentals: fundamentals({
+        tvl_change_1d_pct: null,
+        stablecoin_change_7d_pct: null,
+        dex_change_7d_pct: null,
+      }),
+      credit: credit(),
+      community: community([]),
+      now: new Date("2026-08-30T00:00:00.000Z"),
+    });
+
+    expect(snapshot.axes.capital_base.status).toBe("unknown");
+    expect(snapshot.axes.credit_activation.status).toBe("active");
+    expect(snapshot.phase).not.toBe("credit_activation");
+  });
+
+  it("does not classify credit activation from a stable capital base and current credit levels", () => {
+    const snapshot = buildRobinhoodChainPulse({
+      lang: "en",
+      fundamentals: fundamentals({
+        tvl_change_1d_pct: 0,
+        stablecoin_change_7d_pct: 0,
+        dex_change_7d_pct: 0,
+      }),
+      credit: credit(),
+      community: community([]),
+      now: new Date("2026-08-30T00:00:00.000Z"),
+    });
+
+    expect(snapshot.axes.capital_base.status).toBe("stable");
+    expect(snapshot.axes.credit_activation.status).toBe("active");
+    expect(snapshot.phase).not.toBe("credit_activation");
+  });
+
+  it("classifies credit activation only with expanding capital and active current credit", () => {
+    const snapshot = buildRobinhoodChainPulse({
+      lang: "en",
+      fundamentals: fundamentals(),
+      credit: credit(),
+      community: community([]),
+      now: new Date("2026-08-30T00:00:00.000Z"),
+    });
+
+    expect(snapshot.axes.capital_base.status).toBe("expanding");
+    expect(snapshot.axes.credit_activation.status).toBe("active");
+    expect(snapshot.phase).toBe("credit_activation");
+    expect(snapshot.summary).toContain("current Morpho supply and utilisation meet active thresholds");
+    expect(snapshot.summary).toContain("credit growth requires historical confirmation");
+  });
+
+  it("prioritizes data warning when two source families are unavailable despite active credit", () => {
+    const unavailableFundamentals = fundamentals();
+    unavailableFundamentals.status = "unavailable";
+    const unavailableCommunity = community([]);
+    unavailableCommunity.status = "unavailable";
+
+    const snapshot = buildRobinhoodChainPulse({
+      lang: "en",
+      fundamentals: unavailableFundamentals,
+      credit: credit(),
+      community: unavailableCommunity,
+      now: new Date("2026-08-30T00:00:00.000Z"),
+    });
+
+    expect(snapshot.axes.credit_activation.status).toBe("active");
+    expect(snapshot.phase).toBe("data_warning");
+  });
+
   it("accepts bounded 101-market symbol coverage and one aggregate collateral gap", () => {
     const symbols = Array.from({ length: 101 }, (_, index) => `ASSET${String(index).padStart(3, "0")}`);
     const creditResult = credit({

@@ -240,7 +240,7 @@ function summaryFor(snapshot: {
   if (snapshot.lang === "ko") {
     const summaries: Record<RobinhoodChainPulseSnapshot["phase"], string> = {
       capital_formation: "Robinhood Chain의 자본기반은 확대 중이지만, 신용활성화와 커뮤니티 토큰 확산은 아직 별도 확인이 필요합니다.",
-      credit_activation: "자본 유입과 Morpho 차입·이용률이 함께 확대되어 온체인 신용활성화 국면으로 분류됩니다.",
+      credit_activation: "자본기반 추세는 확대 중이고 현재 Morpho 공급규모와 이용률은 active 기준을 충족합니다. 신용 증가 추세는 별도 시계열 확인이 필요합니다.",
       leader_concentration: "체인 대표 커뮤니티 토큰만 강하고 베타 확산은 확인되지 않아 대장 집중 국면입니다.",
       leader_beta_diffusion: "유동성 하한을 통과한 커뮤니티 토큰에서 대장 상승이 베타로 확산되는 징후가 확인됩니다.",
       fragile_blowoff: "대장·베타 확산은 있으나 유동성 대비 시가총액·거래량·집중도가 높아 후기 과열 위험이 큽니다.",
@@ -252,7 +252,7 @@ function summaryFor(snapshot: {
   }
   const summaries: Record<RobinhoodChainPulseSnapshot["phase"], string> = {
     capital_formation: "Robinhood Chain capital is expanding, while credit activation and community-token diffusion require separate confirmation.",
-    credit_activation: "Capital inflow and Morpho borrowing utilisation jointly indicate an onchain credit-activation phase.",
+    credit_activation: "The capital-base trend is expanding and current Morpho supply and utilisation meet active thresholds; credit growth requires historical confirmation.",
     leader_concentration: "The community-token leader is strong without confirmed beta diffusion.",
     leader_beta_diffusion: "The verified, liquidity-qualified community universe shows leader-to-beta diffusion.",
     fragile_blowoff: "Breadth is expanding, but valuation-to-liquidity, turnover, or leader concentration indicates blow-off fragility.",
@@ -278,21 +278,26 @@ export function buildRobinhoodChainPulse(args: {
   const allUnavailable = args.fundamentals.status === "unavailable"
     && args.credit.status === "unavailable"
     && args.community.status === "unavailable";
+  const unavailableSourceFamilies = [
+    args.fundamentals.status,
+    args.credit.status,
+    args.community.status,
+  ].filter((status) => status === "unavailable").length;
   const phase: RobinhoodChainPulseSnapshot["phase"] = allUnavailable
     ? "unavailable"
-    : speculativeBreadth.status === "leader_beta_diffusion" && fragility.status === "high"
+    : unavailableSourceFamilies >= 2
+      ? "data_warning"
+      : speculativeBreadth.status === "leader_beta_diffusion" && fragility.status === "high"
       ? "fragile_blowoff"
       : speculativeBreadth.status === "leader_beta_diffusion"
         ? "leader_beta_diffusion"
         : speculativeBreadth.status === "leader_only"
           ? "leader_concentration"
-          : credit.status === "active" && capital.status !== "contracting"
+          : credit.status === "active" && capital.status === "expanding"
             ? "credit_activation"
             : capital.status === "expanding"
               ? "capital_formation"
-              : [args.fundamentals.status, args.credit.status, args.community.status].filter((status) => status === "unavailable").length >= 2
-                ? "data_warning"
-                : "mixed";
+              : "mixed";
   const officialSources = ROBINHOOD_CHAIN_REGISTRY.official_sources.map(
     (url: string) => `robinhood-chain-docs:${url}`,
   );

@@ -30,6 +30,24 @@ function variablesFrom(init?: RequestInit): { first?: number; skip?: number } {
   return body.variables ?? {};
 }
 
+async function resultForState(state: Record<string, unknown>) {
+  const row = market(0);
+  return fetchRobinhoodChainMorpho(
+    makeContext({
+      env: loadEnv({}),
+      fetchImpl: vi.fn(async () => response({
+        data: {
+          markets: {
+            items: [{ ...row, state: { ...row.state, ...state } }],
+            pageInfo: { count: 1, countTotal: 1, limit: 100, skip: 0 },
+          },
+        },
+      })) as typeof fetch,
+    }),
+    new Date("2026-08-30T00:00:00.000Z"),
+  );
+}
+
 describe("Robinhood Chain Morpho adapter", () => {
   it("aggregates listed lending supply, borrow, liquidity, and utilisation", async () => {
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -138,6 +156,61 @@ describe("Robinhood Chain Morpho adapter", () => {
     expect(result.metrics.liquidity_usd).toBe(60);
     expect(result.metrics.collateral_usd).toBeNull();
     expect(result.gaps.map((gap) => gap.code)).toContain("morpho-api:collateral_value_gap");
+  });
+
+  it.each([1.5, -0.1])("rejects provider utilisation outside [0,1]: %s", async (utilization) => {
+    const result = await resultForState({
+      supplyAssetsUsd: 100,
+      borrowAssetsUsd: 50,
+      liquidityAssetsUsd: 50,
+      utilization,
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.metrics.utilisation).toBeNull();
+    expect(result.metrics.high_utilisation_market_count).toBeNull();
+    expect(result.gaps.map((gap) => gap.code)).toContain("morpho-api:utilisation_out_of_range");
+  });
+
+  it("fails closed when borrow materially exceeds positive supply", async () => {
+    const result = await resultForState({
+      supplyAssetsUsd: 100,
+      borrowAssetsUsd: 101,
+      liquidityAssetsUsd: 0,
+      utilization: 1,
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.metrics.supply_usd).toBe(100);
+    expect(result.metrics.borrow_usd).toBe(101);
+    expect(result.metrics.utilisation).toBeNull();
+    expect(result.gaps.map((gap) => gap.code)).toContain("morpho-api:utilisation_inconsistent");
+  });
+
+  it("fails closed when supply is zero but borrow is positive", async () => {
+    const result = await resultForState({
+      supplyAssetsUsd: 0,
+      borrowAssetsUsd: 1,
+      liquidityAssetsUsd: 0,
+      utilization: 1,
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.metrics.utilisation).toBeNull();
+    expect(result.gaps.map((gap) => gap.code)).toContain("morpho-api:utilisation_inconsistent");
+  });
+
+  it("accepts a borrow excess within the explicit positive-supply rounding tolerance", async () => {
+    const result = await resultForState({
+      supplyAssetsUsd: 100,
+      borrowAssetsUsd: 100.000_000_05,
+      liquidityAssetsUsd: 0,
+      utilization: 1,
+    });
+
+    expect(result.status).toBe("valid");
+    expect(result.metrics.utilisation).toBe(1);
+    expect(result.gaps.map((gap) => gap.code)).not.toContain("morpho-api:utilisation_inconsistent");
   });
 
   it("bounds provider and schema failure", async () => {
