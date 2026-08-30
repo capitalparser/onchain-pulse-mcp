@@ -372,7 +372,7 @@ export function buildRobinhoodChainPulse(args: {
     interpretation_boundary: [
       "This is a research classification, not an investment recommendation or target-price model.",
       "Community-token breadth is calculated only from exact registered addresses that pass minimum evidence and liquidity controls.",
-      "Stablecoin supply is capital base, not credit activation, unless borrowing and utilisation also increase.",
+      "Stablecoin supply is capital base; an active current Morpho credit state is not evidence that credit itself is increasing.",
       "Ethereum value capture is not inferred from Robinhood Chain activity until chain-specific L1 rent and ETH collateral use are measured.",
     ],
     methodology_version: "robinhood-chain-pulse-v1",

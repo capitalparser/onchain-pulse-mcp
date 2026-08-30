@@ -251,6 +251,10 @@ describe("Robinhood Chain Pulse classification", () => {
     expect(snapshot.phase).toBe("credit_activation");
     expect(snapshot.summary).toContain("current Morpho supply and utilisation meet active thresholds");
     expect(snapshot.summary).toContain("credit growth requires historical confirmation");
+    expect(snapshot.interpretation_boundary).toContain(
+      "Stablecoin supply is capital base; an active current Morpho credit state is not evidence that credit itself is increasing.",
+    );
+    expect(snapshot.interpretation_boundary.join(" ")).not.toContain("borrowing and utilisation also increase");
   });
 
   it("prioritizes data warning when two source families are unavailable despite active credit", () => {
