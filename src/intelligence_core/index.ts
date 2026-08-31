@@ -6,4 +6,5 @@ export * from "./eth_ecosystem_capture_adapter.js";
 export * from "./eth_value_capture_collector.js";
 export * from "./collection_run.js";
 export * from "./history.js";
+export * from "./research_export.js";
 export * from "./source_license.js";

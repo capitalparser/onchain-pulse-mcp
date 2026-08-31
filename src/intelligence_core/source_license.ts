@@ -110,6 +110,16 @@ export interface SourcePolicyAssessment {
   reason: string;
 }
 
+export type InternalResearchStatus = "ALLOWED" | "RESTRICTED" | "UNKNOWN";
+
+export interface InternalResearchAssessment {
+  sourceRef: string;
+  policy: SourceLicensePolicy | null;
+  status: InternalResearchStatus;
+  admitted: boolean;
+  reason: string;
+}
+
 export function sourceLicensePolicy(sourceRef: string): SourceLicensePolicy | null {
   const normalized = sourceRef.trim().toLowerCase();
   return SOURCE_LICENSE_POLICIES.find((policy) =>
@@ -133,6 +143,27 @@ export function assessSourceForCommercialRedistribution(sourceRef: string): Sour
     policy,
     commerciallyRedistributable,
     reason: commerciallyRedistributable ? "approved for commercial redistribution" : policy.status,
+  };
+}
+
+export function assessSourceForInternalResearch(sourceRef: string): InternalResearchAssessment {
+  const policy = sourceLicensePolicy(sourceRef);
+  if (policy === null) {
+    return {
+      sourceRef,
+      policy: null,
+      status: "UNKNOWN",
+      admitted: false,
+      reason: "unknown source licensing status",
+    };
+  }
+  const admitted = policy.status !== "commercial_contract_required" && policy.status !== "blocked";
+  return {
+    sourceRef,
+    policy,
+    status: admitted ? "ALLOWED" : "RESTRICTED",
+    admitted,
+    reason: admitted ? "internal research allowed by canonical policy" : policy.status,
   };
 }
 
