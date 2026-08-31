@@ -61,6 +61,38 @@ export const SOURCE_LICENSE_POLICIES: readonly SourceLicensePolicy[] = [
     reviewedAt: "2026-08-23",
     note: "The official public API remains suitable for internal research only under the current registry; commercial copying or republication requires prior written consent.",
   },
+  {
+    sourcePrefix: "robinhood-chain-docs",
+    status: "attribution_required",
+    attributionRequired: true,
+    evidenceUrl: "https://docs.robinhood.com/chain/",
+    reviewedAt: "2026-08-30",
+    note: "Official chain and contract documentation may support attributed factual references; it does not grant redistribution rights for third-party market data or imply affiliation of community tokens.",
+  },
+  {
+    sourcePrefix: "morpho-api",
+    status: "commercial_review_required",
+    attributionRequired: true,
+    evidenceUrl: "https://docs.morpho.org/getting-started/resources/morpho-api",
+    reviewedAt: "2026-08-30",
+    note: "The public GraphQL API is suitable for internal research; recurring commercial embedding or redistribution requires explicit review of Morpho terms and endpoint policy.",
+  },
+  {
+    sourcePrefix: "dexscreener",
+    status: "commercial_review_required",
+    attributionRequired: true,
+    evidenceUrl: "https://docs.dexscreener.com/api/reference",
+    reviewedAt: "2026-08-30",
+    note: "Exact-address market and pool data may be used for internal research with attribution; commercial redistribution or paid-product embedding requires a separate rights review.",
+  },
+  {
+    sourcePrefix: "robinhood-blockscout",
+    status: "commercial_review_required",
+    attributionRequired: true,
+    evidenceUrl: "https://docs.blockscout.com/devs/apis/rest",
+    reviewedAt: "2026-08-30",
+    note: "Explorer token metadata and holder counts are research inputs; downstream commercial display or redistribution requires review of the explorer and Blockscout terms.",
+  },
 ];
 
 export interface SourcePolicyAssessment {

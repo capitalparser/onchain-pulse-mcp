@@ -11,6 +11,7 @@ import { createDashboardServer } from "./dashboard/server.js";
 import { EthDemandCompassV2SnapshotSchema } from "./eth_demand_compass/types.js";
 import { loadEnv } from "./env.js";
 import { runIntelligenceCollectCli } from "./intelligence_core/cli.js";
+import { runRobinhoodChainPulseCli } from "./robinhood_chain_pulse/cli.js";
 import {
   createServer,
   handleEthDemandCompass,
@@ -48,6 +49,12 @@ async function main(): Promise<void> {
     const result = await runIntelligenceCollectCli(env);
     // eslint-disable-next-line no-console
     console.error(JSON.stringify(result));
+    return;
+  }
+  if (mode === "robinhood-chain-pulse") {
+    const result = await runRobinhoodChainPulseCli(env);
+    // eslint-disable-next-line no-console
+    console.log(JSON.stringify(result));
     return;
   }
 

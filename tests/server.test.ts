@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { makeContext } from "../src/adapters/base.js";
 import { onchainWallet } from "../src/adapters/onchain_wallet.js";
 import { EthValueCaptureSnapshotSchema } from "../src/eth_value_capture/types.js";
@@ -11,6 +13,7 @@ import { SkyEthCollateralCustodySnapshotSchema } from "../src/sky_eth_collateral
 import { EigenLayerEthRestakingExposureSnapshotSchema } from "../src/eigenlayer_eth_restaking/types.js";
 import { EigenLayerLstEthQuotesSnapshotSchema } from "../src/eigenlayer_lst_eth_quotes/types.js";
 import { EthDemandCompassSnapshotSchema } from "../src/eth_demand_compass/types.js";
+import { RobinhoodChainPulseSnapshotSchema } from "../src/robinhood_chain_pulse/types.js";
 import {
   createServer,
   handleEthCollateralDemand,
@@ -30,7 +33,7 @@ import type { EnvConfig } from "../src/env.js";
 const env: EnvConfig = { byok: {}, lang: "en", historyPath: "/tmp/onchain-pulse-mcp-test-history.json", ethereumRpcUrl: undefined, ethereumBeaconApiUrl: undefined };
 
 describe("server", () => {
-  it("registers all eighteen expected tools including the ETH ecosystem and demand compass tools", () => {
+  it("registers all nineteen expected tools including the Robinhood Chain pulse", () => {
     const names = listTools()
       .map((t) => t.name)
       .sort();
@@ -49,12 +52,66 @@ describe("server", () => {
       "get_kr_premium",
       "get_lido_pooled_eth_backing",
       "get_market_pulse",
+      "get_robinhood_chain_pulse",
       "get_rwa_pulse",
       "get_sky_eth_collateral_custody",
       "get_spark_eth_collateral_capacity",
       "get_stablecoin_pulse",
       "get_token_forensics",
     ]);
+  });
+
+  it("registers a strict empty-input Robinhood Chain pulse without caller-controlled sources", async () => {
+    const tool = listTools().find((item) => item.name === "get_robinhood_chain_pulse");
+    const fetchImpl = vi.fn(async () => new Response("unavailable", { status: 503 }));
+    const hc = { env, ctx: makeContext({ env, fetchImpl: fetchImpl as typeof fetch }) };
+
+    expect(tool).toBeDefined();
+    expect(tool?.inputSchema).toEqual({ type: "object", properties: {}, additionalProperties: false });
+    const output = await tool!.handler({}, hc);
+    expect(RobinhoodChainPulseSnapshotSchema.parse(output)).toEqual(output);
+    expect(output).toMatchObject({
+      phase: "unavailable",
+      chain: { community_tokens_are_unaffiliated: true },
+      axes: { eth_capture: { status: "protocol_link_present_unquantified" } },
+    });
+    expect(JSON.stringify(output)).not.toMatch(/credential|raw provider|api[_-]?key/i);
+    await expect(tool!.handler({
+      source_mode: "caller-controlled",
+      token_address: "0x0000000000000000000000000000000000000000",
+      threshold: 0,
+    }, hc)).rejects.toThrow();
+  });
+
+  it("enforces the Robinhood Chain pulse empty input over the MCP transport", async () => {
+    const { server } = createServer({
+      env,
+      fetchImpl: vi.fn(async () => new Response("unavailable", { status: 503 })) as typeof fetch,
+    });
+    const client = new Client({ name: "robinhood-chain-pulse-test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      const tools = await client.listTools();
+      const tool = tools.tools.find((item) => item.name === "get_robinhood_chain_pulse");
+      expect(tool?.inputSchema).toEqual({ type: "object", properties: {}, additionalProperties: false });
+
+      const invalid = await client.callTool({
+        name: "get_robinhood_chain_pulse",
+        arguments: { source_mode: "caller-controlled" },
+      });
+      const invalidContent = (invalid as { content: Array<{ text?: string }> }).content;
+      expect(invalid.isError).toBe(true);
+      expect(invalidContent[0]?.text).toBeDefined();
+      expect(JSON.parse(invalidContent[0]!.text!)).toEqual({ error: "invalid_arguments" });
+      expect(JSON.stringify(invalid)).not.toContain("source_mode");
+      expect(JSON.stringify(invalid)).not.toContain("unrecognized_keys");
+      expect(JSON.stringify(invalid)).not.toMatch(/credential|raw provider|api[_-]?key/i);
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 
   it("registers a strict free-only ETH demand compass without caller-controlled source configuration", async () => {
