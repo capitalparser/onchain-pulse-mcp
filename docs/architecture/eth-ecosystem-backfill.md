@@ -40,7 +40,7 @@ The backfill uses four public endpoints:
 - rent paid to Ethereum;
 - stablecoin market capitalization.
 
-The payloads are fetched once per run and reused across all requested cutoff days. Raw payloads are not written to the repository or manifest. The manifest records only bounded endpoint identifiers, retrieval timestamps, response status, byte counts, and SHA-256 hashes.
+The payloads are fetched once per run and reused across all requested cutoff days. Each response body is capped at 32 MiB before replay; declared or streamed overflow fails closed. Raw payloads are not written to the repository or manifest. The manifest records only bounded endpoint identifiers, retrieval timestamps, response status, byte counts, and SHA-256 hashes.
 
 ## Command
 
@@ -139,7 +139,14 @@ Each run writes a strict `eth-ecosystem-backfill-manifest-v1` file containing:
 - bounded gap summaries;
 - a deterministic manifest SHA-256 fingerprint.
 
-The manifest is written with exclusive-create semantics. A reused run id cannot silently overwrite an earlier run record.
+`observation_set_sha256` hashes the sorted semantic observation IDs, so an
+idempotent rerun with another run ID or ingestion timestamp retains the same
+observation-set fingerprint. A corrected value or methodology creates a new
+semantic ID and therefore a different set fingerprint. The full manifest
+fingerprint still binds run-specific timestamps, counts, payload hashes, and
+the requested run identity.
+
+The manifest is written with exclusive-create semantics. A reused run id is rejected before source fetch or observation persistence and cannot silently overwrite an earlier run record.
 
 ## Missing data
 

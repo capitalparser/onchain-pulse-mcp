@@ -34,6 +34,11 @@ describe("buildMetricObservationId", () => {
       .not.toBe(buildMetricObservationId(args({ value: 0.16 })));
   });
 
+  it("creates a new revision id when the methodology changes", () => {
+    expect(buildMetricObservationId(args({ methodologyVersion: "eth-ecosystem-capture-v1" })))
+      .not.toBe(buildMetricObservationId(args({ methodologyVersion: "eth-ecosystem-capture-v2" })));
+  });
+
   it("ignores ingestion and operational run metadata so retries remain idempotent", () => {
     const live = buildMetricObservationId(args());
     const backfill = buildMetricObservationId(args({

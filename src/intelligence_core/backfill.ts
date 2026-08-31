@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { makeContext } from "../adapters/base.js";
@@ -14,6 +14,7 @@ import type { MetricObservation } from "./types.js";
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_BACKFILL_CUTOFF_DAYS = 366;
+const MAX_BACKFILL_SOURCE_BODY_BYTES = 32 * 1024 * 1024;
 const WINDOW_DAYS = { "7d": 7, "30d": 30, "90d": 90 } as const;
 
 const GROWTHEPIE_BACKFILL_SOURCES = [
@@ -29,7 +30,7 @@ const SourcePayloadSchema = z.object({
   status: z.enum(["captured", "http_error", "network_error", "not_requested"]),
   retrieved_at: z.string().datetime({ offset: true }).nullable(),
   http_status: z.number().int().min(100).max(599).nullable(),
-  body_bytes: z.number().int().nonnegative().nullable(),
+  body_bytes: z.number().int().nonnegative().max(MAX_BACKFILL_SOURCE_BODY_BYTES).nullable(),
   body_sha256: z.string().regex(/^[0-9a-f]{64}$/).nullable(),
 }).strict();
 export type BackfillSourcePayload = z.infer<typeof SourcePayloadSchema>;
@@ -193,9 +194,38 @@ function sha256(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+async function readBoundedResponseBody(response: Response): Promise<Uint8Array> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BACKFILL_SOURCE_BODY_BYTES) {
+    throw new Error("backfill source response exceeded byte limit");
+  }
+  if (response.body === null) return new Uint8Array();
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_BACKFILL_SOURCE_BODY_BYTES) {
+      await reader.cancel();
+      throw new Error("backfill source response exceeded byte limit");
+    }
+    chunks.push(value);
+  }
+
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
 function observationSetFingerprint(observations: readonly MetricObservation[]): string {
-  return sha256(observations
-    .map((item) => stableJson(item))
+  return sha256([...new Set(observations.map((item) => item.id))]
     .sort()
     .join("\n"));
 }
@@ -220,7 +250,7 @@ function createCapturedMemoFetch(args: {
         const retrievedAt = args.now().toISOString();
         try {
           const response = await args.baseFetch(request);
-          const body = new Uint8Array(await response.arrayBuffer());
+          const body = await readBoundedResponseBody(response);
           records.set(source.source_ref, SourcePayloadSchema.parse({
             source_ref: source.source_ref,
             url: canonicalUrl,
@@ -343,6 +373,14 @@ export async function runGrowThePieEcosystemBackfill(args: {
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(runId)) {
     throw new Error("runId contains unsupported characters or is too long");
   }
+  await mkdir(args.manifestDir, { recursive: true });
+  const manifestPath = join(args.manifestDir, safeManifestFile(runId));
+  try {
+    await access(manifestPath);
+    throw new Error(`backfill manifest already exists: ${safeManifestFile(runId)}`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
 
   const captured = createCapturedMemoFetch({ baseFetch: args.fetchImpl ?? globalThis.fetch, now });
   const context = makeContext({ env: args.env, fetchImpl: captured.fetch });
@@ -459,8 +497,6 @@ export async function runGrowThePieEcosystemBackfill(args: {
     fingerprint_sha256: sha256(stableJson(core)),
   });
 
-  await mkdir(args.manifestDir, { recursive: true });
-  const manifestPath = join(args.manifestDir, safeManifestFile(runId));
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, {
     encoding: "utf8",
     flag: "wx",
@@ -474,4 +510,8 @@ export async function runGrowThePieEcosystemBackfill(args: {
   };
 }
 
-export { GROWTHEPIE_BACKFILL_SOURCES, MAX_BACKFILL_CUTOFF_DAYS };
+export {
+  GROWTHEPIE_BACKFILL_SOURCES,
+  MAX_BACKFILL_CUTOFF_DAYS,
+  MAX_BACKFILL_SOURCE_BODY_BYTES,
+};

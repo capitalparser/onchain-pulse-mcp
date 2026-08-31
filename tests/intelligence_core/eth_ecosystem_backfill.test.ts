@@ -8,6 +8,7 @@ import {
   EthEcosystemBackfillManifestSchema,
   runGrowThePieEcosystemBackfill,
 } from "../../src/intelligence_core/backfill.js";
+import { exportPointInTime } from "../../src/intelligence_core/history.js";
 import type { MetricObservationStore } from "../../src/intelligence_core/store.js";
 import type { MetricObservation } from "../../src/intelligence_core/types.js";
 
@@ -128,6 +129,7 @@ describe("runGrowThePieEcosystemBackfill", () => {
     expect(result.manifest.ingestion_semantics.eligible_before_backfill_run).toBe(false);
     expect(result.manifest.ingestion_semantics.historical_source_versions_available).toBe(false);
     expect(result.manifest.license.commercial_redistribution_allowed).toBe(false);
+    expect(result.manifest.license.attribution_required).toBe(true);
     expect(result.manifest.source_payloads).toHaveLength(4);
     expect(result.manifest.source_payloads.every((source) => source.status === "captured")).toBe(true);
     expect(result.manifest.source_payloads.every((source) => /^[0-9a-f]{64}$/.test(source.body_sha256 ?? ""))).toBe(true);
@@ -135,6 +137,20 @@ describe("runGrowThePieEcosystemBackfill", () => {
       JSON.parse(await readFile(result.manifest_path, "utf8")),
     );
     expect(persistedManifest.fingerprint_sha256).toBe(result.manifest.fingerprint_sha256);
+    const serializedManifest = JSON.stringify(persistedManifest);
+    expect(serializedManifest).not.toContain('"chains"');
+    expect(serializedManifest).not.toContain('"origin_key"');
+
+    await expect(exportPointInTime({
+      store,
+      cutoffAt: "2026-08-24T00:59:59.999Z",
+      subjectRef: "ethereum",
+    })).resolves.toEqual([]);
+    await expect(exportPointInTime({
+      store,
+      cutoffAt: "2026-08-24T01:00:00.000Z",
+      subjectRef: "ethereum",
+    })).resolves.toHaveLength(12);
   });
 
   it("is idempotent across different run ids when the semantic observations are unchanged", async () => {
@@ -156,6 +172,58 @@ describe("runGrowThePieEcosystemBackfill", () => {
     expect(second.inserted_observation_ids).toHaveLength(0);
     expect(second.skipped_duplicate_ids).toHaveLength(12);
     expect(store.rows).toHaveLength(12);
+    expect(second.manifest.observation_set_sha256)
+      .toBe(first.manifest.observation_set_sha256);
+    expect(second.manifest.source_payloads.map((item) => item.body_sha256))
+      .toEqual(first.manifest.source_payloads.map((item) => item.body_sha256));
+  });
+
+  it.each([
+    ["reversed range", "2026-07-31", "2026-07-30", /start cutoff day must be at or before end cutoff day/],
+    ["future end", "2026-07-30", "2026-08-25", /cannot be in the future/],
+    ["more than 366 days", "2025-01-01", "2026-01-02", /cannot exceed 366 cutoff days/],
+  ])("rejects a %s before fetching source payloads", async (_label, startCutoffDay, endCutoffDay, message) => {
+    const fetchImpl = fetchFor();
+    await expect(runGrowThePieEcosystemBackfill({
+      env: loadEnv({}),
+      store: new MemoryStore(),
+      manifestDir: await tempManifestDir(),
+      startCutoffDay,
+      endCutoffDay,
+      window: "30d",
+      runId: "bounded-range",
+      fetchImpl: fetchImpl as typeof fetch,
+      now: FIXED_NOW,
+    })).rejects.toThrow(message);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before reading a source body declared above the response-size bound", async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.endsWith("/master.json")) {
+        return new Response("{}", {
+          status: 200,
+          headers: { "content-length": "999999999", "content-type": "application/json" },
+        });
+      }
+      return fetchFor()(input);
+    });
+    const result = await runGrowThePieEcosystemBackfill({
+      env: loadEnv({}),
+      store: new MemoryStore(),
+      manifestDir: await tempManifestDir(),
+      startCutoffDay: "2026-07-30",
+      endCutoffDay: "2026-07-30",
+      window: "7d",
+      runId: "bounded-source-body",
+      fetchImpl: fetchImpl as typeof fetch,
+      now: FIXED_NOW,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.manifest.source_payloads.find((item) => item.source_ref === "growthepie:master"))
+      .toMatchObject({ status: "network_error", body_bytes: null, body_sha256: null });
   });
 
   it("creates new append-only revisions when a retrieved source changes the derived value", async () => {
@@ -186,6 +254,37 @@ describe("runGrowThePieEcosystemBackfill", () => {
     expect(new Set(store.rows
       .filter((row) => row.metric_key === "eth.l2_user_fees_usd")
       .map((row) => row.value))).toEqual(new Set([70, 84]));
+  });
+
+  it("rejects a reused run id before fetching or persisting revised observations", async () => {
+    const store = new MemoryStore();
+    const manifestDir = await tempManifestDir();
+    const base = {
+      env: loadEnv({}),
+      store,
+      manifestDir,
+      startCutoffDay: "2026-07-30",
+      endCutoffDay: "2026-07-31",
+      window: "7d" as const,
+      runId: "immutable-run",
+      now: FIXED_NOW,
+    };
+    await runGrowThePieEcosystemBackfill({
+      ...base,
+      fetchImpl: fetchFor(fixtures(10)) as typeof fetch,
+    });
+    const originalManifest = await readFile(join(manifestDir, "immutable-run.json"), "utf8");
+    const rowCount = store.rows.length;
+    const revisedFetch = fetchFor(fixtures(12));
+
+    await expect(runGrowThePieEcosystemBackfill({
+      ...base,
+      fetchImpl: revisedFetch as typeof fetch,
+    })).rejects.toThrow(/manifest already exists/);
+    expect(revisedFetch).not.toHaveBeenCalled();
+    expect(store.rows).toHaveLength(rowCount);
+    await expect(readFile(join(manifestDir, "immutable-run.json"), "utf8"))
+      .resolves.toBe(originalManifest);
   });
 
   it("keeps incomplete source days missing and reports a partial manifest", async () => {

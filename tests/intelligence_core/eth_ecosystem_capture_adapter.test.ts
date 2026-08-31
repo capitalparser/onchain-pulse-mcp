@@ -77,6 +77,29 @@ describe("metricObservationsFromEthEcosystemCapture", () => {
     });
   });
 
+  it("uses the same semantic ids for live and backfill operational metadata", () => {
+    const live = metricObservationsFromEthEcosystemCapture(
+      snapshot(),
+      new Date("2026-08-21T00:06:00.000Z"),
+    );
+    const backfill = metricObservationsFromEthEcosystemCapture(
+      snapshot(),
+      new Date("2026-08-24T01:00:00.000Z"),
+      {
+        dimensions: {
+          collection_mode: "historical_backfill",
+          backfill_run_id: "run-002",
+          revision_basis: "latest_available_at_retrieval",
+          source_versioning: "unversioned_export_at_retrieval",
+        },
+      },
+    );
+
+    expect(backfill.map((item) => item.id)).toEqual(live.map((item) => item.id));
+    expect(backfill.every((item) => item.ingested_at === "2026-08-24T01:00:00.000Z"))
+      .toBe(true);
+  });
+
   it("omits unavailable metrics instead of replacing them with zero", () => {
     const input = snapshot();
     input.metrics.l2_settlement_cost_share.current = null;
