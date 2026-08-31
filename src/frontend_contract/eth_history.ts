@@ -219,7 +219,7 @@ export function parseEthFrontendHistorySearchParams(
   const metricsRaw = singleParam(searchParams, "metrics");
   const metricKeys = metricsRaw === null || metricsRaw.trim().length === 0
     ? [...ETH_FRONTEND_HISTORY_DEFAULT_METRIC_KEYS]
-    : [...new Set(metricsRaw.split(",").map((value) => value.trim()).filter(Boolean))];
+    : metricsRaw.split(",").map((value) => value.trim()).filter(Boolean);
   const range = singleParam(searchParams, "range") ?? "90d";
   const window = singleParam(searchParams, "window") ?? "30d";
   const cutoffRaw = singleParam(searchParams, "cutoff") ?? now.toISOString();
@@ -289,9 +289,16 @@ function selectDailyPoint(rows: MetricObservation[]): SelectedDayPoint {
     .map((row) => row.ingested_at)
     .sort((left, right) => right.localeCompare(left))[0]!;
   const latestRows = latestObservedRows.filter((row) => row.ingested_at === latestIngestedAt);
-  const signatures = new Set(latestRows.map((row) =>
-    JSON.stringify([row.value, row.unit, row.methodology_version])
-  ));
+  const signatures = new Set(latestRows.map((row) => JSON.stringify({
+    value: row.value,
+    unit: row.unit,
+    asset_ref: row.asset_ref ?? null,
+    source_at: row.source_at,
+    confidence: row.confidence,
+    source_refs: uniqueSorted(row.source_refs),
+    methodology_version: row.methodology_version,
+    dimensions: Object.entries(row.dimensions).sort(([left], [right]) => left.localeCompare(right)),
+  })));
   const selected = [...latestRows].sort((left, right) => left.id.localeCompare(right.id))[0]!;
   return {
     observation: selected,

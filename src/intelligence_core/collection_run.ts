@@ -215,11 +215,15 @@ export async function runEthIntelligenceCollectionOnce(args: {
   }
   const collected = [valueCapture, ecosystemCapture]
     .filter((result) => result.status === "collected");
-  const complete = collected.length === 2
-    && collected.every((result) => result.snapshot_status === "complete");
+  const usable = collected.filter((result) =>
+    result.snapshot_status !== "unavailable"
+    && result.emitted_observation_count + result.skipped_duplicate_count > 0
+  );
+  const complete = usable.length === 2
+    && usable.every((result) => result.snapshot_status === "complete");
   return {
     collector_id: "eth-intelligence:30d",
-    status: complete ? "complete" : collected.length > 0 ? "partial" : "failed",
+    status: complete ? "complete" : usable.length > 0 ? "partial" : "failed",
     fetched_at: ingestedAt.toISOString(),
     sources: {
       value_capture: valueCapture,

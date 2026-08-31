@@ -133,4 +133,50 @@ describe("runEthIntelligenceCollectionOnce", () => {
     expect(result.gaps).toContain("ecosystem_capture:collection_failed");
     expect(store.rows).toHaveLength(7);
   });
+
+  it("reports failed when both source families return unavailable snapshots without observations", async () => {
+    const store = new MemoryStore();
+    const result = await runEthIntelligenceCollectionOnce({
+      handlerContext: unusedHandlerContext,
+      store,
+      now: () => new Date("2026-08-21T00:06:00.000Z"),
+      fetchValueCaptureSnapshot: async () => ({
+        ...valueSnapshot(),
+        status: "unavailable",
+        sources: [],
+      }),
+      fetchEcosystemCaptureSnapshot: async () => ({
+        ...ecosystemSnapshot(),
+        status: "unavailable",
+        sources: [],
+      }),
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.emitted_observation_ids).toEqual([]);
+    expect(result.sources.value_capture.snapshot_status).toBe("unavailable");
+    expect(result.sources.ecosystem_capture.snapshot_status).toBe("unavailable");
+    expect(store.rows).toEqual([]);
+  });
+
+  it("reports partial and retains observations when only one source family is usable", async () => {
+    const store = new MemoryStore();
+    const result = await runEthIntelligenceCollectionOnce({
+      handlerContext: unusedHandlerContext,
+      store,
+      now: () => new Date("2026-08-21T00:06:00.000Z"),
+      fetchValueCaptureSnapshot: async () => valueSnapshot(),
+      fetchEcosystemCaptureSnapshot: async () => ({
+        ...ecosystemSnapshot(),
+        status: "unavailable",
+        sources: [],
+      }),
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.sources.value_capture.snapshot_status).toBe("complete");
+    expect(result.sources.ecosystem_capture.snapshot_status).toBe("unavailable");
+    expect(result.emitted_observation_ids).toHaveLength(7);
+    expect(store.rows).toHaveLength(7);
+  });
 });

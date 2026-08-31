@@ -56,6 +56,10 @@ describe("ETH frontend history query", () => {
       new URLSearchParams("metrics=eth.not_allowed"),
       now,
     )).toThrow(/history query is invalid/);
+    expect(() => parseEthFrontendHistorySearchParams(
+      new URLSearchParams("metrics=eth.total_burn_eth,eth.total_burn_eth"),
+      now,
+    )).toThrow(/history query is invalid/);
   });
 
   it("selects the latest revision known by the cutoff without leaking later ingestion", () => {
@@ -102,6 +106,26 @@ describe("ETH frontend history query", () => {
       observations: [
         observation({ id: "metric:a", value: 0.11 }),
         observation({ id: "metric:b", value: 0.19 }),
+      ],
+      generatedAt: new Date("2026-08-24T00:00:00.000Z"),
+    });
+
+    expect(history.status).toBe("unavailable");
+    expect(history.series[0]?.points).toEqual([]);
+    expect(history.series[0]?.gap_codes).toContain("ambiguous_latest_revision");
+    expect(history.data_quality.ambiguous_revision_count).toBe(1);
+  });
+
+  it("fails closed when equally latest revisions disagree on public provenance", () => {
+    const history = buildEthFrontendHistory({
+      query: query(),
+      observations: [
+        observation({ id: "metric:a", confidence: 0.9 }),
+        observation({
+          id: "metric:b",
+          confidence: 0.7,
+          source_refs: ["growthepie:fees_paid_usd"],
+        }),
       ],
       generatedAt: new Date("2026-08-24T00:00:00.000Z"),
     });

@@ -29,7 +29,7 @@ This API supports analysis of the distinction between Ethereum ecosystem activit
 - ETH protocol value-capture metrics; and
 - Ethereum ecosystem-capture metrics, including L2 user fees, rent paid to Ethereum, settlement-cost share, and stablecoin supply.
 
-The two source families are collected independently. If one fails, the other may still be persisted and the run is reported as `partial`. Provider exception text is not copied into the run result.
+The two source families are collected independently. If one fails or returns an unavailable snapshot without observations, the other may still be persisted and the run is reported as `partial`. A run with no usable observations from either family is `failed`. Provider exception text is not copied into the run result.
 
 ## Endpoint
 
@@ -46,7 +46,7 @@ Query parameters:
 | `window` | `30d` | `7d`, `30d`, `90d` |
 | `cutoff` | request time | ISO timestamp with timezone, not in the future |
 
-Unknown and duplicate parameters fail with `400 invalid_history_query`.
+Unknown parameters, repeated parameters, and duplicate metric keys fail with `400 invalid_history_query`.
 
 ## Allowlisted metrics
 
@@ -78,7 +78,7 @@ For each day:
 1. select the latest `observed_at` known by the cutoff;
 2. select the latest `ingested_at` for that observation;
 3. retain the number of candidate revisions;
-4. omit the day if equally latest revisions disagree on value, unit, or methodology.
+4. omit the day if equally latest revisions disagree on value, unit, confidence, source time, source references, methodology, dimensions, or asset reference.
 
 Ambiguous days are not averaged and are never replaced with zero.
 
