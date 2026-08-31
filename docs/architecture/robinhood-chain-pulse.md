@@ -81,7 +81,7 @@ Current stablecoin supply comes from `stablecoinchains`. The 7-day change does n
 - the latest valid observation whose Unix timestamp is at or before the current UTC cutoff;
 - the latest valid observation whose Unix timestamp is at or before the cutoff minus exactly 604,800 seconds.
 
-Future observations are ignored. A missing cutoff observation or zero baseline leaves the change null. If history fails, current supply is preserved while the adapter becomes partial; an observed current value of zero remains a real zero rather than a missing value.
+Future observations are ignored. The latest current observation and the observation selected at the seven-day cutoff must each be within 48 hours of their cutoff. Identical duplicate timestamps collapse deterministically; conflicting values at one timestamp make the change null. A missing or stale cutoff observation or zero baseline also leaves the change null. If history fails, current supply is preserved while the adapter becomes partial; an observed current value of zero remains a real zero rather than a missing value. A fresh history value that differs from current stock by more than 1% emits a quality gap but never replaces the directly fetched current stock.
 
 ```text
 source prefixes: defillama, defillama-stablecoins

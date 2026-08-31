@@ -146,7 +146,10 @@ describe("Robinhood Chain DefiLlama adapter", () => {
 
   it("ignores a malformed future history row before validating its supply", async () => {
     const now = unix(FIXTURE_NOW);
-    const base = fetchFixture();
+    const base = fetchFixture({ stablecoinChains: [{
+      name: "Robinhood Chain",
+      totalCirculatingUSD: { peggedUSD: 110 },
+    }] });
     const fetchImpl = vi.fn(async (input: string | URL | Request) => (
       String(input) === STABLECOIN_HISTORY_URL
         ? response([
@@ -165,6 +168,125 @@ describe("Robinhood Chain DefiLlama adapter", () => {
     expect(result.status).toBe("valid");
     expect(result.metrics.stablecoin_change_7d_pct).toBeCloseTo(10);
     expect(result.gaps.map((gap) => gap.code)).not.toContain("defillama-stablecoins:history:schema_drift");
+  });
+
+  it("keeps the 7d change null when the current history observation is older than 48 hours", async () => {
+    const now = unix(FIXTURE_NOW);
+    const base = fetchFixture();
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => (
+      String(input) === STABLECOIN_HISTORY_URL
+        ? response([
+          { date: String(now - 10 * DAY_SECONDS), totalCirculatingUSD: { peggedUSD: 100 } },
+          { date: String(now - 49 * 60 * 60), totalCirculatingUSD: { peggedUSD: 110 } },
+        ])
+        : base(input)
+    ));
+
+    const result = await fetchRobinhoodChainDefiLlama(
+      makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch }),
+      FIXTURE_NOW,
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.metrics.stablecoin_change_7d_pct).toBeNull();
+    expect(result.gaps.map((gap) => gap.code)).toContain("defillama-stablecoins:history:current_stale");
+  });
+
+  it("keeps the 7d change null when the baseline is more than 48 hours behind its cutoff", async () => {
+    const now = unix(FIXTURE_NOW);
+    const base = fetchFixture();
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => (
+      String(input) === STABLECOIN_HISTORY_URL
+        ? response([
+          { date: String(now - 7 * DAY_SECONDS - 49 * 60 * 60), totalCirculatingUSD: { peggedUSD: 100 } },
+          { date: String(now - 60 * 60), totalCirculatingUSD: { peggedUSD: 110 } },
+        ])
+        : base(input)
+    ));
+
+    const result = await fetchRobinhoodChainDefiLlama(
+      makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch }),
+      FIXTURE_NOW,
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.metrics.stablecoin_change_7d_pct).toBeNull();
+    expect(result.gaps.map((gap) => gap.code)).toContain("defillama-stablecoins:history:baseline_stale");
+  });
+
+  it("rejects conflicting stablecoin values at one history timestamp", async () => {
+    const now = unix(FIXTURE_NOW);
+    const base = fetchFixture();
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => (
+      String(input) === STABLECOIN_HISTORY_URL
+        ? response([
+          { date: String(now - 7 * DAY_SECONDS), totalCirculatingUSD: { peggedUSD: 100 } },
+          { date: String(now), totalCirculatingUSD: { peggedUSD: 110 } },
+          { date: String(now), totalCirculatingUSD: { peggedUSD: 111 } },
+        ])
+        : base(input)
+    ));
+
+    const result = await fetchRobinhoodChainDefiLlama(
+      makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch }),
+      FIXTURE_NOW,
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.metrics.stablecoin_change_7d_pct).toBeNull();
+    expect(result.gaps.map((gap) => gap.code)).toContain("defillama-stablecoins:history:duplicate_timestamp_conflict");
+  });
+
+  it("collapses identical duplicate timestamps deterministically", async () => {
+    const now = unix(FIXTURE_NOW);
+    const base = fetchFixture({ stablecoinChains: [{
+      name: "Robinhood Chain",
+      totalCirculatingUSD: { peggedUSD: 110 },
+    }] });
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => (
+      String(input) === STABLECOIN_HISTORY_URL
+        ? response([
+          { date: String(now - 7 * DAY_SECONDS), totalCirculatingUSD: { peggedUSD: 100 } },
+          { date: String(now), totalCirculatingUSD: { peggedUSD: 110 } },
+          { date: String(now), totalCirculatingUSD: { peggedUSD: 110 } },
+        ])
+        : base(input)
+    ));
+
+    const result = await fetchRobinhoodChainDefiLlama(
+      makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch }),
+      FIXTURE_NOW,
+    );
+
+    expect(result.status).toBe("valid");
+    expect(result.metrics.stablecoin_change_7d_pct).toBeCloseTo(10);
+    expect(result.gaps.map((gap) => gap.code)).not.toContain("defillama-stablecoins:history:duplicate_timestamp_conflict");
+  });
+
+  it("warns without replacing current stock when fresh history differs by more than 1 percent", async () => {
+    const now = unix(FIXTURE_NOW);
+    const base = fetchFixture({ stablecoinChains: [{
+      name: "Robinhood Chain",
+      totalCirculatingUSD: { peggedUSD: 120 },
+    }] });
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => (
+      String(input) === STABLECOIN_HISTORY_URL
+        ? response([
+          { date: String(now - 7 * DAY_SECONDS), totalCirculatingUSD: { peggedUSD: 100 } },
+          { date: String(now), totalCirculatingUSD: { peggedUSD: 110 } },
+        ])
+        : base(input)
+    ));
+
+    const result = await fetchRobinhoodChainDefiLlama(
+      makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch }),
+      FIXTURE_NOW,
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.metrics.stablecoin_supply_usd).toBe(120);
+    expect(result.metrics.stablecoin_change_7d_pct).toBeCloseTo(10);
+    expect(result.gaps.map((gap) => gap.code)).toContain("defillama-stablecoins:history:current_stock_divergence");
   });
 
   it("returns partial without filling a failed source with zero", async () => {
