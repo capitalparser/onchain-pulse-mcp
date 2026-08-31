@@ -26,6 +26,7 @@ import {
   handleEthConsensusRewardsCrossCheck,
   handleEthValueCapture,
   handleEthDemandCompass,
+  boundedToolError,
   listTools,
 } from "../src/server.js";
 import type { EnvConfig } from "../src/env.js";
@@ -112,6 +113,37 @@ describe("server", () => {
       await client.close();
       await server.close();
     }
+  });
+
+  it("preserves the bounded unknown-tool wire result without echoing caller input", async () => {
+    const { server } = createServer({ env });
+    const client = new Client({ name: "mcp-error-compatibility-test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      const result = await client.callTool({ name: "secret-caller-tool-name", arguments: {} });
+      expect(result).toEqual(boundedToolError("unknown_tool"));
+      expect(JSON.stringify(result)).not.toContain("secret-caller-tool-name");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("keeps all shared MCP tool failures on the exact bounded compatibility schema", () => {
+    expect(boundedToolError("unknown_tool")).toEqual({
+      content: [{ type: "text", text: JSON.stringify({ error: "unknown_tool" }) }],
+      isError: true,
+    });
+    expect(boundedToolError("invalid_arguments")).toEqual({
+      content: [{ type: "text", text: JSON.stringify({ error: "invalid_arguments" }) }],
+      isError: true,
+    });
+    expect(boundedToolError("tool_execution_failed")).toEqual({
+      content: [{ type: "text", text: JSON.stringify({ error: "tool_execution_failed" }) }],
+      isError: true,
+    });
   });
 
   it("registers a strict free-only ETH demand compass without caller-controlled source configuration", async () => {
