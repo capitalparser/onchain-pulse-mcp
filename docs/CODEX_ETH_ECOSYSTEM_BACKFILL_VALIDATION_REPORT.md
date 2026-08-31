@@ -6,9 +6,9 @@ Date: 2026-08-31 (Asia/Seoul)
 
 `ready_for_owner_review`
 
-PR #51 was restacked onto the current main that contains merged PR #50, #53,
-and #54. The implementation was validated with Node.js 24 and remains
-unmerged. GitHub Actions were not used.
+PR #51 was restacked onto the current main that contains the merged work from
+PRs #50, #53, #54, and #56. The implementation was validated with Node.js 24
+and remains unmerged. GitHub Actions were not used.
 
 ## Repository and revision identity
 
@@ -19,20 +19,22 @@ unmerged. GitHub Actions were not used.
 | Target branch | `feat/eth-ecosystem-backfill` |
 | Original stacked head | `8db078b7537da726579026e7fd20168052201276` |
 | Original history parent | `145a294eeea71d50f88ceffb3f5950b4909bfa24` |
-| Current `origin/main` | `90e294a991c61daf1e63371b58db78f1fb58e4f3` |
-| Initial restacked commit | `1bccd27c2f872997c14d50c069e7b911f9beff8e` |
-| Validated final implementation head | `e3f3e2f3a6110c7172c8bd1ed2d8007f178f775c` |
+| Current `origin/main` | `0f33b91884297a852abe031f3e03e1c644ac7a59` |
+| Initial restacked commit | `4aa6c6fbf3358c77be0ab791caaf7ba345a0d0a2` |
+| Validated final implementation head | `2fca0b26580224579d35e2e4da71438c56c3c5f6` |
 | Node.js | `v24.15.0` |
 | npm | `11.12.1` |
 
 PR #50 was verified merged before work began. Its merge commit is
 `90e294a991c61daf1e63371b58db78f1fb58e4f3`, and its committed validation
-report says `ready_for_owner_review`.
+report says `ready_for_owner_review`. Before publication, `origin/main`
+advanced to `0f33b91884297a852abe031f3e03e1c644ac7a59` with merged PR #56, so the
+branch was restacked and fully revalidated again on that base.
 
 ## Restack and conflict resolution
 
-Only PR #51's unique backfill commit was replayed onto current main. The
-rebase produced two conflicts:
+Only PR #51's unique backfill commit was replayed onto current main. The first
+rebase onto merged PR #50 produced two conflicts:
 
 - `package.json`: retained the current `robinhood-chain-pulse` script and added
   `intelligence-backfill` without changing dependency versions;
@@ -43,6 +45,12 @@ No blanket `ours` or `theirs` resolution was used. `package-lock.json`, the
 current MCP server, bounded MCP error contract, Robinhood Chain source and
 tests, and the PR #50 history gateway were not reverted.
 
+When main advanced again, the second rebase produced one `src/index.ts`
+import conflict. The merged result preserves the PR #56
+`intelligence-export` CLI and research-export modules alongside the PR #51
+`intelligence-backfill` CLI. The PR #56 package script, core exports, tests,
+and dependency state remain intact.
+
 ## Validation commands and results
 
 ```text
@@ -50,7 +58,7 @@ node --version                                      PASS  v24.15.0
 npm --version                                       PASS  11.12.1
 npm ci                                              PASS
 npm run typecheck                                   PASS
-npm test                                            PASS  1079 passed / 11 skipped
+npm test                                            PASS  1087 passed / 11 skipped
 npm run build                                       PASS
 npm audit --omit=dev                                PASS  0 vulnerabilities
 ```
@@ -66,20 +74,19 @@ npx vitest run \
   tests/intelligence_core/eth_ecosystem_backfill.test.ts \
   tests/intelligence_core/observation_id.test.ts \
   tests/intelligence_core/store_append_many.test.ts \
+  tests/intelligence_core/research_export.test.ts \
+  tests/intelligence_core/research_export_cli.test.ts \
   tests/intelligence_core/eth_ecosystem_capture_adapter.test.ts \
   tests/intelligence_core/eth_value_capture_adapter.test.ts \
-  tests/frontend_contract/eth_history.test.ts \
+  tests/intelligence_core/collection_run.test.ts \
+  tests/intelligence_core/history.test.ts \
   tests/dashboard/console_history_provider.test.ts \
-  tests/dashboard/console_history_gateway.test.ts \
-  tests/intelligence_core/eth_intelligence_collection.test.ts \
-  tests/intelligence_core/history_ingestion_cutoff.test.ts \
-  tests/intelligence_core/source_license.test.ts \
-  tests/server.test.ts \
+  tests/frontend_contract/eth_history.test.ts \
   tests/robinhood_chain_pulse \
-  tests/cli/robinhood_chain_pulse.test.ts
+  tests/server.test.ts
 ```
 
-Result: `19` test files passed, `164 / 164` tests passed.
+Result: `19` test files passed, `165 / 165` tests passed.
 
 ## Provenance and semantic observation IDs
 
@@ -153,7 +160,7 @@ npm run intelligence-backfill -- \
   --end 2026-07-03 \
   --window 30d \
   --manifest-dir <temporary-directory>/manifests \
-  --run-id codex-backfill-smoke
+  --run-id codex-backfill-smoke-3d
 ```
 
 Result:
@@ -169,14 +176,16 @@ Result:
 
 ## Live 7-day and idempotency smoke
 
-The final implementation was run for `2026-07-01` through `2026-07-07` twice
-with different run IDs against one temporary JSONL store.
+After the three-day run, the final implementation was run for `2026-07-01`
+through `2026-07-07` twice with different run IDs against the same temporary
+JSONL store.
 
 ```text
-first run   partial  28 inserted  0 skipped
-second run  partial   0 inserted 28 skipped
-JSONL rows after both runs         28
-observation_set_sha256             identical across both runs
+first 7-day run   partial  16 inserted 12 skipped  28 semantic observations
+second 7-day run  partial   0 inserted 28 skipped  28 semantic observations
+JSONL rows after all three runs                28
+observation_set_sha256                         identical across 7-day runs
+observation_set_sha256  07f16017fd6f068a80df8f6df97b1af615df95dfd9e688c45913e6c57ffd05a3
 ```
 
 Each run captured the same four payload hashes. Live body sizes were bounded:
@@ -194,23 +203,26 @@ The manifest reported
 
 ## Point-in-time history gateway smoke
 
-The seven-day temporary store had one actual ingestion timestamp:
+The three-day run and the first seven-day run used their actual ingestion
+timestamps. The minimum and maximum persisted timestamps were:
 
 ```text
-2026-08-31T06:40:03.356Z
+2026-08-31T06:47:44.553Z
+2026-08-31T06:47:45.898Z
 ```
 
 The current history gateway returned:
 
 ```text
-cutoff 2026-08-31T06:40:03.355Z  unavailable  0 selected points
-cutoff 2026-08-31T06:40:03.356Z  partial     14 selected points
+cutoff 2026-08-31T06:47:44.552Z  unavailable   0 selected points
+cutoff 2026-08-31T06:47:45.898Z  partial      28 selected points
 ```
 
-The post-ingestion response contained seven L2 user-fee points and seven
-ecosystem stablecoin-supply points. It retained `no-store` and `nosniff`
-headers and did not expose observation IDs, raw payloads, credentials, RPC
-URLs, BYOK/paid-source state, entitlement state, or provider exception text.
+The post-ingestion response contained seven points each for L2 user fees,
+Ethereum L1 stablecoin supply, Ethereum-DA L2 stablecoin supply, and their
+ecosystem total. It retained `no-store` and `nosniff` headers and did not expose
+observation IDs, raw payloads, credentials, RPC URLs, BYOK/paid-source state,
+entitlement state, or provider exception text.
 
 ## Current-main regressions
 
@@ -220,6 +232,7 @@ The complete and focused suites retain:
 - composite forward collection and bounded history gateway behavior;
 - the current Node 24 and Vitest 4 dependency state;
 - all Robinhood Chain CLI, adapter, MCP, license, and server behavior;
+- the PR #56 immutable research-export CLI and contract tests;
 - bounded shared MCP error payloads;
 - production dependency audit at zero reported vulnerabilities.
 
@@ -247,6 +260,6 @@ The complete and focused suites retain:
 `ready_for_owner_review`
 
 Validated final implementation head:
-`e3f3e2f3a6110c7172c8bd1ed2d8007f178f775c`.
+`2fca0b26580224579d35e2e4da71438c56c3c5f6`.
 
 PR #51 must remain open and unmerged until owner review.
