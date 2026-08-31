@@ -18,7 +18,8 @@ The implementation was rebuilt on current `origin/main`, validated with Node.js 
 | PR old base | `1c5658dbb124a06ad084f66915d29641b812de08` |
 | PR old head | `145a294eeea71d50f88ceffb3f5950b4909bfa24` |
 | Current `origin/main` | `78c1915f4e5f48f7d6fdf160abb6aadeefb6d091` |
-| Refreshed implementation SHA | `318cb9e833ce4c85cb30f754fb3e5749500f28c6` |
+| Initial refreshed implementation SHA | `318cb9e833ce4c85cb30f754fb3e5749500f28c6` |
+| Validated final implementation head SHA | `f2eb2cb06065c7a9287e93d9f6cf70004a99283d` |
 | Node.js | `v24.15.0` |
 | npm | `11.12.1` |
 
@@ -44,6 +45,12 @@ During focused review, three fail-closed gaps in the old PR were repaired with r
 2. equally latest revisions are ambiguous when their public provenance differs, not only when value, unit, or methodology differs;
 3. a composite run with no usable observations from either source family is `failed`, while one usable family remains `partial`.
 
+Owner-review follow-up then repaired two additional accounting and availability boundaries, also with failing tests observed before implementation:
+
+1. the 20,000 candidate limit is applied only after subject, metric, observed-time, ingested-time, and requested-window eligibility;
+2. `discarded_revision_count` counts all candidates when ambiguity or a unit mismatch removes the whole day;
+3. `entity_ref` is part of the equally-latest revision signature.
+
 ## Exact validation commands and results
 
 ```text
@@ -51,7 +58,7 @@ node --version                                      PASS  v24.15.0
 npm --version                                       PASS  11.12.1
 npm ci                                              PASS
 npm run typecheck                                   PASS
-npm test                                            PASS  1058 passed / 11 skipped
+npm test                                            PASS  1061 passed / 11 skipped
 npm run build                                       PASS
 npm audit --omit=dev                                PASS  0 vulnerabilities
 ```
@@ -73,9 +80,9 @@ npx vitest run \
   tests/cli/robinhood_chain_pulse.test.ts
 ```
 
-Result: `13` files passed, `137` tests passed.
+Result: `13` files passed, `140` tests passed.
 
-The three new regressions were first observed failing against the refreshed old implementation, then passed after the bounded fixes.
+The owner-review regressions first failed for the expected reasons: the provider raised the candidate-limit error, ambiguous rows were undercounted, entity-scoped disagreement was selected, and a unit-mismatched row was not counted as discarded. All passed after the bounded fixes.
 
 ## Composite collection smoke
 
@@ -123,8 +130,11 @@ Automated tests verify:
 
 - `observed_at <= cutoff` and `ingested_at <= cutoff`;
 - exclusion of a revision ingested after the requested cutoff;
+- application of `ingested_at` and requested-window eligibility before the 20,000-candidate limit, including a 20,000-ineligible-plus-one-eligible regression;
 - latest known revision selection per metric and UTC day;
 - exclusion of equally latest conflicts without averaging or arbitrary selection;
+- inclusion of `entity_ref` in the equally-latest provenance signature;
+- reconciliation of selected and discarded counts for normal, ambiguous, and unit-mismatch days;
 - real zero retention;
 - no filling of missing days;
 - strict metric allowlist, maximum eight metrics, bounded range/window/cutoff;
@@ -156,6 +166,8 @@ The browser response contains only bounded metric metadata, selected points, sou
 
 `ready_for_owner_review`
 
-Validated implementation commit: `318cb9e833ce4c85cb30f754fb3e5749500f28c6`.
+Validated final implementation head: `f2eb2cb06065c7a9287e93d9f6cf70004a99283d`.
+
+The full clean-install sequence and live smoke were run with that exact code and test tree. The only subsequent branch change is this validation-report update; no source or test file is changed after the recorded run.
 
 PR #50 must remain open and unmerged until owner review.
