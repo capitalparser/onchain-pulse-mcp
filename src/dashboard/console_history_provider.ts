@@ -23,6 +23,8 @@ export function createConsoleHistoryProvider(
       && metricKeys.has(observation.metric_key as EthFrontendHistoryMetricKey)
       && Date.parse(observation.observed_at) >= startMs
       && Date.parse(observation.observed_at) <= cutoffMs
+      && Date.parse(observation.ingested_at) <= cutoffMs
+      && observation.dimensions.window === query.window
     );
     if (rows.length > MAX_HISTORY_CANDIDATES) {
       throw new Error("history candidate limit exceeded");

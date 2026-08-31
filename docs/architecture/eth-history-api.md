@@ -52,7 +52,7 @@ Unknown parameters, repeated parameters, and duplicate metric keys fail with `40
 
 The first browser-safe set is restricted to daily, point-in-time-safe ETH features already registered in the Intelligence Core. It includes protocol fees and supply, L2 rent, L2 user fees, settlement-cost share, and Ethereum L1/L2 stablecoin supply.
 
-Arbitrary metric keys, entity labels, wallet histories, and raw evidence are not queryable through this route. The current JSONL provider reads the store once per request, prefilters to the bounded query, and rejects more than 20,000 candidate revisions before response construction. A storage migration is still required when the append-only file becomes too large for one bounded in-memory read.
+Arbitrary metric keys, entity labels, wallet histories, and raw evidence are not queryable through this route. The current JSONL provider reads the store once per request, applies the full subject, metric, observed-time, ingested-time, and window eligibility predicate, and then rejects more than 20,000 candidate revisions before response construction. Later-ingested revisions and observations for another window cannot consume the requested point-in-time candidate budget. A storage migration is still required when the append-only file becomes too large for one bounded in-memory read.
 
 ## Point-in-time rules
 
@@ -78,9 +78,12 @@ For each day:
 1. select the latest `observed_at` known by the cutoff;
 2. select the latest `ingested_at` for that observation;
 3. retain the number of candidate revisions;
-4. omit the day if equally latest revisions disagree on value, unit, confidence, source time, source references, methodology, dimensions, or asset reference.
+4. omit the day if equally latest revisions disagree on value, unit, confidence, source time, source references, methodology, dimensions, entity reference, or asset reference.
 
 Ambiguous days are not averaged and are never replaced with zero.
+`discarded_revision_count` counts every eligible candidate that is absent from
+the response: `N - 1` for a selected point and `N` when ambiguity or a unit
+mismatch removes the entire day.
 
 ## Response
 

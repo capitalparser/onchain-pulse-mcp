@@ -121,6 +121,7 @@ describe("ETH frontend history query", () => {
     expect(history.series[0]?.points).toEqual([]);
     expect(history.series[0]?.gap_codes).toContain("ambiguous_latest_revision");
     expect(history.data_quality.ambiguous_revision_count).toBe(1);
+    expect(history.data_quality.discarded_revision_count).toBe(2);
   });
 
   it("fails closed when equally latest revisions disagree on public provenance", () => {
@@ -141,6 +142,36 @@ describe("ETH frontend history query", () => {
     expect(history.series[0]?.points).toEqual([]);
     expect(history.series[0]?.gap_codes).toContain("ambiguous_latest_revision");
     expect(history.data_quality.ambiguous_revision_count).toBe(1);
+  });
+
+  it("treats differing entity scope as an equally latest provenance conflict", () => {
+    const history = buildEthFrontendHistory({
+      query: query(),
+      observations: [
+        observation({ id: "metric:a" }),
+        observation({ id: "metric:b", entity_ref: "entity:unexpected" }),
+      ],
+      generatedAt: new Date("2026-08-24T00:00:00.000Z"),
+    });
+
+    expect(history.status).toBe("unavailable");
+    expect(history.series[0]?.points).toEqual([]);
+    expect(history.series[0]?.gap_codes).toContain("ambiguous_latest_revision");
+    expect(history.data_quality.discarded_revision_count).toBe(2);
+  });
+
+  it("counts a unit-mismatched latest candidate as discarded", () => {
+    const history = buildEthFrontendHistory({
+      query: query(),
+      observations: [observation({ id: "metric:wrong-unit", unit: "percent" })],
+      generatedAt: new Date("2026-08-24T00:00:00.000Z"),
+    });
+
+    expect(history.status).toBe("unavailable");
+    expect(history.series[0]?.points).toEqual([]);
+    expect(history.series[0]?.gap_codes).toContain("unit_mismatch");
+    expect(history.data_quality.selected_point_count).toBe(0);
+    expect(history.data_quality.discarded_revision_count).toBe(1);
   });
 
   it("keeps a valid zero value instead of treating it as missing", () => {

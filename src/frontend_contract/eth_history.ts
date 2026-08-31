@@ -292,6 +292,7 @@ function selectDailyPoint(rows: MetricObservation[]): SelectedDayPoint {
   const signatures = new Set(latestRows.map((row) => JSON.stringify({
     value: row.value,
     unit: row.unit,
+    entity_ref: row.entity_ref ?? null,
     asset_ref: row.asset_ref ?? null,
     source_at: row.source_at,
     confidence: row.confidence,
@@ -369,7 +370,10 @@ export function buildEthFrontendHistory(args: {
     const selected = [...rowsByDay.entries()]
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([, dayRows]) => selectDailyPoint(dayRows));
-    discardedRevisionCount += selected.reduce((sum, item) => sum + item.discardedCount, 0);
+    discardedRevisionCount += selected.reduce((sum, item) => {
+      const included = !item.ambiguous && item.observation.unit === definition.unit;
+      return sum + (included ? item.discardedCount : item.revisionCount);
+    }, 0);
     ambiguousRevisionCount += selected.filter((item) => item.ambiguous).length;
 
     const gapCodes = new Set<HistoryGapCode>();

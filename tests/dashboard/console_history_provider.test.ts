@@ -64,4 +64,19 @@ describe("console history provider", () => {
     const provider = createConsoleHistoryProvider(store);
     await expect(provider(query())).rejects.toThrow(/candidate limit exceeded/);
   });
+
+  it("applies ingestion cutoff and window eligibility before the candidate limit", async () => {
+    const lateIngested = Array.from({ length: 10_000 }, (_, index) => row(index + 1, {
+      ingested_at: "2026-08-24T00:00:00.000Z",
+    }));
+    const wrongWindow = Array.from({ length: 10_000 }, (_, index) => row(index + 10_001, {
+      dimensions: { window: "90d" },
+    }));
+    const eligible = row(20_001);
+    const store = new MemoryStore([...lateIngested, ...wrongWindow, eligible]);
+    const provider = createConsoleHistoryProvider(store);
+
+    await expect(provider(query())).resolves.toEqual([eligible]);
+    expect(store.readCount).toBe(1);
+  });
 });
