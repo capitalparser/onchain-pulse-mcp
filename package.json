@@ -25,6 +25,7 @@
     "console-gateway": "tsx src/index.ts console-gateway",
     "compass-backtest": "tsx src/index.ts compass-backtest",
     "intelligence-collect": "tsx src/index.ts intelligence-collect",
+    "intelligence-export": "tsx src/index.ts intelligence-export",
     "robinhood-chain-pulse": "tsx src/index.ts robinhood-chain-pulse",
     "telegram-alert": "tsx src/index.ts telegram-alert",
     "telegram-daemon": "tsx src/index.ts telegram-daemon",

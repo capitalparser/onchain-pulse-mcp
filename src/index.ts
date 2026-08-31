@@ -11,7 +11,7 @@ import { createFreeOnlyCompassProvider, createFreeOnlySnapshotProvider } from ".
 import { createDashboardServer } from "./dashboard/server.js";
 import { EthDemandCompassV2SnapshotSchema } from "./eth_demand_compass/types.js";
 import { loadEnv } from "./env.js";
-import { runIntelligenceCollectCli } from "./intelligence_core/cli.js";
+import { runIntelligenceCollectCli, runIntelligenceExportCli } from "./intelligence_core/cli.js";
 import { JsonlMetricObservationStore } from "./intelligence_core/store.js";
 import { runRobinhoodChainPulseCli } from "./robinhood_chain_pulse/cli.js";
 import {
@@ -51,6 +51,12 @@ async function main(): Promise<void> {
     const result = await runIntelligenceCollectCli(env);
     // eslint-disable-next-line no-console
     console.error(JSON.stringify(result));
+    return;
+  }
+  if (mode === "intelligence-export") {
+    const result = await runIntelligenceExportCli(env, process.argv.slice(3));
+    // eslint-disable-next-line no-console
+    console.log(JSON.stringify(result));
     return;
   }
   if (mode === "robinhood-chain-pulse") {
