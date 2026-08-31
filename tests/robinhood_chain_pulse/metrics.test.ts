@@ -45,6 +45,12 @@ function credit(overrides: Partial<RobinhoodMorphoResult["metrics"]> = {}): Robi
       collateral_usd: 150_000_000,
       utilisation: 0.7,
       high_utilisation_market_count: 0,
+      supply_change_7d_pct: 5,
+      borrow_change_7d_pct: 8,
+      utilisation_change_7d: 0.02,
+      history_market_count: 3,
+      history_covered_market_count: 3,
+      unique_borrowers_change_7d_pct: null,
       loan_asset_symbols: ["USDG"],
       collateral_asset_symbols: ["WETH"],
       stock_token_collateral_market_count: null,
@@ -249,12 +255,33 @@ describe("Robinhood Chain Pulse classification", () => {
     expect(snapshot.axes.capital_base.status).toBe("expanding");
     expect(snapshot.axes.credit_activation.status).toBe("active");
     expect(snapshot.phase).toBe("credit_activation");
+    expect(snapshot.axes.credit_activation.evidence).toContain("Morpho supplied 7d: 5.00%");
+    expect(snapshot.axes.credit_activation.evidence).toContain("Morpho borrowed 7d: 8.00%");
+    expect(snapshot.axes.credit_activation.evidence).toContain("Morpho utilisation 7d: +2.00pp");
     expect(snapshot.summary).toContain("current Morpho supply and utilisation meet active thresholds");
-    expect(snapshot.summary).toContain("credit growth requires historical confirmation");
+    expect(snapshot.summary).toContain("Morpho supply and borrow also increased over 7 days");
     expect(snapshot.interpretation_boundary).toContain(
       "Stablecoin supply is capital base; an active current Morpho credit state is not evidence that credit itself is increasing.",
     );
     expect(snapshot.interpretation_boundary.join(" ")).not.toContain("borrowing and utilisation also increase");
+  });
+
+  it("keeps credit-growth language unconfirmed when Morpho history is unavailable", () => {
+    const snapshot = buildRobinhoodChainPulse({
+      lang: "en",
+      fundamentals: fundamentals(),
+      credit: credit({
+        supply_change_7d_pct: null,
+        borrow_change_7d_pct: null,
+        utilisation_change_7d: null,
+        history_covered_market_count: 0,
+      }),
+      community: community([]),
+      now: new Date("2026-08-30T00:00:00.000Z"),
+    });
+
+    expect(snapshot.phase).toBe("credit_activation");
+    expect(snapshot.summary).toContain("credit growth requires historical confirmation");
   });
 
   it("prioritizes data warning when two source families are unavailable despite active credit", () => {

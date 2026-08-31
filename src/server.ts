@@ -309,6 +309,18 @@ export interface ServerBundle {
   ctx: AdapterContext;
 }
 
+export type BoundedToolErrorCode =
+  | "unknown_tool"
+  | "invalid_arguments"
+  | "tool_execution_failed";
+
+export function boundedToolError(error: BoundedToolErrorCode) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify({ error }) }],
+    isError: true as const,
+  };
+}
+
 export function listTools(): ToolDef[] {
   return TOOLS;
 }
@@ -327,15 +339,17 @@ export function createServer(opts: { env: EnvConfig; fetchImpl?: typeof fetch })
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const def = TOOLS.find((t) => t.name === req.params.name);
     if (!def) {
-      return { content: [{ type: "text", text: JSON.stringify({ error: "unknown_tool" }) }], isError: true };
+      return boundedToolError("unknown_tool");
     }
 
     try {
       const out = await def.handler(req.params.arguments ?? {}, { env: opts.env, ctx });
       return { content: [{ type: "text", text: JSON.stringify(out) }] };
     } catch (err) {
-      const error = err instanceof z.ZodError ? "invalid_arguments" : "tool_execution_failed";
-      return { content: [{ type: "text", text: JSON.stringify({ error }) }], isError: true };
+      const error: BoundedToolErrorCode = err instanceof z.ZodError
+        ? "invalid_arguments"
+        : "tool_execution_failed";
+      return boundedToolError(error);
     }
   });
 

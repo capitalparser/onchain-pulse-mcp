@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { makeContext } from "../../src/adapters/base.js";
 import {
   ROBINHOOD_DEXSCREENER_URL,
+  ROBINHOOD_RPC_URL,
   fetchRobinhoodChainCommunity,
 } from "../../src/adapters/robinhood_chain_community.js";
 import { loadEnv } from "../../src/env.js";
@@ -11,6 +12,52 @@ function response(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json" },
+  });
+}
+
+function abiString(value: string): string {
+  const encoded = Buffer.from(value, "utf8").toString("hex");
+  const length = value.length.toString(16).padStart(64, "0");
+  return `0x${"20".padStart(64, "0")}${length}${encoded.padEnd(Math.ceil(encoded.length / 64) * 64, "0")}`;
+}
+
+function rpcFallback(base: ReturnType<typeof fetchFixture>, options: {
+  chainId?: string;
+  emptyCodeFor?: string;
+  symbolFor?: Record<string, string>;
+  rawSymbolFor?: Record<string, string>;
+}) {
+  return vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("/api/v2/tokens/")) return response({}, 403);
+    if (url !== ROBINHOOD_RPC_URL) return base(input);
+    const body = JSON.parse(String(init?.body)) as {
+      id: number;
+      method: string;
+      params: Array<Record<string, string> | string>;
+    };
+    if (body.method === "eth_chainId") {
+      return response({ jsonrpc: "2.0", id: body.id, result: options.chainId ?? "0x1237" });
+    }
+    const address = (body.method === "eth_getCode"
+      ? String(body.params[0])
+      : String((body.params[0] as Record<string, string>).to)).toLowerCase();
+    if (body.method === "eth_getCode") {
+      return response({
+        jsonrpc: "2.0",
+        id: body.id,
+        result: address === options.emptyCodeFor?.toLowerCase() ? "0x" : "0x6001600055",
+      });
+    }
+    const token = ROBINHOOD_COMMUNITY_TOKEN_UNIVERSE.find(
+      (candidate) => candidate.address.toLowerCase() === address,
+    )!;
+    const symbol = options.symbolFor?.[address] ?? token.symbol;
+    return response({
+      jsonrpc: "2.0",
+      id: body.id,
+      result: options.rawSymbolFor?.[address] ?? abiString(symbol),
+    });
   });
 }
 
@@ -156,6 +203,80 @@ describe("Robinhood Chain community-token adapter", () => {
     expect(row?.data_status).toBe("partial");
     expect(row?.eligible_for_breadth).toBe(false);
     expect(result.status).toBe("partial");
+  });
+
+  it("uses exact-address contract code and ERC-20 symbol from the official RPC when Blockscout fails", async () => {
+    const fetchImpl = rpcFallback(fetchFixture(), {});
+    const result = await fetchRobinhoodChainCommunity(
+      makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch }),
+      new Date("2026-08-30T00:00:00.000Z"),
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.tokens.every((token) => token.eligible_for_breadth)).toBe(true);
+    expect(result.tokens.every((token) => token.holder_count === null)).toBe(true);
+    expect(result.tokens.every((token) => token.data_status === "partial")).toBe(true);
+    expect(result.tokens.every((token) => (
+      token.gaps.some((gap) => gap.code === "robinhood-rpc:holder_count_gap")
+    ))).toBe(true);
+    expect(result.sourceStatus.some((source) => (
+      source.source === "robinhood-rpc:chain:4663" && source.status === "ok"
+    ))).toBe(true);
+  });
+
+  it("fails closed when the RPC chain id does not match Robinhood Chain", async () => {
+    const result = await fetchRobinhoodChainCommunity(
+      makeContext({
+        env: loadEnv({}),
+        fetchImpl: rpcFallback(fetchFixture(), { chainId: "0x1" }) as typeof fetch,
+      }),
+      new Date("2026-08-30T00:00:00.000Z"),
+    );
+
+    expect(result.tokens.every((token) => token.eligible_for_breadth === false)).toBe(true);
+    expect(result.sourceStatus.find((source) => source.source === "robinhood-rpc:chain:4663")?.status)
+      .toBe("schema_drift");
+  });
+
+  it("fails closed when RPC bytecode is empty or the exact-address symbol mismatches", async () => {
+    const [cashcat, stonk] = ROBINHOOD_COMMUNITY_TOKEN_UNIVERSE;
+    const result = await fetchRobinhoodChainCommunity(
+      makeContext({
+        env: loadEnv({}),
+        fetchImpl: rpcFallback(fetchFixture(), {
+          emptyCodeFor: cashcat!.address,
+          symbolFor: { [stonk!.address.toLowerCase()]: "FAKE" },
+        }) as typeof fetch,
+      }),
+      new Date("2026-08-30T00:00:00.000Z"),
+    );
+
+    expect(result.tokens.find((token) => token.registry_symbol === "CASHCAT")?.eligible_for_breadth)
+      .toBe(false);
+    expect(result.tokens.find((token) => token.registry_symbol === "STONKBROKER")?.data_status)
+      .toBe("registry_mismatch");
+    expect(result.tokens.find((token) => token.registry_symbol === "STONKBROKER")?.eligible_for_breadth)
+      .toBe(false);
+    expect(result.tokens.find((token) => token.registry_symbol === "MANCER")?.eligible_for_breadth)
+      .toBe(true);
+  });
+
+  it("fails closed on a malformed ERC-20 symbol ABI response", async () => {
+    const [cashcat] = ROBINHOOD_COMMUNITY_TOKEN_UNIVERSE;
+    const result = await fetchRobinhoodChainCommunity(
+      makeContext({
+        env: loadEnv({}),
+        fetchImpl: rpcFallback(fetchFixture(), {
+          rawSymbolFor: { [cashcat!.address.toLowerCase()]: "0x1234" },
+        }) as typeof fetch,
+      }),
+      new Date("2026-08-30T00:00:00.000Z"),
+    );
+
+    const row = result.tokens.find((token) => token.registry_symbol === "CASHCAT");
+    expect(row?.eligible_for_breadth).toBe(false);
+    expect(row?.data_status).toBe("partial");
+    expect(row?.gaps.map((gap) => gap.code)).toContain("robinhood-rpc:contract_metadata_gap");
   });
 
   it("fails closed when DexScreener is unavailable", async () => {

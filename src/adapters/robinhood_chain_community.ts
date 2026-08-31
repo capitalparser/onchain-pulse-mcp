@@ -14,6 +14,10 @@ import { RobinhoodCommunityTokenMarketSchema } from "../robinhood_chain_pulse/ty
 
 export const ROBINHOOD_DEXSCREENER_URL =
   `https://api.dexscreener.com/tokens/v1/${ROBINHOOD_CHAIN_REGISTRY.chain_slug}/${ROBINHOOD_COMMUNITY_TOKEN_UNIVERSE.map((token) => token.address).join(",")}`;
+export const ROBINHOOD_RPC_URL = ROBINHOOD_CHAIN_REGISTRY.rpc_url;
+
+const ERC20_SYMBOL_SELECTOR = "0x95d89b41";
+const MAX_RPC_RESULT_HEX_LENGTH = 4_096;
 
 const CACHE_SPEC = {
   name: "robinhood_chain_community",
@@ -42,6 +46,15 @@ interface ExplorerMetadata {
   status: "ok" | "unavailable" | "schema_drift";
   symbol: string | null;
   holders: number | null;
+}
+
+interface RpcMetadata extends ExplorerMetadata {
+  holders: null;
+}
+
+interface RpcVerificationResult {
+  chainStatus: ExplorerMetadata["status"];
+  tokens: RpcMetadata[];
 }
 
 export interface RobinhoodCommunityResult {
@@ -165,6 +178,116 @@ async function fetchExplorerMetadata(
   return { status: "ok", symbol, holders };
 }
 
+async function rpcCall(
+  ctx: AdapterContext,
+  method: string,
+  params: unknown[],
+  id: number,
+): Promise<{ status: ExplorerMetadata["status"]; result: unknown }> {
+  let response: Response;
+  try {
+    response = await ctx.fetch(ROBINHOOD_RPC_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+    });
+  } catch {
+    return { status: "unavailable", result: null };
+  }
+  if (!response.ok) return { status: "unavailable", result: null };
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    return { status: "schema_drift", result: null };
+  }
+  const item = record(body);
+  if (
+    item === null
+    || item.jsonrpc !== "2.0"
+    || item.id !== id
+    || item.error !== undefined
+    || !("result" in item)
+  ) {
+    return { status: "schema_drift", result: null };
+  }
+  return { status: "ok", result: item.result };
+}
+
+function decodeRpcSymbol(value: unknown): string | null {
+  if (
+    typeof value !== "string"
+    || !/^0x[0-9a-fA-F]*$/.test(value)
+    || value.length < 66
+    || value.length > MAX_RPC_RESULT_HEX_LENGTH
+    || value.length % 2 !== 0
+  ) {
+    return null;
+  }
+  const hex = value.slice(2);
+  let payload: string;
+  if (hex.length === 64) {
+    payload = hex.replace(/(?:00)+$/u, "");
+  } else {
+    const offset = Number.parseInt(hex.slice(0, 64), 16);
+    if (!Number.isSafeInteger(offset) || offset < 32 || offset % 32 !== 0) return null;
+    const lengthOffset = offset * 2;
+    if (lengthOffset + 64 > hex.length) return null;
+    const byteLength = Number.parseInt(hex.slice(lengthOffset, lengthOffset + 64), 16);
+    if (!Number.isSafeInteger(byteLength) || byteLength < 1 || byteLength > 64) return null;
+    const start = lengthOffset + 64;
+    const end = start + byteLength * 2;
+    if (end > hex.length) return null;
+    payload = hex.slice(start, end);
+  }
+  try {
+    const bytes = Uint8Array.from(payload.match(/.{2}/gu) ?? [], (byte) => Number.parseInt(byte, 16));
+    const symbol = new TextDecoder("utf-8", { fatal: true }).decode(bytes).trim();
+    return /^[\x21-\x7E]{1,32}$/u.test(symbol) ? symbol : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchRpcMetadata(
+  ctx: AdapterContext,
+  tokens: readonly RobinhoodCommunityToken[],
+): Promise<RpcVerificationResult> {
+  const chain = await rpcCall(ctx, "eth_chainId", [], 1);
+  const chainId = typeof chain.result === "string" ? chain.result.toLowerCase() : null;
+  const expectedChainId = `0x${ROBINHOOD_CHAIN_REGISTRY.chain_id.toString(16)}`;
+  const chainStatus: ExplorerMetadata["status"] = chain.status !== "ok"
+    ? chain.status
+    : chainId === expectedChainId
+      ? "ok"
+      : "schema_drift";
+  if (chainStatus !== "ok") {
+    return {
+      chainStatus,
+      tokens: tokens.map(() => ({ status: chainStatus, symbol: null, holders: null })),
+    };
+  }
+  const rows = await Promise.all(tokens.map(async (token, index): Promise<RpcMetadata> => {
+    const code = await rpcCall(ctx, "eth_getCode", [token.address, "latest"], index * 2 + 2);
+    if (code.status !== "ok") return { status: code.status, symbol: null, holders: null };
+    if (typeof code.result !== "string" || !/^0x[0-9a-fA-F]+$/.test(code.result) || code.result === "0x") {
+      return { status: "schema_drift", symbol: null, holders: null };
+    }
+    const symbol = await rpcCall(
+      ctx,
+      "eth_call",
+      [{ to: token.address, data: ERC20_SYMBOL_SELECTOR }, "latest"],
+      index * 2 + 3,
+    );
+    if (symbol.status !== "ok") return { status: symbol.status, symbol: null, holders: null };
+    const decoded = decodeRpcSymbol(symbol.result);
+    return decoded === null
+      ? { status: "schema_drift", symbol: null, holders: null }
+      : { status: "ok", symbol: decoded, holders: null };
+  }));
+  return { chainStatus, tokens: rows };
+}
+
 function choosePrimary(pairs: ParsedPair[]): ParsedPair | null {
   if (pairs.length === 0) return null;
   return [...pairs].sort((left, right) => {
@@ -262,6 +385,21 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodCommunityR
   const metadataRows = await Promise.all(
     ROBINHOOD_COMMUNITY_TOKEN_UNIVERSE.map((token) => fetchExplorerMetadata(ctx, token)),
   );
+  const rpcIndexes = metadataRows
+    .map((metadata, index) => metadata.status === "ok" ? -1 : index)
+    .filter((index) => index >= 0);
+  const rpcTokens = rpcIndexes.map((index) => ROBINHOOD_COMMUNITY_TOKEN_UNIVERSE[index]!);
+  const rpcVerification = rpcTokens.length > 0
+    ? await fetchRpcMetadata(ctx, rpcTokens)
+    : null;
+  const rpcRows = new Map<number, RpcMetadata>();
+  rpcIndexes.forEach((tokenIndex, rpcIndex) => {
+    rpcRows.set(tokenIndex, rpcVerification?.tokens[rpcIndex] ?? {
+      status: "unavailable",
+      symbol: null,
+      holders: null,
+    });
+  });
   const tokens: RobinhoodCommunityTokenMarket[] = [];
   const gaps: RobinhoodPulseGap[] = [];
   let completeMetadata = 0;
@@ -272,6 +410,9 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodCommunityR
     );
     const primary = choosePrimary(tokenPairs);
     const metadata = metadataRows[index] ?? { status: "unavailable" as const, symbol: null, holders: null };
+    const rpcMetadata = rpcRows.get(index) ?? null;
+    const verification = metadata.status === "ok" ? metadata : rpcMetadata;
+    const verificationOk = verification?.status === "ok";
     const tokenGaps: RobinhoodPulseGap[] = [];
     if (primary === null) {
       tokenGaps.push({ code: "dexscreener:token_market_gap", detail: `${token.symbol} has no exact-address Robinhood Chain base-token pool row.` });
@@ -281,13 +422,19 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodCommunityR
     } else {
       completeMetadata += 1;
     }
-    const reported = metadata.symbol ?? primary?.reportedSymbol ?? null;
+    if (metadata.status !== "ok" && rpcMetadata?.status !== "ok") {
+      tokenGaps.push({ code: "robinhood-rpc:contract_metadata_gap", detail: `${token.symbol} exact-address contract code or ERC-20 symbol could not be verified through the official RPC.` });
+    }
+    if (metadata.status !== "ok" && rpcMetadata?.status === "ok") {
+      tokenGaps.push({ code: "robinhood-rpc:holder_count_gap", detail: `${token.symbol} was verified through the official RPC, which does not provide holder count metadata.` });
+    }
+    const reported = verification?.symbol ?? primary?.reportedSymbol ?? null;
     const registryMismatch = reported !== null && reported.toUpperCase() !== token.symbol.toUpperCase();
     if (registryMismatch) {
-      tokenGaps.push({ code: "robinhood-blockscout:registry_mismatch", detail: `${token.symbol} exact address reported symbol ${reported}.` });
+      tokenGaps.push({ code: "community:registry_mismatch", detail: `${token.symbol} exact address reported symbol ${reported}.` });
     }
     const eligible = primary !== null
-      && metadata.status === "ok"
+      && verificationOk
       && !registryMismatch
       && primary.liquidityUsd !== null
       && primary.liquidityUsd >= MIN_LIQUIDITY_USD
@@ -361,7 +508,30 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodCommunityR
       status: metadata?.status ?? "unavailable",
       as_of: asOf,
     });
+    const rpcMetadata = rpcRows.get(index);
+    if (rpcMetadata !== undefined) {
+      sourceStatus.push({
+        source: `robinhood-rpc:token:${normalizedAddress(token.address)}`,
+        role: `${token.symbol} exact-address contract bytecode and ERC-20 symbol fallback verification`,
+        status: rpcMetadata.status,
+        as_of: asOf,
+      });
+    }
   }
+  if (rpcVerification !== null) {
+    sourceStatus.push({
+      source: "robinhood-rpc:chain:4663",
+      role: "Official Robinhood Chain RPC chain-id verification",
+      status: rpcVerification.chainStatus,
+      as_of: asOf,
+    });
+  }
+  const rpcSources = rpcVerification === null
+    ? []
+    : [
+        "robinhood-rpc:chain:4663",
+        ...rpcTokens.map((token) => `robinhood-rpc:token:${normalizedAddress(token.address)}`),
+      ];
   return {
     status,
     tokens,
@@ -370,6 +540,7 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodCommunityR
       ...ROBINHOOD_COMMUNITY_TOKEN_UNIVERSE.map(
         (token) => `robinhood-blockscout:token:${normalizedAddress(token.address)}`,
       ),
+      ...rpcSources,
     ],
     sourceStatus,
     stale: false,

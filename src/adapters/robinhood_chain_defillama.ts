@@ -18,6 +18,8 @@ export const ROBINHOOD_DEFILLAMA_URLS = {
 
 const DAY_SECONDS = 86_400;
 const MAX_STABLECOIN_HISTORY_ROWS = 10_000;
+const MAX_STABLECOIN_HISTORY_DISTANCE_SECONDS = 48 * 60 * 60;
+const MAX_STABLECOIN_CURRENT_DIVERGENCE_RATIO = 0.01;
 
 const CACHE_SPEC = {
   name: "robinhood_chain_defillama",
@@ -170,13 +172,20 @@ function parseStablecoinChain(body: unknown): {
 
 function parseStablecoinHistory(body: unknown, now: Date): {
   change7d: number | null;
-  gap: "baseline_gap" | "baseline_zero" | null;
+  currentSupply: number | null;
+  gap:
+    | "baseline_gap"
+    | "baseline_zero"
+    | "current_stale"
+    | "baseline_stale"
+    | "duplicate_timestamp_conflict"
+    | null;
 } {
   if (!Array.isArray(body) || body.length === 0 || body.length > MAX_STABLECOIN_HISTORY_ROWS) {
     throw new SchemaDriftError();
   }
   const currentCutoff = Math.floor(now.getTime() / 1_000);
-  const observations = body.map((raw) => {
+  const parsedRows = body.map((raw) => {
     const item = record(raw);
     const timestamp = item === null ? null : nonnegativeInteger(item.date);
     if (item === null || timestamp === null) throw new SchemaDriftError();
@@ -186,16 +195,36 @@ function parseStablecoinHistory(body: unknown, now: Date): {
     if (supply === null) throw new SchemaDriftError();
     return { timestamp, supply };
   });
+  const supplyByTimestamp = new Map<number, number>();
+  for (const observation of parsedRows) {
+    const existing = supplyByTimestamp.get(observation.timestamp);
+    if (existing !== undefined && existing !== observation.supply) {
+      return { change7d: null, currentSupply: null, gap: "duplicate_timestamp_conflict" };
+    }
+    supplyByTimestamp.set(observation.timestamp, observation.supply);
+  }
+  const observations = [...supplyByTimestamp.entries()].map(([timestamp, supply]) => ({ timestamp, supply }));
   const baselineCutoff = currentCutoff - 7 * DAY_SECONDS;
   const latestAtOrBefore = (cutoff: number) => observations
     .filter((observation) => observation.timestamp <= cutoff)
     .sort((left, right) => right.timestamp - left.timestamp)[0] ?? null;
   const current = latestAtOrBefore(currentCutoff);
   const baseline = latestAtOrBefore(baselineCutoff);
-  if (current === null || baseline === null) return { change7d: null, gap: "baseline_gap" };
-  if (baseline.supply === 0) return { change7d: null, gap: "baseline_zero" };
+  if (current === null || baseline === null) {
+    return { change7d: null, currentSupply: current?.supply ?? null, gap: "baseline_gap" };
+  }
+  if (currentCutoff - current.timestamp > MAX_STABLECOIN_HISTORY_DISTANCE_SECONDS) {
+    return { change7d: null, currentSupply: current.supply, gap: "current_stale" };
+  }
+  if (baselineCutoff - baseline.timestamp > MAX_STABLECOIN_HISTORY_DISTANCE_SECONDS) {
+    return { change7d: null, currentSupply: current.supply, gap: "baseline_stale" };
+  }
+  if (baseline.supply === 0) {
+    return { change7d: null, currentSupply: current.supply, gap: "baseline_zero" };
+  }
   return {
     change7d: ((current.supply - baseline.supply) / baseline.supply) * 100,
+    currentSupply: current.supply,
     gap: null,
   };
 }
@@ -292,6 +321,32 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodDefiLlamaR
         code: "defillama-stablecoins:history:baseline_zero",
         detail: "The stablecoin supply observation at the 7-day UTC baseline was zero, so percentage change is undefined.",
       });
+    } else if (value.gap === "current_stale") {
+      gaps.push({
+        code: "defillama-stablecoins:history:current_stale",
+        detail: "The latest stablecoin history observation was more than 48 hours old.",
+      });
+    } else if (value.gap === "baseline_stale") {
+      gaps.push({
+        code: "defillama-stablecoins:history:baseline_stale",
+        detail: "The selected stablecoin baseline was more than 48 hours behind the 7-day UTC cutoff.",
+      });
+    } else if (value.gap === "duplicate_timestamp_conflict") {
+      gaps.push({
+        code: "defillama-stablecoins:history:duplicate_timestamp_conflict",
+        detail: "Stablecoin history reported conflicting supply values for one timestamp.",
+      });
+    }
+    const currentStock = metrics.stablecoin_supply_usd;
+    if (value.currentSupply !== null && currentStock !== null) {
+      const divergence = Math.abs(value.currentSupply - currentStock)
+        / Math.max(value.currentSupply, currentStock, 1);
+      if (divergence > MAX_STABLECOIN_CURRENT_DIVERGENCE_RATIO) {
+        gaps.push({
+          code: "defillama-stablecoins:history:current_stock_divergence",
+          detail: "The latest history observation differed from current stablecoin stock by more than 1%; current stock was preserved.",
+        });
+      }
     }
   });
   parseTask(3, parseOverview, (value) => {
@@ -315,7 +370,7 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodDefiLlamaR
   ];
   const available = primary.filter((value) => value !== null).length;
   const historyAvailable = metrics.stablecoin_change_7d_pct !== null;
-  const status: RobinhoodDefiLlamaResult["status"] = available === primary.length && historyAvailable
+  const status: RobinhoodDefiLlamaResult["status"] = available === primary.length && historyAvailable && gaps.length === 0
     ? "valid"
     : available > 0
       ? "partial"
@@ -329,7 +384,10 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodDefiLlamaR
     stale: false,
     staleData: [],
     gaps,
-    confidence: Number(((available + (historyAvailable ? 1 : 0)) / (primary.length + 1)).toFixed(2)),
+    confidence: Number((
+      ((available + (historyAvailable ? 1 : 0)) / (primary.length + 1))
+      * (gaps.length > 0 ? 0.9 : 1)
+    ).toFixed(2)),
     asOf,
   };
   if (status === "unavailable") throw new RobinhoodDefiLlamaRefreshError(result);

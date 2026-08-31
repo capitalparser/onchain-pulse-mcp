@@ -47,12 +47,12 @@ MANCER        0xc72F232a6869e6CF34dC06129AfFD07F8a2a246A
 Ticker search is prohibited because duplicate and impersonating contracts exist. A token is eligible for breadth only when:
 
 - the exact address appears as the DexScreener base token on Robinhood Chain;
-- Blockscout successfully returns explorer metadata for the exact address and its symbol matches the registry;
+- either Blockscout returns matching exact-address metadata, or the official Robinhood RPC reports chain id 4663, non-empty bytecode at the exact address, and a matching bounded ERC-20 `symbol()` result;
 - primary-pool liquidity is at least USD 25,000;
 - market cap is at least USD 100,000;
 - 24-hour price change and volume are both available.
 
-Holder count is informative rather than a numeric eligibility threshold. An explorer outage leaves holder count null, marks the token partial, and excludes it from breadth instead of converting missing verification into zero or trusting a DexScreener ticker.
+Holder count is informative rather than a numeric eligibility threshold. When Blockscout is unavailable, the official fixed Robinhood RPC may independently verify chain identity, exact-address bytecode, and ERC-20 symbol. This fallback leaves holder count null and marks the token partial, but may make it breadth-eligible when all market thresholds also pass. A wrong chain id, empty bytecode, malformed ABI response, or symbol mismatch fails closed. DexScreener ticker text never substitutes for either verification path.
 
 ## Data sources
 
@@ -81,7 +81,7 @@ Current stablecoin supply comes from `stablecoinchains`. The 7-day change does n
 - the latest valid observation whose Unix timestamp is at or before the current UTC cutoff;
 - the latest valid observation whose Unix timestamp is at or before the cutoff minus exactly 604,800 seconds.
 
-Future observations are ignored. A missing cutoff observation or zero baseline leaves the change null. If history fails, current supply is preserved while the adapter becomes partial; an observed current value of zero remains a real zero rather than a missing value.
+Future observations are ignored. The latest current observation and the observation selected at the seven-day cutoff must each be within 48 hours of their cutoff. Identical duplicate timestamps collapse deterministically; conflicting values at one timestamp make the change null. A missing or stale cutoff observation or zero baseline also leaves the change null. If history fails, current supply is preserved while the adapter becomes partial; an observed current value of zero remains a real zero rather than a missing value. A fresh history value that differs from current stock by more than 1% emits a quality gap but never replaces the directly fetched current stock.
 
 ```text
 source prefixes: defillama, defillama-stablecoins
@@ -95,6 +95,8 @@ Used for chain-id-4663 listed-market supply, borrow, liquidity, collateral, and 
 The adapter collects all listed markets in bounded pages of 100 using `first` and `skip`. It validates `pageInfo.countTotal` across pages, rejects duplicate market IDs, and fails closed above the explicit 1,000-market limit. Missing collateral USD on any otherwise valid row leaves aggregate collateral null and marks the result partial while preserving valid supply, borrow, and liquidity totals.
 
 Provider utilisation must be in the inclusive `[0, 1]` range. Borrow may exceed positive supply only within the explicit rounding tolerance `max(USD 0.01, supply × 1e-9)`; zero supply with positive borrow is always inconsistent. Out-of-range provider utilisation or inconsistent balances make aggregate utilisation and the high-utilisation count null, mark the result partial, and prevent those values from activating the credit axis. Materially inconsistent values are never clamped to 100%.
+
+Seven-day Morpho supply, borrow, and aggregate-utilisation changes come from the official per-market GraphQL `historicalState` series. Requests use explicit UTC start/end timestamps and a `DAY` interval, with at most 25 market aliases per request and 100 history-covered markets overall. Portfolio deltas require complete listed-market coverage, observations within 48 hours of both cutoffs, non-conflicting timestamps, in-range utilisation, and borrow/supply consistency. Aggregate utilisation change additionally requires both current and baseline supply to be positive; a zero denominator makes only that delta null and emits an explicit gap. Current market levels remain available when history fails, while all affected deltas remain null and the adapter becomes partial. The official `MarketHistory` schema has no unique-borrower series, so `unique_borrowers_change_7d_pct` stays null with an explicit gap.
 
 Stock-token collateral classification is deliberately null until an effective-dated official stock-token registry is consumed. Symbol heuristics are not used to call a collateral token an equity token.
 
@@ -118,6 +120,15 @@ Used for exact-address token symbol and holder metadata.
 
 ```text
 source prefix: robinhood-blockscout
+commercial status: commercial_review_required
+```
+
+### Robinhood Chain official RPC
+
+Used only as a fixed-URL fallback for chain id, exact-address contract bytecode, and bounded ERC-20 `symbol()` verification when Blockscout metadata fails. It does not supply holder counts.
+
+```text
+source prefix: robinhood-rpc
 commercial status: commercial_review_required
 ```
 

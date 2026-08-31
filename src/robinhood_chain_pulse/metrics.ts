@@ -123,6 +123,16 @@ function creditAxis(result: RobinhoodMorphoResult) {
     evidence.push(`Morpho borrowed: $${Math.round(result.metrics.borrow_usd).toLocaleString("en-US")}`);
   }
   if (utilisation !== null) evidence.push(`Morpho utilisation: ${(utilisation * 100).toFixed(1)}%`);
+  if (result.metrics.supply_change_7d_pct !== null) {
+    evidence.push(`Morpho supplied 7d: ${result.metrics.supply_change_7d_pct.toFixed(2)}%`);
+  }
+  if (result.metrics.borrow_change_7d_pct !== null) {
+    evidence.push(`Morpho borrowed 7d: ${result.metrics.borrow_change_7d_pct.toFixed(2)}%`);
+  }
+  if (result.metrics.utilisation_change_7d !== null) {
+    const percentagePoints = result.metrics.utilisation_change_7d * 100;
+    evidence.push(`Morpho utilisation 7d: ${percentagePoints >= 0 ? "+" : ""}${percentagePoints.toFixed(2)}pp`);
+  }
   return { status, evidence, confidence: result.confidence } as const;
 }
 
@@ -236,8 +246,12 @@ function fragilityAxis(breadth: RobinhoodBreadthMetrics) {
 function summaryFor(snapshot: {
   phase: RobinhoodChainPulseSnapshot["phase"];
   lang: Lang;
+  creditGrowthConfirmed: boolean;
 }): string {
   if (snapshot.lang === "ko") {
+    if (snapshot.phase === "credit_activation" && snapshot.creditGrowthConfirmed) {
+      return "자본기반 추세는 확대 중이고 현재 Morpho 공급규모와 이용률은 active 기준을 충족합니다. Morpho 공급과 차입도 7일 기준 증가했습니다.";
+    }
     const summaries: Record<RobinhoodChainPulseSnapshot["phase"], string> = {
       capital_formation: "Robinhood Chain의 자본기반은 확대 중이지만, 신용활성화와 커뮤니티 토큰 확산은 아직 별도 확인이 필요합니다.",
       credit_activation: "자본기반 추세는 확대 중이고 현재 Morpho 공급규모와 이용률은 active 기준을 충족합니다. 신용 증가 추세는 별도 시계열 확인이 필요합니다.",
@@ -249,6 +263,9 @@ function summaryFor(snapshot: {
       unavailable: "현재 Robinhood Chain 국면 분석에 필요한 근거를 제공할 수 없습니다.",
     };
     return summaries[snapshot.phase] ?? "현재 Robinhood Chain 국면 분석에 필요한 근거를 제공할 수 없습니다.";
+  }
+  if (snapshot.phase === "credit_activation" && snapshot.creditGrowthConfirmed) {
+    return "The capital-base trend is expanding and current Morpho supply and utilisation meet active thresholds; Morpho supply and borrow also increased over 7 days.";
   }
   const summaries: Record<RobinhoodChainPulseSnapshot["phase"], string> = {
     capital_formation: "Robinhood Chain capital is expanding, while credit activation and community-token diffusion require separate confirmation.",
@@ -321,7 +338,12 @@ export function buildRobinhoodChainPulse(args: {
     + 0.1
   ).toFixed(2));
   const snapshot: RobinhoodChainPulseSnapshot = {
-    summary: summaryFor({ phase, lang: args.lang }),
+    summary: summaryFor({
+      phase,
+      lang: args.lang,
+      creditGrowthConfirmed: (args.credit.metrics.supply_change_7d_pct ?? 0) > 0
+        && (args.credit.metrics.borrow_change_7d_pct ?? 0) > 0,
+    }),
     as_of: args.now.toISOString(),
     phase,
     chain: {

@@ -48,7 +48,237 @@ async function resultForState(state: Record<string, unknown>) {
   );
 }
 
+async function resultForHistory(
+  historicalState: Record<string, unknown>,
+  historyStatus = 200,
+  currentState: Record<string, unknown> = {},
+) {
+  const marketId = `0x${"1".padStart(64, "0")}`;
+  const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+    const request = JSON.parse(String(init?.body)) as { query: string };
+    if (request.query.includes("RobinhoodChainMarketHistory")) {
+      return response({ data: { market0: { marketId, historicalState } } }, historyStatus);
+    }
+    return response({
+      data: {
+        markets: {
+          items: [{
+            ...market(0, marketId),
+            state: {
+              supplyAssetsUsd: 120,
+              borrowAssetsUsd: 60,
+              liquidityAssetsUsd: 60,
+              collateralAssetsUsd: 150,
+              utilization: 0.5,
+              ...currentState,
+            },
+          }],
+          pageInfo: { count: 1, countTotal: 1, limit: 100, skip: 0 },
+        },
+      },
+    });
+  });
+  return fetchRobinhoodChainMorpho(
+    makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch }),
+    new Date("2026-08-30T00:00:00.000Z"),
+  );
+}
+
 describe("Robinhood Chain Morpho adapter", () => {
+  it("calculates bounded 7d supply, borrow, and utilisation changes from market history", async () => {
+    const now = Math.floor(new Date("2026-08-30T00:00:00.000Z").getTime() / 1_000);
+    const marketId = `0x${"1".padStart(64, "0")}`;
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as { query: string };
+      if (request.query.includes("RobinhoodChainMarketHistory")) {
+        return response({
+          data: {
+            market0: {
+              marketId,
+              historicalState: {
+                supplyAssetsUsd: [{ x: now, y: 120 }, { x: now - 7 * 86_400, y: 100 }],
+                borrowAssetsUsd: [{ x: now, y: 60 }, { x: now - 7 * 86_400, y: 40 }],
+                utilization: [{ x: now, y: 0.5 }, { x: now - 7 * 86_400, y: 0.4 }],
+              },
+            },
+          },
+        });
+      }
+      return response({
+        data: {
+          markets: {
+            items: [{
+              ...market(0, marketId),
+              state: {
+                supplyAssetsUsd: 120,
+                borrowAssetsUsd: 60,
+                liquidityAssetsUsd: 60,
+                collateralAssetsUsd: 150,
+                utilization: 0.5,
+              },
+            }],
+            pageInfo: { count: 1, countTotal: 1, limit: 100, skip: 0 },
+          },
+        },
+      });
+    });
+
+    const result = await fetchRobinhoodChainMorpho(
+      makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch }),
+      new Date("2026-08-30T00:00:00.000Z"),
+    );
+
+    expect(result.status).toBe("valid");
+    expect(result.metrics.supply_change_7d_pct).toBeCloseTo(20);
+    expect(result.metrics.borrow_change_7d_pct).toBeCloseTo(50);
+    expect(result.metrics.utilisation_change_7d).toBeCloseTo(0.1);
+    expect(result.metrics.history_market_count).toBe(1);
+    expect(result.metrics.history_covered_market_count).toBe(1);
+    expect(result.metrics.unique_borrowers_change_7d_pct).toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves current credit but nulls all deltas when a market has no 7d baseline", async () => {
+    const now = Math.floor(new Date("2026-08-30T00:00:00.000Z").getTime() / 1_000);
+    const result = await resultForHistory({
+      supplyAssetsUsd: [{ x: now, y: 120 }],
+      borrowAssetsUsd: [{ x: now, y: 60 }],
+      utilization: [{ x: now, y: 0.5 }],
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.metrics.supply_usd).toBe(120);
+    expect(result.metrics.borrow_usd).toBe(60);
+    expect(result.metrics.supply_change_7d_pct).toBeNull();
+    expect(result.metrics.borrow_change_7d_pct).toBeNull();
+    expect(result.metrics.utilisation_change_7d).toBeNull();
+    expect(result.metrics.history_covered_market_count).toBe(0);
+    expect(result.gaps.map((gap) => gap.code)).toContain("morpho-api:history_coverage_gap");
+  });
+
+  it("keeps utilisation change null when baseline supply is zero", async () => {
+    const now = Math.floor(new Date("2026-08-30T00:00:00.000Z").getTime() / 1_000);
+    const result = await resultForHistory({
+      supplyAssetsUsd: [{ x: now, y: 120 }, { x: now - 7 * 86_400, y: 0 }],
+      borrowAssetsUsd: [{ x: now, y: 60 }, { x: now - 7 * 86_400, y: 0 }],
+      utilization: [{ x: now, y: 0.5 }, { x: now - 7 * 86_400, y: 0 }],
+    });
+
+    expect(result.metrics.supply_usd).toBe(120);
+    expect(result.metrics.borrow_usd).toBe(60);
+    expect(result.metrics.utilisation_change_7d).toBeNull();
+    expect(result.gaps.map((gap) => gap.code)).toContain("morpho-api:history_baseline_zero");
+  });
+
+  it("keeps utilisation change null when current supply is zero", async () => {
+    const now = Math.floor(new Date("2026-08-30T00:00:00.000Z").getTime() / 1_000);
+    const result = await resultForHistory({
+      supplyAssetsUsd: [{ x: now, y: 0 }, { x: now - 7 * 86_400, y: 100 }],
+      borrowAssetsUsd: [{ x: now, y: 0 }, { x: now - 7 * 86_400, y: 40 }],
+      utilization: [{ x: now, y: 0 }, { x: now - 7 * 86_400, y: 0.4 }],
+    }, 200, {
+      supplyAssetsUsd: 0,
+      borrowAssetsUsd: 0,
+      liquidityAssetsUsd: 0,
+      utilization: 0,
+    });
+
+    expect(result.metrics.supply_usd).toBe(0);
+    expect(result.metrics.borrow_usd).toBe(0);
+    expect(result.metrics.utilisation_change_7d).toBeNull();
+    expect(result.gaps.map((gap) => gap.code)).toContain("morpho-api:history_utilisation_denominator_zero");
+  });
+
+  it("rejects conflicting values at one Morpho history timestamp", async () => {
+    const now = Math.floor(new Date("2026-08-30T00:00:00.000Z").getTime() / 1_000);
+    const result = await resultForHistory({
+      supplyAssetsUsd: [
+        { x: now, y: 120 },
+        { x: now, y: 121 },
+        { x: now - 7 * 86_400, y: 100 },
+      ],
+      borrowAssetsUsd: [{ x: now, y: 60 }, { x: now - 7 * 86_400, y: 40 }],
+      utilization: [{ x: now, y: 0.5 }, { x: now - 7 * 86_400, y: 0.4 }],
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.metrics.supply_change_7d_pct).toBeNull();
+    expect(result.gaps.map((gap) => gap.code)).toContain("morpho-api:history_duplicate_timestamp_conflict");
+  });
+
+  it("rejects out-of-range historical utilisation", async () => {
+    const now = Math.floor(new Date("2026-08-30T00:00:00.000Z").getTime() / 1_000);
+    const result = await resultForHistory({
+      supplyAssetsUsd: [{ x: now, y: 120 }, { x: now - 7 * 86_400, y: 100 }],
+      borrowAssetsUsd: [{ x: now, y: 60 }, { x: now - 7 * 86_400, y: 40 }],
+      utilization: [{ x: now, y: 1.5 }, { x: now - 7 * 86_400, y: 0.4 }],
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.metrics.utilisation_change_7d).toBeNull();
+    expect(result.gaps.map((gap) => gap.code)).toContain("morpho-api:history_schema_drift");
+  });
+
+  it("preserves current credit when the history request is unavailable", async () => {
+    const result = await resultForHistory({}, 503);
+
+    expect(result.status).toBe("partial");
+    expect(result.metrics.supply_usd).toBe(120);
+    expect(result.metrics.supply_change_7d_pct).toBeNull();
+    expect(result.sourceStatus.find((source) => source.source === "morpho-api:market-history:4663")?.status).toBe("unavailable");
+    expect(result.gaps.map((gap) => gap.code)).toContain("morpho-api:history_source_access_gap");
+  });
+
+  it("batches at most 25 market-history aliases per GraphQL request", async () => {
+    const now = Math.floor(new Date("2026-08-30T00:00:00.000Z").getTime() / 1_000);
+    const rows = Array.from({ length: 26 }, (_, index) => market(
+      index,
+      `0x${index.toString(16).padStart(64, "0")}`,
+    ));
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as {
+        query: string;
+        variables: Record<string, unknown>;
+      };
+      if (request.query.includes("RobinhoodChainMarketHistory")) {
+        const marketVariables = Object.entries(request.variables)
+          .filter(([key]) => key.startsWith("marketId"));
+        expect(marketVariables.length).toBeLessThanOrEqual(25);
+        return response({
+          data: Object.fromEntries(marketVariables.map(([, marketId], index) => [
+            `market${index}`,
+            {
+              marketId,
+              historicalState: {
+                supplyAssetsUsd: [{ x: now, y: 1 }, { x: now - 7 * 86_400, y: 1 }],
+                borrowAssetsUsd: [{ x: now, y: 0.5 }, { x: now - 7 * 86_400, y: 0.5 }],
+                utilization: [{ x: now, y: 0.5 }, { x: now - 7 * 86_400, y: 0.5 }],
+              },
+            },
+          ])),
+        });
+      }
+      return response({
+        data: {
+          markets: {
+            items: rows,
+            pageInfo: { count: rows.length, countTotal: rows.length, limit: 100, skip: 0 },
+          },
+        },
+      });
+    });
+
+    const result = await fetchRobinhoodChainMorpho(
+      makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch }),
+      new Date("2026-08-30T00:00:00.000Z"),
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(result.status).toBe("valid");
+    expect(result.metrics.history_market_count).toBe(26);
+    expect(result.metrics.history_covered_market_count).toBe(26);
+  });
+
   it("aggregates listed lending supply, borrow, liquidity, and utilisation", async () => {
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       expect(String(input)).toBe(MORPHO_GRAPHQL_URL);
@@ -92,7 +322,7 @@ describe("Robinhood Chain Morpho adapter", () => {
       makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch }),
       new Date("2026-08-30T00:00:00.000Z"),
     );
-    expect(result.status).toBe("valid");
+    expect(result.status).toBe("partial");
     expect(result.metrics.supply_usd).toBe(120_000_000);
     expect(result.metrics.borrow_usd).toBe(80_000_000);
     expect(result.metrics.liquidity_usd).toBe(40_000_000);
@@ -208,7 +438,7 @@ describe("Robinhood Chain Morpho adapter", () => {
       utilization: 1,
     });
 
-    expect(result.status).toBe("valid");
+    expect(result.status).toBe("partial");
     expect(result.metrics.utilisation).toBe(1);
     expect(result.gaps.map((gap) => gap.code)).not.toContain("morpho-api:utilisation_inconsistent");
   });
@@ -249,7 +479,8 @@ describe("Robinhood Chain Morpho adapter", () => {
     );
 
     expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(result.status).toBe("valid");
+    expect(result.status).toBe("partial");
+    expect(result.gaps.map((gap) => gap.code)).toContain("morpho-api:history_limit");
     expect(result.metrics.listed_market_count).toBe(101);
     expect(result.metrics.supply_usd).toBe(101);
     expect(result.metrics.borrow_usd).toBe(50.5);
@@ -280,7 +511,8 @@ describe("Robinhood Chain Morpho adapter", () => {
       new Date("2026-08-30T00:00:00.000Z"),
     );
 
-    expect(result.status).toBe("valid");
+    expect(result.status).toBe("partial");
+    expect(result.gaps.map((gap) => gap.code)).toContain("morpho-api:history_limit");
     expect(result.metrics.loan_asset_symbols).toHaveLength(101);
     expect(result.metrics.collateral_asset_symbols).toHaveLength(101);
   });
@@ -447,7 +679,7 @@ describe("Robinhood Chain Morpho adapter", () => {
       const ctx = makeContext({ env: loadEnv({}), fetchImpl: fetchImpl as typeof fetch });
 
       const fresh = await fetchRobinhoodChainMorpho(ctx, new Date());
-      expect(fresh.status).toBe("valid");
+      expect(fresh.status).toBe("partial");
 
       refreshFails = true;
       vi.advanceTimersByTime(10 * 60_000 + 1);

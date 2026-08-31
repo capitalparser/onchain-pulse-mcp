@@ -108,7 +108,7 @@ function fetchFor(bodies: {
   fees?: unknown;
   rent?: unknown;
   stables?: unknown;
-} = {}): ReturnType<typeof vi.fn> {
+} = {}) {
   return vi.fn(async (input: string | URL | Request) => {
     const url = String(input);
     if (url.endsWith("/master.json")) return jsonResponse(bodies.master ?? masterBody());
