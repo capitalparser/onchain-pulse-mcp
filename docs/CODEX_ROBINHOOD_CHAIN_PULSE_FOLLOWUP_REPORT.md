@@ -17,8 +17,18 @@ PR #53 was merged before this follow-up began. GitHub reports merge commit
 Validated implementation commit:
 
 ```text
-77e54cc194205ed036cf1c887d0e0efe58751dfc
+074942ddf57a1765d0fb382a332bb9b99ba103be
 ```
+
+Validated branch head before this report-only publication update:
+
+```text
+074942ddf57a1765d0fb382a332bb9b99ba103be
+```
+
+The report commit necessarily follows the validated implementation commit. The
+resulting published PR head is recorded in the PR follow-up comment and verified
+against the remote ref after push.
 
 ## Follow-up outcomes
 
@@ -27,9 +37,11 @@ Validated implementation commit:
 | Stablecoin history freshness | PASS | Current and 7-day baseline observations must each be within 48 hours of their UTC cutoff. Missing/stale evidence remains null and partial. |
 | Stablecoin duplicate timestamps | PASS | Identical points collapse; conflicting same-timestamp values invalidate the 7-day change. A greater-than-1% stock/history divergence warns without replacing current stock. |
 | Morpho credit history | PASS | Official per-market history yields nullable 7-day supply, borrow, and aggregate-utilisation changes with full-market coverage and 25-alias request batches. |
+| Morpho zero-denominator history | PASS | If current or baseline aggregate supply is zero, current level data remains available while `utilisation_change_7d` is null with an explicit gap. |
 | Morpho borrower history | Explicitly unavailable | The official `MarketHistory` schema has no unique-borrower series. The value remains null with `morpho-api:unique_borrowers_history_unavailable`. |
 | Blockscout alternative | PASS | On Blockscout failure, the fixed official RPC must prove chain id 4663, non-empty exact-address bytecode, and a matching bounded ERC-20 symbol. |
 | RPC holder count | Explicitly unavailable | RPC fallback leaves holder count null and adds `robinhood-rpc:holder_count_gap`; it never manufactures zero. |
+| RPC source licensing | PASS | `robinhood-rpc` is registered as attributed `commercial_review_required` evidence using the official connection documentation; both chain and token refs remain fail-closed for commercial redistribution. |
 | MCP shared error compatibility | PASS | `unknown_tool`, `invalid_arguments`, and `tool_execution_failed` retain the exact bounded `isError` tool-result schema with no raw exception or caller input. |
 | Dependency advisories | PASS with one bounded residual | Full graph fell from 14 advisories to one development-only low esbuild advisory. Production audit is zero. |
 
@@ -49,9 +61,9 @@ Results after a clean install:
 |---|---|
 | `npm ci` | PASS; 205 packages installed |
 | `npm run typecheck` | PASS |
-| `npm test` | PASS; 1,037 passed, 11 skipped |
+| `npm test` | PASS; 1,042 passed, 11 skipped |
 | `npm run build` | PASS |
-| Five focused suites | PASS; 100/100 |
+| Review-blocker focused suites | PASS; 32/32 |
 | `npm audit --omit=dev` | PASS; 0 advisories |
 | `npm audit` | 1 low; esbuild development-tool residual |
 | `git diff --check` | PASS |
@@ -60,9 +72,11 @@ Focused coverage includes:
 
 - stale/current/baseline stablecoin observations and conflicting duplicates;
 - Morpho history aggregation, missing baseline, duplicate conflict, invalid
-  utilisation, bounded batching, and current-data preservation on history
-  failure;
+  utilisation, zero current/baseline supply denominators, bounded batching, and
+  current-data preservation on history failure;
 - RPC success, wrong chain, empty code, malformed ABI, and symbol mismatch;
+- registered license policy coverage for both `robinhood-rpc:chain:*` and
+  `robinhood-rpc:token:*` refs;
 - strict Robinhood MCP input plus all three shared bounded error codes over
   helper or actual in-memory transport paths;
 - prior pagination, missing collateral, stale fallback, explorer gating,
@@ -81,20 +95,20 @@ Command:
 npm run robinhood-chain-pulse
 ```
 
-Observed at `2026-08-31T00:52:27.296Z`:
+Observed at `2026-08-31T01:22:15.726Z`:
 
 ```text
 phase                         credit_activation
 capital_base                  expanding
 current Morpho credit         active
-stablecoin supply             $776.88M
+stablecoin supply             $776.73M
 stablecoin 7d                 +7.99%
-Morpho supply                 $455.29M
-Morpho borrow                 $415.02M
-Morpho utilisation            91.15%
-Morpho supply 7d              +9.43%
-Morpho borrow 7d              +9.60%
-Morpho utilisation 7d         +0.14pp
+Morpho supply                 $459.40M
+Morpho borrow                 $414.98M
+Morpho utilisation            90.33%
+Morpho supply 7d              +10.42%
+Morpho borrow 7d              +9.59%
+Morpho utilisation 7d         -0.68pp
 Morpho history coverage       4/4
 community eligible            3/3
 speculative breadth           mixed
