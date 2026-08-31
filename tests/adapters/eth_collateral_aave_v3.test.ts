@@ -73,7 +73,7 @@ function batchResult(request: Array<{ id: number; method: string; params: unknow
   return (mutate?.(items) ?? items).reverse();
 }
 
-function finalizedFetch(mutate?: (round: number, items: unknown[]) => unknown[]): ReturnType<typeof vi.fn> {
+function finalizedFetch(mutate?: (round: number, items: unknown[]) => unknown[]) {
   let round = 0;
   return vi.fn(async (_url: string, init: RequestInit) => {
     round += 1;
