@@ -96,7 +96,7 @@ The adapter collects all listed markets in bounded pages of 100 using `first` an
 
 Provider utilisation must be in the inclusive `[0, 1]` range. Borrow may exceed positive supply only within the explicit rounding tolerance `max(USD 0.01, supply × 1e-9)`; zero supply with positive borrow is always inconsistent. Out-of-range provider utilisation or inconsistent balances make aggregate utilisation and the high-utilisation count null, mark the result partial, and prevent those values from activating the credit axis. Materially inconsistent values are never clamped to 100%.
 
-Seven-day Morpho supply, borrow, and aggregate-utilisation changes come from the official per-market GraphQL `historicalState` series. Requests use explicit UTC start/end timestamps and a `DAY` interval, with at most 25 market aliases per request and 100 history-covered markets overall. Portfolio deltas require complete listed-market coverage, observations within 48 hours of both cutoffs, non-conflicting timestamps, in-range utilisation, and borrow/supply consistency. Current market levels remain available when history fails, while all affected deltas remain null and the adapter becomes partial. The official `MarketHistory` schema has no unique-borrower series, so `unique_borrowers_change_7d_pct` stays null with an explicit gap.
+Seven-day Morpho supply, borrow, and aggregate-utilisation changes come from the official per-market GraphQL `historicalState` series. Requests use explicit UTC start/end timestamps and a `DAY` interval, with at most 25 market aliases per request and 100 history-covered markets overall. Portfolio deltas require complete listed-market coverage, observations within 48 hours of both cutoffs, non-conflicting timestamps, in-range utilisation, and borrow/supply consistency. Aggregate utilisation change additionally requires both current and baseline supply to be positive; a zero denominator makes only that delta null and emits an explicit gap. Current market levels remain available when history fails, while all affected deltas remain null and the adapter becomes partial. The official `MarketHistory` schema has no unique-borrower series, so `unique_borrowers_change_7d_pct` stays null with an explicit gap.
 
 Stock-token collateral classification is deliberately null until an effective-dated official stock-token registry is consumed. Symbol heuristics are not used to call a collateral token an equity token.
 
@@ -129,7 +129,7 @@ Used only as a fixed-URL fallback for chain id, exact-address contract bytecode,
 
 ```text
 source prefix: robinhood-rpc
-commercial status: official_public_endpoint_review_required
+commercial status: commercial_review_required
 ```
 
 No raw provider response is returned by the pulse.

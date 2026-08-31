@@ -446,11 +446,20 @@ async function fetchMarketHistory(
       detail: "Historical supply or borrow baseline was zero, so at least one percentage change is undefined.",
     });
   }
+  const utilisationChange7d = currentSupply > 0 && baselineSupply > 0
+    ? utilisationFromBalances(currentSupply, currentBorrow)
+      - utilisationFromBalances(baselineSupply, baselineBorrow)
+    : null;
+  if (utilisationChange7d === null) {
+    gaps.push({
+      code: "morpho-api:history_utilisation_denominator_zero",
+      detail: "Current or baseline historical supply was zero, so the utilisation change is undefined.",
+    });
+  }
   return {
     supplyChange7dPct,
     borrowChange7dPct,
-    utilisationChange7d: utilisationFromBalances(currentSupply, currentBorrow)
-      - utilisationFromBalances(baselineSupply, baselineBorrow),
+    utilisationChange7d,
     marketCount: marketIds.length,
     coveredMarketCount: rows.length,
     sourceStatus: { source, role, status: "ok", as_of: asOf },

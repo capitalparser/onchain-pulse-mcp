@@ -51,6 +51,7 @@ async function resultForState(state: Record<string, unknown>) {
 async function resultForHistory(
   historicalState: Record<string, unknown>,
   historyStatus = 200,
+  currentState: Record<string, unknown> = {},
 ) {
   const marketId = `0x${"1".padStart(64, "0")}`;
   const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
@@ -69,6 +70,7 @@ async function resultForHistory(
               liquidityAssetsUsd: 60,
               collateralAssetsUsd: 150,
               utilization: 0.5,
+              ...currentState,
             },
           }],
           pageInfo: { count: 1, countTotal: 1, limit: 100, skip: 0 },
@@ -152,6 +154,39 @@ describe("Robinhood Chain Morpho adapter", () => {
     expect(result.metrics.utilisation_change_7d).toBeNull();
     expect(result.metrics.history_covered_market_count).toBe(0);
     expect(result.gaps.map((gap) => gap.code)).toContain("morpho-api:history_coverage_gap");
+  });
+
+  it("keeps utilisation change null when baseline supply is zero", async () => {
+    const now = Math.floor(new Date("2026-08-30T00:00:00.000Z").getTime() / 1_000);
+    const result = await resultForHistory({
+      supplyAssetsUsd: [{ x: now, y: 120 }, { x: now - 7 * 86_400, y: 0 }],
+      borrowAssetsUsd: [{ x: now, y: 60 }, { x: now - 7 * 86_400, y: 0 }],
+      utilization: [{ x: now, y: 0.5 }, { x: now - 7 * 86_400, y: 0 }],
+    });
+
+    expect(result.metrics.supply_usd).toBe(120);
+    expect(result.metrics.borrow_usd).toBe(60);
+    expect(result.metrics.utilisation_change_7d).toBeNull();
+    expect(result.gaps.map((gap) => gap.code)).toContain("morpho-api:history_baseline_zero");
+  });
+
+  it("keeps utilisation change null when current supply is zero", async () => {
+    const now = Math.floor(new Date("2026-08-30T00:00:00.000Z").getTime() / 1_000);
+    const result = await resultForHistory({
+      supplyAssetsUsd: [{ x: now, y: 0 }, { x: now - 7 * 86_400, y: 100 }],
+      borrowAssetsUsd: [{ x: now, y: 0 }, { x: now - 7 * 86_400, y: 40 }],
+      utilization: [{ x: now, y: 0 }, { x: now - 7 * 86_400, y: 0.4 }],
+    }, 200, {
+      supplyAssetsUsd: 0,
+      borrowAssetsUsd: 0,
+      liquidityAssetsUsd: 0,
+      utilization: 0,
+    });
+
+    expect(result.metrics.supply_usd).toBe(0);
+    expect(result.metrics.borrow_usd).toBe(0);
+    expect(result.metrics.utilisation_change_7d).toBeNull();
+    expect(result.gaps.map((gap) => gap.code)).toContain("morpho-api:history_utilisation_denominator_zero");
   });
 
   it("rejects conflicting values at one Morpho history timestamp", async () => {

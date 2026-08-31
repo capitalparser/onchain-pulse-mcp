@@ -70,6 +70,14 @@ export const SOURCE_LICENSE_POLICIES: readonly SourceLicensePolicy[] = [
     note: "Official chain and contract documentation may support attributed factual references; it does not grant redistribution rights for third-party market data or imply affiliation of community tokens.",
   },
   {
+    sourcePrefix: "robinhood-rpc",
+    status: "commercial_review_required",
+    attributionRequired: true,
+    evidenceUrl: "https://docs.robinhood.com/chain/connecting/",
+    reviewedAt: "2026-08-31",
+    note: "Official public RPC evidence is limited to internal research; commercial embedding or redistribution requires review.",
+  },
+  {
     sourcePrefix: "morpho-api",
     status: "commercial_review_required",
     attributionRequired: true,
