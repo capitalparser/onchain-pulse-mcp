@@ -1,8 +1,11 @@
+import type { EthEcosystemCaptureSnapshot } from "../eth_ecosystem_capture/types.js";
 import type { EthValueCaptureSnapshot } from "../eth_value_capture/types.js";
 import type { HandlerContext } from "../server.js";
-import { handleEthValueCapture } from "../server.js";
+import { handleEthEcosystemCapture, handleEthValueCapture } from "../server.js";
+import { metricObservationsFromEthEcosystemCapture } from "./eth_ecosystem_capture_adapter.js";
 import { metricObservationsFromEthValueCapture } from "./eth_value_capture_adapter.js";
 import type { MetricObservationStore } from "./store.js";
+import type { MetricObservation } from "./types.js";
 
 export interface EthCollectionRunResult {
   collector_id: "eth-value-capture:30d";
@@ -11,6 +14,47 @@ export interface EthCollectionRunResult {
   emitted_observation_ids: string[];
   skipped_duplicate_ids: string[];
   gaps: string[];
+}
+
+export interface EthIntelligenceSourceCollectionResult {
+  status: "collected" | "failed";
+  snapshot_status: "complete" | "partial" | "unavailable" | null;
+  snapshot_as_of: string | null;
+  emitted_observation_count: number;
+  skipped_duplicate_count: number;
+  gaps: string[];
+}
+
+export interface EthIntelligenceCollectionRunResult {
+  collector_id: "eth-intelligence:30d";
+  status: "complete" | "partial" | "failed";
+  fetched_at: string;
+  sources: {
+    value_capture: EthIntelligenceSourceCollectionResult;
+    ecosystem_capture: EthIntelligenceSourceCollectionResult;
+  };
+  emitted_observation_ids: string[];
+  skipped_duplicate_ids: string[];
+  gaps: string[];
+}
+
+async function appendUniqueObservations(args: {
+  store: MetricObservationStore;
+  observations: MetricObservation[];
+  existingIds: Set<string>;
+}): Promise<{ emitted: string[]; skipped: string[] }> {
+  const emitted: string[] = [];
+  const skipped: string[] = [];
+  for (const observation of args.observations) {
+    if (args.existingIds.has(observation.id)) {
+      skipped.push(observation.id);
+      continue;
+    }
+    await args.store.append(observation);
+    args.existingIds.add(observation.id);
+    emitted.push(observation.id);
+  }
+  return { emitted, skipped };
 }
 
 export async function runEthValueCaptureCollectionOnce(args: {
@@ -28,25 +72,165 @@ export async function runEthValueCaptureCollectionOnce(args: {
   const ingestedAt = now();
   const observations = metricObservationsFromEthValueCapture(snapshot, ingestedAt);
   const existingIds = new Set((await args.store.readAll()).map((item) => item.id));
-  const emitted: string[] = [];
-  const skipped: string[] = [];
-
-  for (const observation of observations) {
-    if (existingIds.has(observation.id)) {
-      skipped.push(observation.id);
-      continue;
-    }
-    await args.store.append(observation);
-    existingIds.add(observation.id);
-    emitted.push(observation.id);
-  }
+  const persisted = await appendUniqueObservations({
+    store: args.store,
+    observations,
+    existingIds,
+  });
 
   return {
     collector_id: "eth-value-capture:30d",
     fetched_at: ingestedAt.toISOString(),
     snapshot_as_of: snapshot.as_of,
-    emitted_observation_ids: emitted,
-    skipped_duplicate_ids: skipped,
+    emitted_observation_ids: persisted.emitted,
+    skipped_duplicate_ids: persisted.skipped,
     gaps: snapshot.gaps.map((gap) => `${gap.code}:${gap.detail}`),
+  };
+}
+
+export async function runEthIntelligenceCollectionOnce(args: {
+  handlerContext: HandlerContext;
+  store: MetricObservationStore;
+  now?: () => Date;
+  fetchValueCaptureSnapshot?: () => Promise<EthValueCaptureSnapshot>;
+  fetchEcosystemCaptureSnapshot?: () => Promise<EthEcosystemCaptureSnapshot>;
+}): Promise<EthIntelligenceCollectionRunResult> {
+  const now = args.now ?? (() => new Date());
+  const fetchValueCaptureSnapshot = args.fetchValueCaptureSnapshot ?? (() => handleEthValueCapture(
+    { window: "30d", paid_mode: "free_only", include_rollups: false },
+    args.handlerContext,
+  ));
+  const fetchEcosystemCaptureSnapshot = args.fetchEcosystemCaptureSnapshot ?? (() => handleEthEcosystemCapture(
+    { window: "30d" },
+    args.handlerContext,
+  ));
+  const [valueCaptureResult, ecosystemCaptureResult] = await Promise.allSettled([
+    fetchValueCaptureSnapshot(),
+    fetchEcosystemCaptureSnapshot(),
+  ]);
+  const ingestedAt = now();
+  const existingIds = new Set((await args.store.readAll()).map((item) => item.id));
+  const emittedObservationIds: string[] = [];
+  const skippedDuplicateIds: string[] = [];
+  const gaps: string[] = [];
+
+  let valueCapture: EthIntelligenceSourceCollectionResult | undefined;
+  if (valueCaptureResult.status === "rejected") {
+    const sourceGap = "value_capture:collection_failed";
+    gaps.push(sourceGap);
+    valueCapture = {
+      status: "failed",
+      snapshot_status: null,
+      snapshot_as_of: null,
+      emitted_observation_count: 0,
+      skipped_duplicate_count: 0,
+      gaps: [sourceGap],
+    };
+  } else {
+    let observations: MetricObservation[];
+    try {
+      observations = metricObservationsFromEthValueCapture(valueCaptureResult.value, ingestedAt);
+    } catch {
+      const sourceGap = "value_capture:normalization_failed";
+      gaps.push(sourceGap);
+      valueCapture = {
+        status: "failed",
+        snapshot_status: valueCaptureResult.value.status,
+        snapshot_as_of: valueCaptureResult.value.as_of,
+        emitted_observation_count: 0,
+        skipped_duplicate_count: 0,
+        gaps: [sourceGap],
+      };
+      observations = [];
+    }
+    if (valueCapture === undefined) {
+      const persisted = await appendUniqueObservations({ store: args.store, observations, existingIds });
+      emittedObservationIds.push(...persisted.emitted);
+      skippedDuplicateIds.push(...persisted.skipped);
+      const sourceGaps = valueCaptureResult.value.gaps.map((gap) =>
+        `value_capture:${gap.code}:${gap.detail}`
+      );
+      gaps.push(...sourceGaps);
+      valueCapture = {
+        status: "collected",
+        snapshot_status: valueCaptureResult.value.status,
+        snapshot_as_of: valueCaptureResult.value.as_of,
+        emitted_observation_count: persisted.emitted.length,
+        skipped_duplicate_count: persisted.skipped.length,
+        gaps: sourceGaps,
+      };
+    }
+  }
+
+  let ecosystemCapture: EthIntelligenceSourceCollectionResult | undefined;
+  if (ecosystemCaptureResult.status === "rejected") {
+    const sourceGap = "ecosystem_capture:collection_failed";
+    gaps.push(sourceGap);
+    ecosystemCapture = {
+      status: "failed",
+      snapshot_status: null,
+      snapshot_as_of: null,
+      emitted_observation_count: 0,
+      skipped_duplicate_count: 0,
+      gaps: [sourceGap],
+    };
+  } else {
+    let observations: MetricObservation[];
+    try {
+      observations = metricObservationsFromEthEcosystemCapture(ecosystemCaptureResult.value, ingestedAt);
+    } catch {
+      const sourceGap = "ecosystem_capture:normalization_failed";
+      gaps.push(sourceGap);
+      ecosystemCapture = {
+        status: "failed",
+        snapshot_status: ecosystemCaptureResult.value.status,
+        snapshot_as_of: ecosystemCaptureResult.value.as_of,
+        emitted_observation_count: 0,
+        skipped_duplicate_count: 0,
+        gaps: [sourceGap],
+      };
+      observations = [];
+    }
+    if (ecosystemCapture === undefined) {
+      const persisted = await appendUniqueObservations({ store: args.store, observations, existingIds });
+      emittedObservationIds.push(...persisted.emitted);
+      skippedDuplicateIds.push(...persisted.skipped);
+      const sourceGaps = ecosystemCaptureResult.value.gaps.map((gap) =>
+        `ecosystem_capture:${gap.code}:${gap.detail}`
+      );
+      gaps.push(...sourceGaps);
+      ecosystemCapture = {
+        status: "collected",
+        snapshot_status: ecosystemCaptureResult.value.status,
+        snapshot_as_of: ecosystemCaptureResult.value.as_of,
+        emitted_observation_count: persisted.emitted.length,
+        skipped_duplicate_count: persisted.skipped.length,
+        gaps: sourceGaps,
+      };
+    }
+  }
+
+  if (valueCapture === undefined || ecosystemCapture === undefined) {
+    throw new Error("ETH intelligence collection did not resolve all source states");
+  }
+  const collected = [valueCapture, ecosystemCapture]
+    .filter((result) => result.status === "collected");
+  const usable = collected.filter((result) =>
+    result.snapshot_status !== "unavailable"
+    && result.emitted_observation_count + result.skipped_duplicate_count > 0
+  );
+  const complete = usable.length === 2
+    && usable.every((result) => result.snapshot_status === "complete");
+  return {
+    collector_id: "eth-intelligence:30d",
+    status: complete ? "complete" : usable.length > 0 ? "partial" : "failed",
+    fetched_at: ingestedAt.toISOString(),
+    sources: {
+      value_capture: valueCapture,
+      ecosystem_capture: ecosystemCapture,
+    },
+    emitted_observation_ids: emittedObservationIds,
+    skipped_duplicate_ids: skippedDuplicateIds,
+    gaps,
   };
 }
