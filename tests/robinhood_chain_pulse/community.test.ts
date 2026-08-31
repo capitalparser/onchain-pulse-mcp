@@ -25,6 +25,7 @@ function rpcFallback(base: ReturnType<typeof fetchFixture>, options: {
   chainId?: string;
   emptyCodeFor?: string;
   symbolFor?: Record<string, string>;
+  rawSymbolFor?: Record<string, string>;
 }) {
   return vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
@@ -52,7 +53,11 @@ function rpcFallback(base: ReturnType<typeof fetchFixture>, options: {
       (candidate) => candidate.address.toLowerCase() === address,
     )!;
     const symbol = options.symbolFor?.[address] ?? token.symbol;
-    return response({ jsonrpc: "2.0", id: body.id, result: abiString(symbol) });
+    return response({
+      jsonrpc: "2.0",
+      id: body.id,
+      result: options.rawSymbolFor?.[address] ?? abiString(symbol),
+    });
   });
 }
 
@@ -211,6 +216,9 @@ describe("Robinhood Chain community-token adapter", () => {
     expect(result.tokens.every((token) => token.eligible_for_breadth)).toBe(true);
     expect(result.tokens.every((token) => token.holder_count === null)).toBe(true);
     expect(result.tokens.every((token) => token.data_status === "partial")).toBe(true);
+    expect(result.tokens.every((token) => (
+      token.gaps.some((gap) => gap.code === "robinhood-rpc:holder_count_gap")
+    ))).toBe(true);
     expect(result.sourceStatus.some((source) => (
       source.source === "robinhood-rpc:chain:4663" && source.status === "ok"
     ))).toBe(true);
@@ -251,6 +259,24 @@ describe("Robinhood Chain community-token adapter", () => {
       .toBe(false);
     expect(result.tokens.find((token) => token.registry_symbol === "MANCER")?.eligible_for_breadth)
       .toBe(true);
+  });
+
+  it("fails closed on a malformed ERC-20 symbol ABI response", async () => {
+    const [cashcat] = ROBINHOOD_COMMUNITY_TOKEN_UNIVERSE;
+    const result = await fetchRobinhoodChainCommunity(
+      makeContext({
+        env: loadEnv({}),
+        fetchImpl: rpcFallback(fetchFixture(), {
+          rawSymbolFor: { [cashcat!.address.toLowerCase()]: "0x1234" },
+        }) as typeof fetch,
+      }),
+      new Date("2026-08-30T00:00:00.000Z"),
+    );
+
+    const row = result.tokens.find((token) => token.registry_symbol === "CASHCAT");
+    expect(row?.eligible_for_breadth).toBe(false);
+    expect(row?.data_status).toBe("partial");
+    expect(row?.gaps.map((gap) => gap.code)).toContain("robinhood-rpc:contract_metadata_gap");
   });
 
   it("fails closed when DexScreener is unavailable", async () => {

@@ -425,6 +425,9 @@ async function load(ctx: AdapterContext, now: Date): Promise<RobinhoodCommunityR
     if (metadata.status !== "ok" && rpcMetadata?.status !== "ok") {
       tokenGaps.push({ code: "robinhood-rpc:contract_metadata_gap", detail: `${token.symbol} exact-address contract code or ERC-20 symbol could not be verified through the official RPC.` });
     }
+    if (metadata.status !== "ok" && rpcMetadata?.status === "ok") {
+      tokenGaps.push({ code: "robinhood-rpc:holder_count_gap", detail: `${token.symbol} was verified through the official RPC, which does not provide holder count metadata.` });
+    }
     const reported = verification?.symbol ?? primary?.reportedSymbol ?? null;
     const registryMismatch = reported !== null && reported.toUpperCase() !== token.symbol.toUpperCase();
     if (registryMismatch) {
