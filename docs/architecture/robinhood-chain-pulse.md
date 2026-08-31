@@ -47,12 +47,12 @@ MANCER        0xc72F232a6869e6CF34dC06129AfFD07F8a2a246A
 Ticker search is prohibited because duplicate and impersonating contracts exist. A token is eligible for breadth only when:
 
 - the exact address appears as the DexScreener base token on Robinhood Chain;
-- Blockscout successfully returns explorer metadata for the exact address and its symbol matches the registry;
+- either Blockscout returns matching exact-address metadata, or the official Robinhood RPC reports chain id 4663, non-empty bytecode at the exact address, and a matching bounded ERC-20 `symbol()` result;
 - primary-pool liquidity is at least USD 25,000;
 - market cap is at least USD 100,000;
 - 24-hour price change and volume are both available.
 
-Holder count is informative rather than a numeric eligibility threshold. An explorer outage leaves holder count null, marks the token partial, and excludes it from breadth instead of converting missing verification into zero or trusting a DexScreener ticker.
+Holder count is informative rather than a numeric eligibility threshold. When Blockscout is unavailable, the official fixed Robinhood RPC may independently verify chain identity, exact-address bytecode, and ERC-20 symbol. This fallback leaves holder count null and marks the token partial, but may make it breadth-eligible when all market thresholds also pass. A wrong chain id, empty bytecode, malformed ABI response, or symbol mismatch fails closed. DexScreener ticker text never substitutes for either verification path.
 
 ## Data sources
 
@@ -121,6 +121,15 @@ Used for exact-address token symbol and holder metadata.
 ```text
 source prefix: robinhood-blockscout
 commercial status: commercial_review_required
+```
+
+### Robinhood Chain official RPC
+
+Used only as a fixed-URL fallback for chain id, exact-address contract bytecode, and bounded ERC-20 `symbol()` verification when Blockscout metadata fails. It does not supply holder counts.
+
+```text
+source prefix: robinhood-rpc
+commercial status: official_public_endpoint_review_required
 ```
 
 No raw provider response is returned by the pulse.
