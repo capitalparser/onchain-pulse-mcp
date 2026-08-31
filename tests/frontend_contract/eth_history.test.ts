@@ -82,6 +82,13 @@ describe("ETH frontend history query", () => {
         observed_at: "2026-08-22T23:59:00.000Z",
         ingested_at: "2026-08-23T12:30:00.000Z",
       }),
+      observation({
+        id: "metric:future-observation",
+        value: 0.99,
+        source_at: "2026-08-24T00:00:00.000Z",
+        observed_at: "2026-08-24T00:00:00.000Z",
+        ingested_at: "2026-08-24T00:00:01.000Z",
+      }),
     ];
     const history = buildEthFrontendHistory({
       query: query(["eth.l2_settlement_cost_share", "eth.total_burn_eth"]),
