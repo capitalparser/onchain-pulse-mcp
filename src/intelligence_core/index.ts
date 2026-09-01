@@ -8,3 +8,4 @@ export * from "./collection_run.js";
 export * from "./history.js";
 export * from "./research_export.js";
 export * from "./source_license.js";
+export * from "./entity_resolution.js";
