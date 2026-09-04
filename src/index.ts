@@ -15,6 +15,7 @@ import { runIntelligenceCollectCli, runIntelligenceExportCli } from "./intellige
 import { runIntelligenceBackfillCli } from "./intelligence_core/backfill_cli.js";
 import { JsonlMetricObservationStore } from "./intelligence_core/store.js";
 import { runRobinhoodChainPulseCli } from "./robinhood_chain_pulse/cli.js";
+import { runRobinhoodChainCollectCli } from "./robinhood_chain_pulse/history.js";
 import {
   createServer,
   handleEthDemandCompass,
@@ -64,6 +65,12 @@ async function main(): Promise<void> {
     const result = await runRobinhoodChainPulseCli(env);
     // eslint-disable-next-line no-console
     console.log(JSON.stringify(result));
+    return;
+  }
+  if (mode === "robinhood-chain-collect") {
+    const result = await runRobinhoodChainCollectCli(env);
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify(result));
     return;
   }
   if (mode === "intelligence-backfill") {

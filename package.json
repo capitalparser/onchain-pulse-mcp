@@ -27,6 +27,7 @@
     "intelligence-collect": "tsx src/index.ts intelligence-collect",
     "intelligence-export": "tsx src/index.ts intelligence-export",
     "robinhood-chain-pulse": "tsx src/index.ts robinhood-chain-pulse",
+    "robinhood-chain-collect": "tsx src/index.ts robinhood-chain-collect",
     "intelligence-backfill": "tsx src/index.ts intelligence-backfill",
     "telegram-alert": "tsx src/index.ts telegram-alert",
     "telegram-daemon": "tsx src/index.ts telegram-daemon",
