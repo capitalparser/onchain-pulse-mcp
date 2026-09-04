@@ -67,17 +67,26 @@ describe("runTelegramAlert", () => {
   });
 
   it("returns a bounded generic failure when the snapshot provider never settles", async () => {
+    vi.useFakeTimers();
+    let signalProviderStarted: (() => void) | undefined;
+    const providerStarted = new Promise<void>((resolve) => {
+      signalProviderStarted = resolve;
+    });
     const pending = runTelegramAlert({
       env: { ...env, telegram: { ...env.telegram!, enabled: true, snapshotTimeoutMs: 5 } },
-      provider: vi.fn(() => new Promise<EthValueCaptureSnapshot>(() => {})),
+      provider: vi.fn(() => {
+        signalProviderStarted?.();
+        return new Promise<EthValueCaptureSnapshot>(() => {});
+      }),
     });
 
-    const result = await Promise.race([
-      pending,
-      new Promise<"test_deadline">((resolve) => setTimeout(() => resolve("test_deadline"), 30)),
-    ]);
-
-    expect(result).toEqual({ status: "failed", delivered: false, reason: "snapshot_unavailable" });
+    try {
+      await providerStarted;
+      await vi.advanceTimersByTimeAsync(5);
+      await expect(pending).resolves.toEqual({ status: "failed", delivered: false, reason: "snapshot_unavailable" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("persists the previous snapshot so a later confidence drop becomes alertable", async () => {

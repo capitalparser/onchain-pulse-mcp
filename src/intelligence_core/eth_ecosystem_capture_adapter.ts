@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import type { EthEcosystemCaptureSnapshot } from "../eth_ecosystem_capture/types.js";
+import { buildMetricObservationId, OBSERVATION_ID_VERSION } from "./observation_id.js";
 import { MetricObservationSchema, type MetricObservation } from "./types.js";
 
 interface MetricCandidate {
@@ -8,8 +8,8 @@ interface MetricCandidate {
   unit: string;
 }
 
-function stableId(parts: string[]): string {
-  return `metric:${createHash("sha256").update(parts.join("|")).digest("hex")}`;
+export interface EcosystemObservationOptions {
+  dimensions?: Readonly<Record<string, string>>;
 }
 
 function sourceTime(snapshot: EthEcosystemCaptureSnapshot): string {
@@ -27,6 +27,7 @@ function sourceTime(snapshot: EthEcosystemCaptureSnapshot): string {
 export function metricObservationsFromEthEcosystemCapture(
   snapshot: EthEcosystemCaptureSnapshot,
   ingestedAt: Date,
+  options: EcosystemObservationOptions = {},
 ): MetricObservation[] {
   if (snapshot.sources.length === 0) return [];
   const observedAt = new Date(Date.parse(snapshot.as_of)).toISOString();
@@ -35,6 +36,17 @@ export function metricObservationsFromEthEcosystemCapture(
     throw new Error("ingestedAt must be at or after ecosystem snapshot as_of");
   }
   const sourceAt = sourceTime(snapshot);
+  const sourceRefs = [...new Set(snapshot.sources)].sort();
+  const dimensions = {
+    window: snapshot.window,
+    snapshot_status: snapshot.status,
+    cutoff_day: snapshot.cutoff_day,
+    chain_scope: "ethereum_l1_and_ethereum_da_rollups",
+    included_l2_count: String(snapshot.coverage.included_l2_count),
+    external_da_excluded_count: String(snapshot.coverage.excluded_external_da_origins.length),
+    observation_id_version: OBSERVATION_ID_VERSION,
+    ...(options.dimensions ?? {}),
+  };
   const candidates: MetricCandidate[] = [
     {
       key: "eth.l2_user_fees_usd",
@@ -71,14 +83,19 @@ export function metricObservationsFromEthEcosystemCapture(
   return candidates.flatMap((candidate) => {
     if (candidate.value === null) return [];
     const observation = {
-      id: stableId([
-        candidate.key,
-        "ethereum",
-        snapshot.window,
+      id: buildMetricObservationId({
+        metricKey: candidate.key,
+        subjectRef: "ethereum",
+        assetRef: "ETH",
+        value: candidate.value,
+        unit: candidate.unit,
+        sourceAt,
         observedAt,
-        snapshot.methodology_version,
-        [...snapshot.sources].sort().join(","),
-      ]),
+        confidence: snapshot.confidence,
+        sourceRefs,
+        methodologyVersion: snapshot.methodology_version,
+        dimensions,
+      }),
       metric_key: candidate.key,
       subject_ref: "ethereum",
       asset_ref: "ETH",
@@ -88,16 +105,9 @@ export function metricObservationsFromEthEcosystemCapture(
       observed_at: observedAt,
       ingested_at: ingestedAtIso,
       confidence: snapshot.confidence,
-      source_refs: [...snapshot.sources],
+      source_refs: sourceRefs,
       methodology_version: snapshot.methodology_version,
-      dimensions: {
-        window: snapshot.window,
-        snapshot_status: snapshot.status,
-        cutoff_day: snapshot.cutoff_day,
-        chain_scope: "ethereum_l1_and_ethereum_da_rollups",
-        included_l2_count: String(snapshot.coverage.included_l2_count),
-        external_da_excluded_count: String(snapshot.coverage.excluded_external_da_origins.length),
-      },
+      dimensions,
     };
     return [MetricObservationSchema.parse(observation)];
   });

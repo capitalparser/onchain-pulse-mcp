@@ -11,6 +11,8 @@ export interface MetricObservationQuery {
 
 export interface MetricObservationStore {
   append(observation: MetricObservation): Promise<void>;
+  /** Optional batch path used by bounded backfills to avoid one full read per row. */
+  appendMany?(observations: readonly MetricObservation[]): Promise<void>;
   readAll(): Promise<MetricObservation[]>;
   query(query: MetricObservationQuery): Promise<MetricObservation[]>;
 }
@@ -32,13 +34,23 @@ export class JsonlMetricObservationStore implements MetricObservationStore {
   constructor(private readonly path: string) {}
 
   async append(observation: MetricObservation): Promise<void> {
-    const parsed = MetricObservationSchema.parse(observation);
-    const existing = await this.readAll();
-    if (existing.some((item) => item.id === parsed.id)) {
-      throw new Error(`duplicate metric observation id: ${parsed.id}`);
+    await this.appendMany([observation]);
+  }
+
+  async appendMany(observations: readonly MetricObservation[]): Promise<void> {
+    if (observations.length === 0) return;
+    const parsed = observations.map((observation) => MetricObservationSchema.parse(observation));
+    const batchIds = parsed.map((observation) => observation.id);
+    if (new Set(batchIds).size !== batchIds.length) {
+      throw new Error("duplicate metric observation id in append batch");
+    }
+    const existingIds = new Set((await this.readAll()).map((item) => item.id));
+    const duplicate = parsed.find((item) => existingIds.has(item.id));
+    if (duplicate !== undefined) {
+      throw new Error(`duplicate metric observation id: ${duplicate.id}`);
     }
     await mkdir(dirname(this.path), { recursive: true });
-    await appendFile(this.path, `${JSON.stringify(parsed)}\n`, "utf8");
+    await appendFile(this.path, `${parsed.map((item) => JSON.stringify(item)).join("\n")}\n`, "utf8");
   }
 
   async readAll(): Promise<MetricObservation[]> {
