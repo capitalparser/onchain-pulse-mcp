@@ -1,14 +1,15 @@
 # Codex Ethereum ecosystem backfill validation report
 
-Date: 2026-08-31 (Asia/Seoul)
+Date: 2026-09-04 (Asia/Seoul)
 
 ## Decision
 
 `ready_for_owner_review`
 
-PR #51 was restacked onto the current main that contains the merged work from
-PRs #50, #53, #54, and #56. The implementation was validated with Node.js 24
-and remains unmerged. GitHub Actions were not used.
+PR #51's local publication head was restacked onto the current `main` that
+contains the merged work from PRs #50, #53, #54, and #56. It was revalidated
+with Node.js 24 on 2026-09-04 and remains unmerged. GitHub Actions were not
+used.
 
 ## Repository and revision identity
 
@@ -22,6 +23,7 @@ and remains unmerged. GitHub Actions were not used.
 | Current `origin/main` | `0f33b91884297a852abe031f3e03e1c644ac7a59` |
 | Initial restacked commit | `4aa6c6fbf3358c77be0ab791caaf7ba345a0d0a2` |
 | Validated final implementation head | `2fca0b26580224579d35e2e4da71438c56c3c5f6` |
+| Current local publication head | `b045eca` |
 | Node.js | `v24.15.0` |
 | npm | `11.12.1` |
 
@@ -64,7 +66,9 @@ npm audit --omit=dev                                PASS  0 vulnerabilities
 ```
 
 `npm ci` reported one low-severity development-only advisory. No force install,
-legacy peer override, test relaxation, or audit fix was used.
+legacy peer override, test relaxation, or audit fix was used. The focused
+backfill/history/Robinhood regression command also passed `19` test files and
+`165 / 165` tests on 2026-09-04.
 
 Focused command:
 
@@ -150,7 +154,7 @@ fixed sanitized public URL, bounded status, actual retrieval time, HTTP status,
 byte count, and SHA-256 body hash. Fixture payload keys such as `chains` and
 `origin_key` are absent from the serialized manifest.
 
-## Live 3-day smoke
+## Live 3-day smoke (2026-09-04)
 
 Temporary history and manifest paths outside the repository were used:
 
@@ -174,7 +178,16 @@ Result:
   export did not provide complete rent coverage for those windows;
 - no missing metric was replaced with zero.
 
-## Live 7-day and idempotency smoke
+The four required sources returned HTTP `200`; their bodies were bounded at
+164,525 bytes (master), 6,846,124 bytes (fees), 5,735,396 bytes (rent), and
+7,897,037 bytes (stables). The manifest stores their retrieval timestamps,
+HTTP status, byte counts, and SHA-256 hashes only—not their raw payloads.
+
+Every source assessment remained `commercial_review_required`,
+`commercial_redistribution_allowed = false`, and
+`attribution_required = true`.
+
+## Live 7-day and idempotency smoke (2026-09-04)
 
 After the three-day run, the final implementation was run for `2026-07-01`
 through `2026-07-07` twice with different run IDs against the same temporary
@@ -185,44 +198,37 @@ first 7-day run   partial  16 inserted 12 skipped  28 semantic observations
 second 7-day run  partial   0 inserted 28 skipped  28 semantic observations
 JSONL rows after all three runs                28
 observation_set_sha256                         identical across 7-day runs
-observation_set_sha256  07f16017fd6f068a80df8f6df97b1af615df95dfd9e688c45913e6c57ffd05a3
+observation_set_sha256  18bd7aaa53e64123c3fbe783563bd901c64afae0c76bb56c7d5c43c26d34ccc5
 ```
 
-Each run captured the same four payload hashes. Live body sizes were bounded:
+The run-specific full manifest fingerprints differ, as intended, because they
+contain the run identity and actual execution timestamps. The semantic
+observation-set hash does not differ; the second run therefore inserted no
+duplicate rows. Controlled regression tests also confirm that changing a
+value or methodology creates a new semantic revision ID.
+
+## Point-in-time history gateway smoke (2026-09-04)
+
+The three-day run and first seven-day run used actual ingestion timestamps;
+the persisted range was:
 
 ```text
-master.json          164,562 bytes
-fees.json          6,823,508 bytes
-rent_paid.json     5,714,594 bytes
-stables_mcap.json  7,873,541 bytes
+2026-09-04T14:07:54.392Z
+2026-09-04T14:07:56.093Z
 ```
 
-The manifest reported
-`commercial_redistribution_allowed = false` and
-`attribution_required = true` for all GrowThePie source references.
-
-## Point-in-time history gateway smoke
-
-The three-day run and the first seven-day run used their actual ingestion
-timestamps. The minimum and maximum persisted timestamps were:
+The loopback `GET /api/v1/eth/history` endpoint returned:
 
 ```text
-2026-08-31T06:47:44.553Z
-2026-08-31T06:47:45.898Z
+cutoff 2026-09-04T14:07:54.391Z  unavailable   0 selected points
+cutoff 2026-09-04T14:07:54.392Z  partial       3 selected points
 ```
 
-The current history gateway returned:
-
-```text
-cutoff 2026-08-31T06:47:44.552Z  unavailable   0 selected points
-cutoff 2026-08-31T06:47:45.898Z  partial      28 selected points
-```
-
-The post-ingestion response contained seven points each for L2 user fees,
-Ethereum L1 stablecoin supply, Ethereum-DA L2 stablecoin supply, and their
-ecosystem total. It retained `no-store` and `nosniff` headers and did not expose
-observation IDs, raw payloads, credentials, RPC URLs, BYOK/paid-source state,
-entitlement state, or provider exception text.
+The direct endpoint query used `eth.l2_user_fees_usd`, a `90d` range, and the
+same cutoff on either side of the first actual ingestion timestamp. It retained
+`no-store` and `nosniff` headers and did not expose observation IDs, raw
+payloads, credentials, RPC URLs, BYOK/paid-source state, entitlement state, or
+provider exception text.
 
 ## Current-main regressions
 
