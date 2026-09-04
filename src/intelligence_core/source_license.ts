@@ -191,3 +191,23 @@ export function assertCommerciallyRedistributable(
     throw new Error(`commercial redistribution blocked by source licensing: ${details}`);
   }
 }
+
+
+export function assertInternalResearchAllowed(
+  observations: readonly MetricObservation[],
+): void {
+  const failures = new Map<string, string>();
+  for (const observation of observations) {
+    for (const sourceRef of observation.source_refs) {
+      const assessment = assessSourceForInternalResearch(sourceRef);
+      if (assessment.admitted) continue;
+      failures.set(sourceRef, assessment.reason);
+    }
+  }
+  if (failures.size === 0) return;
+  const details = [...failures.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([sourceRef, reason]) => sourceRef + " (" + reason + ")")
+    .join(", ");
+  throw new Error("internal research collection blocked by source licensing: " + details);
+}

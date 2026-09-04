@@ -6,7 +6,15 @@ const NON_SEMANTIC_DIMENSIONS = new Set([
   "backfill_run_id",
   "revision_basis",
   "source_versioning",
+  "quality_status",
+  "source_stale",
 ]);
+
+function isNonSemanticDimension(key: string): boolean {
+  return NON_SEMANTIC_DIMENSIONS.has(key)
+    || key.startsWith("source_gap_")
+    || key.startsWith("stale_ref_");
+}
 
 function canonicalNumber(value: number): string {
   if (!Number.isFinite(value)) throw new Error("metric observation id requires a finite value");
@@ -16,7 +24,7 @@ function canonicalNumber(value: number): string {
 
 function stableDimensions(dimensions: Readonly<Record<string, string>>): Array<[string, string]> {
   return Object.entries(dimensions)
-    .filter(([key]) => !NON_SEMANTIC_DIMENSIONS.has(key))
+    .filter(([key]) => !isNonSemanticDimension(key))
     .sort(([left], [right]) => left.localeCompare(right));
 }
 
