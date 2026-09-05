@@ -76,19 +76,28 @@ export async function runForwardCollection(args: {
     if (Date.parse(observation.observed_at) > Date.parse(args.cutoffAt)) {
       throw new Error(`observation exceeds collection cutoff: ${observation.id}`);
     }
-    await args.store.append(observation);
   }
-  const completedAt = now().toISOString();
-  return ForwardCollectionResultSchema.parse({
+  const ids = observations.map((item) => item.id);
+  if (new Set(ids).size !== ids.length) {
+    throw new Error("duplicate metric observation id in collection batch");
+  }
+  // Reject invalid metadata, bounds, and lifecycle times before any persistence.
+  const result = ForwardCollectionResultSchema.parse({
     collector_id: args.collector.id,
     collector_version: args.collector.version,
     source_family: args.collector.sourceFamily,
     started_at: startedAt,
-    completed_at: completedAt,
+    completed_at: now().toISOString(),
     cutoff_at: args.cutoffAt,
-    emitted_observation_ids: observations.map((item) => item.id),
+    emitted_observation_ids: ids,
     gaps: payload.gaps ?? [],
   });
+  if (observations.length > 0) {
+    if (args.store.appendMany !== undefined) await args.store.appendMany(observations);
+    else for (const observation of observations) await args.store.append(observation);
+  }
+  // Keep completed_at tied to completion of persistence, not just source retrieval.
+  return ForwardCollectionResultSchema.parse({ ...result, completed_at: now().toISOString() });
 }
 
 export function buildBackfillManifest(args: {
@@ -103,7 +112,7 @@ export function buildBackfillManifest(args: {
   gaps?: string[];
 }): BackfillManifest {
   const observations = args.observations.map((item) => MetricObservationSchema.parse(item));
-  const sorted = [...observations].sort((a, b) => a.observed_at.localeCompare(b.observed_at) || a.id.localeCompare(b.id));
+  const sorted = [...observations].sort((a, b) => (Date.parse(a.observed_at) - Date.parse(b.observed_at)) || a.id.localeCompare(b.id));
   const fingerprint = createHash("sha256").update(sorted.map((item) => JSON.stringify(item)).join("\n"), "utf8").digest("hex");
   return BackfillManifestSchema.parse({
     run_id: args.runId,
@@ -138,7 +147,7 @@ export async function exportPointInTime(args: {
     .filter((item) => Date.parse(item.observed_at) <= cutoffMs && Date.parse(item.ingested_at) <= cutoffMs)
     .filter((item) => metricKeys === null || metricKeys.has(item.metric_key))
     .filter((item) => args.subjectRef === undefined || item.subject_ref === args.subjectRef)
-    .sort((a, b) => a.observed_at.localeCompare(b.observed_at) || a.ingested_at.localeCompare(b.ingested_at) || a.metric_key.localeCompare(b.metric_key) || a.id.localeCompare(b.id));
+    .sort((a, b) => (Date.parse(a.observed_at) - Date.parse(b.observed_at)) || (Date.parse(a.ingested_at) - Date.parse(b.ingested_at)) || a.metric_key.localeCompare(b.metric_key) || a.id.localeCompare(b.id));
 }
 
 export interface DataQualitySummary {
@@ -154,7 +163,7 @@ export function summarizeDataQuality(observations: MetricObservation[], asOf: st
   IsoTimestampSchema.parse(asOf);
   if (!Number.isFinite(staleAfterMs) || staleAfterMs < 0) throw new Error("staleAfterMs must be a non-negative finite number");
   const parsed = observations.map((item) => MetricObservationSchema.parse(item));
-  const sorted = [...parsed].sort((a, b) => a.observed_at.localeCompare(b.observed_at));
+  const sorted = [...parsed].sort((a, b) => (Date.parse(a.observed_at) - Date.parse(b.observed_at)) || a.id.localeCompare(b.id));
   const asOfMs = Date.parse(asOf);
   return {
     record_count: sorted.length,
