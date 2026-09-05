@@ -1,5 +1,5 @@
-import { appendFile, mkdir, readFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { appendFile, readFile } from "node:fs/promises";
+import { withObservationWriteLock } from "./write_lock.js";
 import { IsoTimestampSchema, MetricObservationSchema, type MetricObservation } from "./types.js";
 
 export interface MetricObservationQuery {
@@ -44,49 +44,20 @@ export class JsonlMetricObservationStore implements MetricObservationStore {
     if (new Set(batchIds).size !== batchIds.length) {
       throw new Error("duplicate metric observation id in append batch");
     }
-    const existingIds = new Set((await this.readAll()).map((item) => item.id));
-    const duplicate = parsed.find((item) => existingIds.has(item.id));
-    if (duplicate !== undefined) {
-      throw new Error(`duplicate metric observation id: ${duplicate.id}`);
-    }
-    await mkdir(dirname(this.path), { recursive: true });
-    await appendFile(this.path, `${parsed.map((item) => JSON.stringify(item)).join("\n")}\n`, "utf8");
+    await withObservationWriteLock(this.path, async (path) => {
+      const content = await readHistoryContent(path);
+      const existingIds = new Set(parseHistoryContent(content).map((item) => item.id));
+      const duplicate = parsed.find((item) => existingIds.has(item.id));
+      if (duplicate !== undefined) {
+        throw new Error(`duplicate metric observation id: ${duplicate.id}`);
+      }
+      const separator = content.length > 0 && !content.endsWith("\n") ? "\n" : "";
+      await appendFile(path, `${separator}${parsed.map((item) => JSON.stringify(item)).join("\n")}\n`, "utf8");
+    });
   }
 
   async readAll(): Promise<MetricObservation[]> {
-    let content: string;
-    try {
-      content = await readFile(this.path, "utf8");
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") return [];
-      throw error;
-    }
-
-    const observations: MetricObservation[] = [];
-    for (const [index, line] of content.split("\n").entries()) {
-      if (line.trim().length === 0) continue;
-      let raw: unknown;
-      try {
-        raw = JSON.parse(line);
-      } catch (error) {
-        throw new Error(`invalid JSONL at line ${index + 1}`, { cause: error });
-      }
-      try {
-        observations.push(MetricObservationSchema.parse(raw));
-      } catch (error) {
-        throw new Error(`invalid metric observation at line ${index + 1}`, { cause: error });
-      }
-    }
-
-    const seen = new Set<string>();
-    for (const observation of observations) {
-      if (seen.has(observation.id)) {
-        throw new Error(`duplicate metric observation id in persisted data: ${observation.id}`);
-      }
-      seen.add(observation.id);
-    }
-    return observations.sort(byObservedAtThenId);
+    return parseHistoryContent(await readHistoryContent(this.path));
   }
 
   async query(query: MetricObservationQuery): Promise<MetricObservation[]> {
@@ -106,4 +77,40 @@ export class JsonlMetricObservationStore implements MetricObservationStore {
     const observations = await this.readAll();
     return observations.filter((item) => matchesQuery(item, query));
   }
+}
+
+async function readHistoryContent(path: string): Promise<string> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+    throw error;
+  }
+}
+
+function parseHistoryContent(content: string): MetricObservation[] {
+  const observations: MetricObservation[] = [];
+  for (const [index, line] of content.split("\n").entries()) {
+    if (line.trim().length === 0) continue;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch (error) {
+      throw new Error(`invalid JSONL at line ${index + 1}`, { cause: error });
+    }
+    try {
+      observations.push(MetricObservationSchema.parse(raw));
+    } catch (error) {
+      throw new Error(`invalid metric observation at line ${index + 1}`, { cause: error });
+    }
+  }
+
+  const seen = new Set<string>();
+  for (const observation of observations) {
+    if (seen.has(observation.id)) {
+      throw new Error(`duplicate metric observation id in persisted data: ${observation.id}`);
+    }
+    seen.add(observation.id);
+  }
+  return observations.sort(byObservedAtThenId);
 }
