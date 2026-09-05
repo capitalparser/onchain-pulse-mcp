@@ -407,6 +407,16 @@ async function appendUnique(
   return { emitted: novel.map((row) => row.id), skipped };
 }
 
+// Copy clock samples: an injected clock may reuse and mutate one Date instance.
+function sampleCollectionTime(now: () => Date, notBefore?: Date): Date {
+  const sampled = new Date(now().getTime());
+  if (!Number.isFinite(sampled.getTime())
+    || (notBefore !== undefined && sampled.getTime() < notBefore.getTime())) {
+    throw new Error("robinhood_collection_clock_invalid");
+  }
+  return sampled;
+}
+
 export async function runRobinhoodChainCollectionOnce(args: {
   env: EnvConfig;
   store: MetricObservationStore;
@@ -414,7 +424,7 @@ export async function runRobinhoodChainCollectionOnce(args: {
 }): Promise<RobinhoodChainCollectionRunResult> {
   const options = args.options ?? {};
   const now = options.now ?? (() => new Date());
-  const startedAt = now();
+  const startedAt = sampleCollectionTime(now);
   const ctx = makeContext(
     options.fetchImpl === undefined ? { env: args.env } : { env: args.env, fetchImpl: options.fetchImpl },
   );
@@ -430,17 +440,20 @@ export async function runRobinhoodChainCollectionOnce(args: {
     community,
     now: startedAt,
   });
-  const completedAt = now();
+  // Ingestion retains its existing meaning: data accepted before persistence.
+  const ingestedAt = sampleCollectionTime(now, startedAt);
   const methodologyVersion = options.methodologyVersion
     ?? ROBINHOOD_CHAIN_HISTORY_METHODOLOGY_VERSION;
   const observations = metricObservationsFromRobinhoodChain(
     { fundamentals, credit, community, snapshot },
-    completedAt,
+    ingestedAt,
     methodologyVersion,
   );
 
   assertInternalResearchAllowed(observations);
   const persisted = await appendUnique(args.store, observations);
+  // A success receipt must not precede the awaited store operation. This is not fsync/rollback.
+  const completedAt = sampleCollectionTime(now, ingestedAt);
   const statuses = [fundamentals.status, credit.status, community.status];
   const status = statuses.every((value) => value === "valid")
     && !fundamentals.stale

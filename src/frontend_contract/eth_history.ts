@@ -258,9 +258,14 @@ export function parseEthFrontendHistorySearchParams(
   return parsed.data;
 }
 
+// Only comparison/bucketing is normalized; public timestamps and stored IDs stay intact.
+function utcDay(timestamp: string): string {
+  return new Date(timestamp).toISOString().slice(0, 10);
+}
+
 function expectedDays(query: EthFrontendHistoryQuery): string[] {
   const output: string[] = [];
-  for (let day = query.start_at.slice(0, 10); day <= query.cutoff_at.slice(0, 10); day = shiftUtcDay(day, 1)) {
+  for (let day = utcDay(query.start_at); day <= utcDay(query.cutoff_at); day = shiftUtcDay(day, 1)) {
     output.push(day);
   }
   return output;
@@ -279,22 +284,22 @@ interface SelectedDayPoint {
 
 function selectDailyPoint(rows: MetricObservation[]): SelectedDayPoint {
   const sorted = [...rows].sort((left, right) =>
-    right.observed_at.localeCompare(left.observed_at)
-    || right.ingested_at.localeCompare(left.ingested_at)
+    Date.parse(right.observed_at) - Date.parse(left.observed_at)
+    || Date.parse(right.ingested_at) - Date.parse(left.ingested_at)
     || left.id.localeCompare(right.id)
   );
-  const latestObservedAt = sorted[0]!.observed_at;
-  const latestObservedRows = sorted.filter((row) => row.observed_at === latestObservedAt);
+  const latestObservedAt = Date.parse(sorted[0]!.observed_at);
+  const latestObservedRows = sorted.filter((row) => Date.parse(row.observed_at) === latestObservedAt);
   const latestIngestedAt = latestObservedRows
-    .map((row) => row.ingested_at)
-    .sort((left, right) => right.localeCompare(left))[0]!;
-  const latestRows = latestObservedRows.filter((row) => row.ingested_at === latestIngestedAt);
+    .map((row) => Date.parse(row.ingested_at))
+    .sort((left, right) => right - left)[0]!;
+  const latestRows = latestObservedRows.filter((row) => Date.parse(row.ingested_at) === latestIngestedAt);
   const signatures = new Set(latestRows.map((row) => JSON.stringify({
     value: row.value,
     unit: row.unit,
     entity_ref: row.entity_ref ?? null,
     asset_ref: row.asset_ref ?? null,
-    source_at: row.source_at,
+    source_at: Date.parse(row.source_at),
     confidence: row.confidence,
     source_refs: uniqueSorted(row.source_refs),
     methodology_version: row.methodology_version,
@@ -361,7 +366,7 @@ export function buildEthFrontendHistory(args: {
     const rows = eligible.filter((observation) => observation.metric_key === metricKey);
     const rowsByDay = new Map<string, MetricObservation[]>();
     for (const row of rows) {
-      const day = row.observed_at.slice(0, 10);
+      const day = utcDay(row.observed_at);
       const bucket = rowsByDay.get(day) ?? [];
       bucket.push(row);
       rowsByDay.set(day, bucket);
@@ -391,7 +396,7 @@ export function buildEthFrontendHistory(args: {
         methodology_version: item.observation.methodology_version,
         revision_count: item.revisionCount,
       }));
-    const observedDays = new Set(points.map((point) => point.observed_at.slice(0, 10)));
+    const observedDays = new Set(points.map((point) => utcDay(point.observed_at)));
     const missingDays = requestedDays.filter((day) => !observedDays.has(day));
     if (missingDays.length > 0 && points.length > 0) gapCodes.add("daily_coverage_gap");
     const selectedRows = selected
@@ -437,7 +442,7 @@ export function buildEthFrontendHistory(args: {
   const gapCodes = uniqueSorted(series.flatMap((item) => item.gap_codes)) as HistoryGapCode[];
   const latestIngestedAt = series
     .flatMap((item) => item.points.map((point) => point.ingested_at))
-    .sort((left, right) => right.localeCompare(left))[0] ?? null;
+    .sort((left, right) => Date.parse(right) - Date.parse(left) || left.localeCompare(right))[0] ?? null;
   const complete = series.every((item) => item.coverage.missing_day_count === 0 && item.gap_codes.length === 0);
   const status = selectedPointCount === 0 ? "unavailable" : complete ? "complete" : "partial";
 
